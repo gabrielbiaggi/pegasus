@@ -4,11 +4,20 @@ import argparse
 import asyncio
 import csv
 import json
+import os
 from collections import deque
 from pathlib import Path
 from typing import Any
 
 import websockets
+
+# PostgreSQL sink (optional) — instale psycopg2-binary para activar
+try:
+    import psycopg2  # type: ignore
+    import psycopg2.extras  # type: ignore
+    _HAS_PSYCOPG2 = True
+except ImportError:
+    _HAS_PSYCOPG2 = False
 
 from config import load_config
 from strategy import (
@@ -158,7 +167,74 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows({field: row.get(field, "") for field in FIELDS} for row in rows)
 
 
-async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: int) -> int:
+# ---------------------------------------------------------------------------
+# PostgreSQL sink (opcional) — ativa quando PG_DSN está definido no .env
+# ---------------------------------------------------------------------------
+
+_PG_CREATE_TABLE = """
+CREATE TABLE IF NOT EXISTS shadow_ticks (
+    id                        BIGSERIAL PRIMARY KEY,
+    entry_epoch               BIGINT,
+    entry_quote               DOUBLE PRECISION,
+    score                     DOUBLE PRECISION,
+    signal                    SMALLINT,
+    block_reason              TEXT,
+    bb_width_percent          DOUBLE PRECISION,
+    tick_atr_percent          DOUBLE PRECISION,
+    recent_move_percent       DOUBLE PRECISION,
+    hurst_exponent            DOUBLE PRECISION,
+    tick_imbalance            DOUBLE PRECISION,
+    hawkes_intensity          DOUBLE PRECISION,
+    velocity_zscore           DOUBLE PRECISION,
+    acceleration_zscore       DOUBLE PRECISION,
+    pmi_distance_percent      DOUBLE PRECISION,
+    markov_p_up_given_up      DOUBLE PRECISION,
+    markov_p_down_given_down  DOUBLE PRECISION,
+    shannon_entropy           DOUBLE PRECISION,
+    kalman_residual_zscore    DOUBLE PRECISION,
+    future_result             TEXT,
+    future_exit_epoch         BIGINT,
+    future_exit_quote         DOUBLE PRECISION,
+    future_held_ticks         INTEGER,
+    future_max_move_percent   DOUBLE PRECISION,
+    y1_max_drawdown_5ticks    DOUBLE PRECISION,
+    y2_seconds_to_3pct        DOUBLE PRECISION,
+    inserted_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS shadow_ticks_entry_epoch_idx ON shadow_ticks (entry_epoch);
+"""
+
+
+def _pg_write_rows(pg_dsn: str, rows: list[dict[str, Any]]) -> None:
+    """Insert rows into the shadow_ticks PostgreSQL table.
+
+    The table is created automatically on first call.
+    Silently skips if psycopg2 is not installed.
+    """
+    if not _HAS_PSYCOPG2 or not rows:
+        return
+    cols = [f for f in FIELDS]  # same order as CSV, no id/inserted_at
+    placeholders = ", ".join(["%s"] * len(cols))
+    insert_sql = (
+        f"INSERT INTO shadow_ticks ({', '.join(cols)}) "
+        f"VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+    )
+    try:
+        with psycopg2.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_PG_CREATE_TABLE)
+                values = [
+                    tuple(row.get(col, None) or None for col in cols)
+                    for row in rows
+                ]
+                psycopg2.extras.execute_batch(cur, insert_sql, values, page_size=500)
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        # PostgreSQL is optional — never crash the collector
+        print(f"[shadow_collect] PG write error (non-fatal): {exc}")
+
+
+async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: int, pg_dsn: str = "") -> int:
     bot_config = load_config()
     strategy_config = bot_config.accumulator_strategy_config
     buffer: deque[dict[str, Any]] = deque(maxlen=bot_config.tick_count + bot_config.accumulator_max_hold_ticks + 10)
@@ -277,10 +353,14 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
 
             if len(rows) >= flush_every:
                 _write_rows(output, rows)
+                if pg_dsn:
+                    _pg_write_rows(pg_dsn, rows)
                 written += len(rows)
                 rows.clear()
 
     _write_rows(output, rows)
+    if pg_dsn:
+        _pg_write_rows(pg_dsn, rows)
     return written + len(rows)
 
 
@@ -289,9 +369,19 @@ def main() -> None:
     parser.add_argument("--ticks", type=int, default=600)
     parser.add_argument("--flush-every", type=int, default=100)
     parser.add_argument("--output", type=Path, default=Path("data/shadow_ticks.csv"))
+    parser.add_argument(
+        "--pg-dsn",
+        type=str,
+        default=os.getenv("PG_DSN", ""),
+        help="PostgreSQL DSN (ex: postgresql://user:pass@localhost/pegasus_db). "
+             "Também lido de PG_DSN no .env. Opcional.",
+    )
     args = parser.parse_args()
 
-    total = asyncio.run(collect_shadow_rows(args.output, args.ticks, args.flush_every))
+    if args.pg_dsn and not _HAS_PSYCOPG2:
+        print("⚠️  PG_DSN definido mas psycopg2 não está instalado. Instale: pip install psycopg2-binary")
+
+    total = asyncio.run(collect_shadow_rows(args.output, args.ticks, args.flush_every, args.pg_dsn))
     print(f"{total} linhas shadow salvas em {args.output}")
 
 
