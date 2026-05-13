@@ -57,9 +57,9 @@ class DerivBot:
                 "count": self.config.tick_count,
                 "end": "latest",
                 "style": "ticks",
-                "subscribe": 1,
             },
         )
+        await self.send(ws, {"ticks": self.config.symbol, "subscribe": 1})
 
     async def request_accumulator_proposal(
         self,
@@ -214,7 +214,17 @@ class DerivBot:
 
         last = df.iloc[-1]
         metrics: dict[str, float] = {}
-        for name in ("bb_width_percent", "tick_atr_percent", "recent_move_percent"):
+        for name in (
+            "bb_width_percent",
+            "tick_atr_percent",
+            "recent_move_percent",
+            "hurst_exponent",
+            "tick_imbalance",
+            "hawkes_intensity",
+            "velocity_zscore",
+            "acceleration_zscore",
+            "pmi_distance_percent",
+        ):
             try:
                 value = float(last.get(name))
             except (TypeError, ValueError):
@@ -365,6 +375,8 @@ class DerivBot:
             if data.get("msg_type") in {"proposal", "buy"}:
                 self.pending_order = None
                 self.waiting_for_result = False
+            if data.get("msg_type") == "sell":
+                self.accumulator_sell_requested = False
             return
 
         msg_type = data.get("msg_type")

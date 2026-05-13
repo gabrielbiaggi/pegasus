@@ -19,6 +19,12 @@ class TradeJournal:
         "bb_width_percent",
         "tick_atr_percent",
         "recent_move_percent",
+        "hurst_exponent",
+        "tick_imbalance",
+        "hawkes_intensity",
+        "velocity_zscore",
+        "acceleration_zscore",
+        "pmi_distance_percent",
     ]
     trade_fields = [
         "timestamp",
@@ -37,6 +43,12 @@ class TradeJournal:
         "bb_width_percent",
         "tick_atr_percent",
         "recent_move_percent",
+        "hurst_exponent",
+        "tick_imbalance",
+        "hawkes_intensity",
+        "velocity_zscore",
+        "acceleration_zscore",
+        "pmi_distance_percent",
     ]
 
     def __init__(self, directory: str = "logs"):
@@ -97,6 +109,12 @@ class TradeJournal:
                 "bb_width_percent": self._format_metric(metrics, "bb_width_percent"),
                 "tick_atr_percent": self._format_metric(metrics, "tick_atr_percent"),
                 "recent_move_percent": self._format_metric(metrics, "recent_move_percent"),
+                "hurst_exponent": self._format_metric(metrics, "hurst_exponent"),
+                "tick_imbalance": self._format_metric(metrics, "tick_imbalance"),
+                "hawkes_intensity": self._format_metric(metrics, "hawkes_intensity"),
+                "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
+                "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
+                "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
             },
         )
 
@@ -136,5 +154,11 @@ class TradeJournal:
                 "bb_width_percent": self._format_metric(metrics, "bb_width_percent"),
                 "tick_atr_percent": self._format_metric(metrics, "tick_atr_percent"),
                 "recent_move_percent": self._format_metric(metrics, "recent_move_percent"),
+                "hurst_exponent": self._format_metric(metrics, "hurst_exponent"),
+                "tick_imbalance": self._format_metric(metrics, "tick_imbalance"),
+                "hawkes_intensity": self._format_metric(metrics, "hawkes_intensity"),
+                "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
+                "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
+                "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
             },
         )

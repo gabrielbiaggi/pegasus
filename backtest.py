@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 from logger import logger
-from strategy import AccumulatorStrategyConfig, calculate_tick_indicators
+from strategy import AccumulatorStrategyConfig, accumulator_quant_filters_pass, calculate_tick_indicators, score_accumulator_row
 
 
 def load_ticks(path: Path) -> list[dict[str, Any]]:
@@ -201,14 +201,10 @@ def run_accumulator_backtest(
             i += 1
             continue
 
-        score = 0
-        if bb_width <= strategy_config.max_bb_width_percent:
-            score += strategy_config.squeeze_weight
-        if tick_atr <= strategy_config.max_tick_atr_percent:
-            score += strategy_config.atr_weight
-        if recent_move <= strategy_config.max_recent_move_percent:
-            score += strategy_config.stability_weight
-        if score < strategy_config.min_score:
+        row = df.iloc[i]
+        score = score_accumulator_row(row, strategy_config)
+        quant_pass, _ = accumulator_quant_filters_pass(row, strategy_config)
+        if score < strategy_config.min_score or not quant_pass:
             i += 1
             continue
 

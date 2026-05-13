@@ -69,6 +69,19 @@ ACCUMULATOR_MAX_TICK_ATR_PERCENT=0.015
 ACCUMULATOR_RECENT_WINDOW=5
 ACCUMULATOR_MAX_RECENT_MOVE_PERCENT=0.05
 ACCUMULATOR_MIN_SCORE=7
+ACCUMULATOR_HAWKES_ALPHA=1.0
+ACCUMULATOR_HAWKES_BETA=0.85
+ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER=1.5
+ACCUMULATOR_MAX_HAWKES_INTENSITY=0.2
+ACCUMULATOR_IMBALANCE_WINDOW=10
+ACCUMULATOR_MAX_ABS_TICK_IMBALANCE=2
+ACCUMULATOR_HURST_WINDOW=30
+ACCUMULATOR_MAX_HURST_EXPONENT=0.45
+ACCUMULATOR_DERIVATIVE_WINDOW=20
+ACCUMULATOR_MAX_VELOCITY_ZSCORE=2.0
+ACCUMULATOR_MAX_ACCELERATION_ZSCORE=2.0
+ACCUMULATOR_INTEGRAL_WINDOW=20
+ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT=0.005
 ```
 
 O score usa tres filtros:
@@ -76,6 +89,14 @@ O score usa tres filtros:
 - `bb_width_percent`: largura das Bandas de Bollinger em percentual do preco.
 - `tick_atr_percent`: media do movimento absoluto tick a tick.
 - `recent_move_percent`: deslocamento absoluto nos ultimos ticks.
+
+Depois do score minimo, o sinal passa por filtros quantitativos em cascata:
+
+- `hurst_exponent < 0.45`: rejeita memoria/tendencia.
+- `tick_imbalance` entre `-2` e `+2`: exige lateralizacao curta.
+- `hawkes_intensity <= 0.2`: rejeita auto-excitacao depois de saltos.
+- `velocity_zscore` e `acceleration_zscore <= 2.0`: bloqueia velocidade/aceleracao anormais.
+- `pmi_distance_percent <= 0.005`: exige preco perto do centro de massa pela integral trapezoidal.
 
 Quando o contrato esta aberto, o bot monitora `proposal_open_contract` e vende via API ao atingir o lucro alvo ou `ACCUMULATOR_MAX_HOLD_TICKS`. A ideia operacional e sair rapido; Accumulators punem permanencia longa em regioes de spike.
 
@@ -93,6 +114,41 @@ tail -f logs/trades.log
 ```
 
 CSVs gerados:
+
+```text
+logs/signals.csv
+logs/trades.csv
+```
+
+## Validacao demo
+
+Smoke test de compra e fechamento real na conta demo:
+
+```bash
+source .venv/bin/activate
+python demo_smoke_test.py --stake 1
+```
+
+O script bloqueia se o token autorizar uma conta que nao seja `VRTC`.
+
+Coleta shadow para calibracao:
+
+```bash
+python shadow_collect.py --ticks 600 --output data/shadow_ticks.csv
+```
+
+Esse arquivo grava cada tick com score, filtros quantitativos e o resultado futuro simulado dentro de `ACCUMULATOR_MAX_HOLD_TICKS`. Ele nao compra contratos.
+
+Otimizacao com os novos filtros:
+
+```bash
+python optimize.py \
+  --ticks data/ticks_1HZ100V.csv \
+  --max-hurst-exponents 0.45,0.50,0.55,0.60 \
+  --max-pmi-distance-percents 0.005,0.01,0.02,0.05 \
+  --max-hawkes-intensities 0.2,0.5,1.0 \
+  --max-abs-tick-imbalances 2,3,4
+```
 
 - `logs/signals.csv`: sinais aceitos com `entry_epoch`, score e metricas de compressao.
 - `logs/trades.csv`: contratos executados, lucro, resultado, `exit_epoch` e `held_ticks`.

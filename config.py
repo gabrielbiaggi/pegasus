@@ -88,6 +88,19 @@ class BotConfig:
     accumulator_max_tick_atr_percent: float
     accumulator_recent_window: int
     accumulator_max_recent_move_percent: float
+    accumulator_hawkes_alpha: float
+    accumulator_hawkes_beta: float
+    accumulator_hawkes_jump_atr_multiplier: float
+    accumulator_max_hawkes_intensity: float
+    accumulator_imbalance_window: int
+    accumulator_max_abs_tick_imbalance: int
+    accumulator_hurst_window: int
+    accumulator_max_hurst_exponent: float
+    accumulator_derivative_window: int
+    accumulator_max_velocity_zscore: float
+    accumulator_max_acceleration_zscore: float
+    accumulator_integral_window: int
+    accumulator_max_pmi_distance_percent: float
 
     @property
     def ws_url(self) -> str:
@@ -104,6 +117,19 @@ class BotConfig:
             max_tick_atr_percent=self.accumulator_max_tick_atr_percent,
             recent_window=self.accumulator_recent_window,
             max_recent_move_percent=self.accumulator_max_recent_move_percent,
+            hawkes_alpha=self.accumulator_hawkes_alpha,
+            hawkes_beta=self.accumulator_hawkes_beta,
+            hawkes_jump_atr_multiplier=self.accumulator_hawkes_jump_atr_multiplier,
+            max_hawkes_intensity=self.accumulator_max_hawkes_intensity,
+            imbalance_window=self.accumulator_imbalance_window,
+            max_abs_tick_imbalance=self.accumulator_max_abs_tick_imbalance,
+            hurst_window=self.accumulator_hurst_window,
+            max_hurst_exponent=self.accumulator_max_hurst_exponent,
+            derivative_window=self.accumulator_derivative_window,
+            max_velocity_zscore=self.accumulator_max_velocity_zscore,
+            max_acceleration_zscore=self.accumulator_max_acceleration_zscore,
+            integral_window=self.accumulator_integral_window,
+            max_pmi_distance_percent=self.accumulator_max_pmi_distance_percent,
         )
 
 
@@ -158,6 +184,19 @@ def load_config() -> BotConfig:
         accumulator_max_tick_atr_percent=_float_env("ACCUMULATOR_MAX_TICK_ATR_PERCENT", 0.015),
         accumulator_recent_window=_int_env("ACCUMULATOR_RECENT_WINDOW", 5),
         accumulator_max_recent_move_percent=_float_env("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT", 0.05),
+        accumulator_hawkes_alpha=_float_env("ACCUMULATOR_HAWKES_ALPHA", 1.0),
+        accumulator_hawkes_beta=_float_env("ACCUMULATOR_HAWKES_BETA", 0.85),
+        accumulator_hawkes_jump_atr_multiplier=_float_env("ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER", 1.5),
+        accumulator_max_hawkes_intensity=_float_env("ACCUMULATOR_MAX_HAWKES_INTENSITY", 0.2),
+        accumulator_imbalance_window=_int_env("ACCUMULATOR_IMBALANCE_WINDOW", 10),
+        accumulator_max_abs_tick_imbalance=_int_env("ACCUMULATOR_MAX_ABS_TICK_IMBALANCE", 2),
+        accumulator_hurst_window=_int_env("ACCUMULATOR_HURST_WINDOW", 30),
+        accumulator_max_hurst_exponent=_float_env("ACCUMULATOR_MAX_HURST_EXPONENT", 0.45),
+        accumulator_derivative_window=_int_env("ACCUMULATOR_DERIVATIVE_WINDOW", 20),
+        accumulator_max_velocity_zscore=_float_env("ACCUMULATOR_MAX_VELOCITY_ZSCORE", 2.0),
+        accumulator_max_acceleration_zscore=_float_env("ACCUMULATOR_MAX_ACCELERATION_ZSCORE", 2.0),
+        accumulator_integral_window=_int_env("ACCUMULATOR_INTEGRAL_WINDOW", 20),
+        accumulator_max_pmi_distance_percent=_float_env("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT", 0.005),
     )
 
     if config.stake <= 0:
@@ -203,11 +242,33 @@ def load_config() -> BotConfig:
         raise ValueError("Janelas do accumulator precisam ser maiores que 1.")
     if config.accumulator_recent_window <= 0:
         raise ValueError("ACCUMULATOR_RECENT_WINDOW precisa ser maior que zero.")
+    if config.accumulator_imbalance_window <= 1:
+        raise ValueError("ACCUMULATOR_IMBALANCE_WINDOW precisa ser maior que 1.")
+    if config.accumulator_hurst_window <= 3:
+        raise ValueError("ACCUMULATOR_HURST_WINDOW precisa ser maior que 3.")
+    if config.accumulator_derivative_window <= 1:
+        raise ValueError("ACCUMULATOR_DERIVATIVE_WINDOW precisa ser maior que 1.")
+    if config.accumulator_integral_window <= 1:
+        raise ValueError("ACCUMULATOR_INTEGRAL_WINDOW precisa ser maior que 1.")
     if config.accumulator_bb_std_dev <= 0:
         raise ValueError("ACCUMULATOR_BB_STD_DEV precisa ser maior que zero.")
     if config.accumulator_max_bb_width_percent < 0 or config.accumulator_max_tick_atr_percent < 0:
         raise ValueError("Filtros percentuais do accumulator nao podem ser negativos.")
     if config.accumulator_max_recent_move_percent < 0:
         raise ValueError("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT nao pode ser negativo.")
+    if config.accumulator_hawkes_alpha < 0 or config.accumulator_hawkes_beta < 0:
+        raise ValueError("Parametros Hawkes nao podem ser negativos.")
+    if config.accumulator_hawkes_jump_atr_multiplier <= 0:
+        raise ValueError("ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER precisa ser maior que zero.")
+    if config.accumulator_max_hawkes_intensity < 0:
+        raise ValueError("ACCUMULATOR_MAX_HAWKES_INTENSITY nao pode ser negativo.")
+    if config.accumulator_max_abs_tick_imbalance < 0:
+        raise ValueError("ACCUMULATOR_MAX_ABS_TICK_IMBALANCE nao pode ser negativo.")
+    if config.accumulator_max_hurst_exponent <= 0:
+        raise ValueError("ACCUMULATOR_MAX_HURST_EXPONENT precisa ser maior que zero.")
+    if config.accumulator_max_velocity_zscore < 0 or config.accumulator_max_acceleration_zscore < 0:
+        raise ValueError("Limites de z-score das derivadas nao podem ser negativos.")
+    if config.accumulator_max_pmi_distance_percent < 0:
+        raise ValueError("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT nao pode ser negativo.")
 
     return config

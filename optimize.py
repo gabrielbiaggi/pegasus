@@ -43,6 +43,10 @@ def run_grid(
     bb_width_percents: list[float],
     tick_atr_percents: list[float],
     recent_move_percents: list[float],
+    max_hurst_exponents: list[float],
+    max_pmi_distance_percents: list[float],
+    max_hawkes_intensities: list[float],
+    max_abs_tick_imbalances: list[int],
     take_profit_percents: list[float],
     max_hold_ticks_values: list[int],
     cooldown_ticks_values: list[int],
@@ -62,6 +66,10 @@ def run_grid(
         bb_width_percent,
         tick_atr_percent,
         recent_move_percent,
+        max_hurst_exponent,
+        max_pmi_distance_percent,
+        max_hawkes_intensity,
+        max_abs_tick_imbalance,
         take_profit_percent,
         max_hold_ticks,
         cooldown_ticks,
@@ -70,6 +78,10 @@ def run_grid(
         bb_width_percents,
         tick_atr_percents,
         recent_move_percents,
+        max_hurst_exponents,
+        max_pmi_distance_percents,
+        max_hawkes_intensities,
+        max_abs_tick_imbalances,
         take_profit_percents,
         max_hold_ticks_values,
         cooldown_ticks_values,
@@ -79,6 +91,10 @@ def run_grid(
             max_bb_width_percent=bb_width_percent,
             max_tick_atr_percent=tick_atr_percent,
             max_recent_move_percent=recent_move_percent,
+            max_hurst_exponent=max_hurst_exponent,
+            max_pmi_distance_percent=max_pmi_distance_percent,
+            max_hawkes_intensity=max_hawkes_intensity,
+            max_abs_tick_imbalance=max_abs_tick_imbalance,
         )
         result = run_accumulator_backtest(
             ticks=normalized_ticks,
@@ -102,6 +118,10 @@ def run_grid(
                 "max_bb_width_percent": bb_width_percent,
                 "max_tick_atr_percent": tick_atr_percent,
                 "max_recent_move_percent": recent_move_percent,
+                "max_hurst_exponent": max_hurst_exponent,
+                "max_pmi_distance_percent": max_pmi_distance_percent,
+                "max_hawkes_intensity": max_hawkes_intensity,
+                "max_abs_tick_imbalance": max_abs_tick_imbalance,
                 "growth_rate": growth_rate,
                 "take_profit_percent": take_profit_percent,
                 "barrier_percent": barrier_percent,
@@ -148,6 +168,10 @@ def main() -> None:
     parser.add_argument("--bb-width-percents", default="0.04,0.06,0.08,0.10")
     parser.add_argument("--tick-atr-percents", default="0.008,0.01,0.015,0.02")
     parser.add_argument("--recent-move-percents", default="0.02,0.03,0.05")
+    parser.add_argument("--max-hurst-exponents", default="0.45,0.50,0.55,0.60")
+    parser.add_argument("--max-pmi-distance-percents", default="0.005,0.01,0.02,0.05")
+    parser.add_argument("--max-hawkes-intensities", default="0.2,0.5,1.0")
+    parser.add_argument("--max-abs-tick-imbalances", default="2,3,4")
     parser.add_argument("--take-profit-percents", default="3,4,5")
     parser.add_argument("--max-hold-ticks", default="3:8")
     parser.add_argument("--cooldown-ticks", default="0:5")
@@ -169,6 +193,10 @@ def main() -> None:
         bb_width_percents=parse_float_values(args.bb_width_percents),
         tick_atr_percents=parse_float_values(args.tick_atr_percents),
         recent_move_percents=parse_float_values(args.recent_move_percents),
+        max_hurst_exponents=parse_float_values(args.max_hurst_exponents),
+        max_pmi_distance_percents=parse_float_values(args.max_pmi_distance_percents),
+        max_hawkes_intensities=parse_float_values(args.max_hawkes_intensities),
+        max_abs_tick_imbalances=parse_int_range(args.max_abs_tick_imbalances),
         take_profit_percents=parse_float_values(args.take_profit_percents),
         max_hold_ticks_values=parse_int_range(args.max_hold_ticks),
         cooldown_ticks_values=parse_int_range(args.cooldown_ticks),
