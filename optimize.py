@@ -8,9 +8,9 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
-from backtest import load_ticks, parse_blocked_hours, run_accumulator_backtest
+from backtest import load_ticks, normalize_ticks, parse_blocked_hours, run_accumulator_backtest
 from logger import logger
-from strategy import AccumulatorStrategyConfig
+from strategy import AccumulatorStrategyConfig, calculate_tick_indicators
 
 
 def parse_int_range(value: str) -> list[int]:
@@ -54,6 +54,8 @@ def run_grid(
     min_trades: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    normalized_ticks = normalize_ticks(ticks)
+    indicator_frame = calculate_tick_indicators(normalized_ticks, config=AccumulatorStrategyConfig())
 
     for (
         min_score,
@@ -79,7 +81,7 @@ def run_grid(
             max_recent_move_percent=recent_move_percent,
         )
         result = run_accumulator_backtest(
-            ticks=ticks,
+            ticks=normalized_ticks,
             initial_balance=initial_balance,
             stake=stake,
             growth_rate=growth_rate,
@@ -89,6 +91,7 @@ def run_grid(
             cooldown_ticks=cooldown_ticks,
             strategy_config=strategy_config,
             blocked_utc_hours=blocked_utc_hours,
+            indicator_frame=indicator_frame,
         )
         if result["total_trades"] < min_trades:
             continue

@@ -69,17 +69,10 @@ def generate_accumulator_signal(
         return None, 0
 
     last = df.iloc[-1]
-    required = ["bb_width_percent", "tick_atr_percent", "recent_move_percent"]
-    if last[required].isna().any():
-        return None, 0
+    score = score_accumulator_row(last, config)
 
-    score = 0
-    if last["bb_width_percent"] <= config.max_bb_width_percent:
-        score += config.squeeze_weight
-    if last["tick_atr_percent"] <= config.max_tick_atr_percent:
-        score += config.atr_weight
-    if last["recent_move_percent"] <= config.max_recent_move_percent:
-        score += config.stability_weight
+    if score == 0 and last[["bb_width_percent", "tick_atr_percent", "recent_move_percent"]].isna().any():
+        return None, 0
 
     logger.info(
         "ACCU score=%s | BBWidth%%=%.4f | TickATR%%=%.4f | RecentMove%%=%.4f",
@@ -93,3 +86,19 @@ def generate_accumulator_signal(
         return "ACCU", score
 
     return None, 0
+
+
+def score_accumulator_row(row: pd.Series, config: AccumulatorStrategyConfig | None = None) -> int:
+    config = config or AccumulatorStrategyConfig()
+    required = ["bb_width_percent", "tick_atr_percent", "recent_move_percent"]
+    if row[required].isna().any():
+        return 0
+
+    score = 0
+    if row["bb_width_percent"] <= config.max_bb_width_percent:
+        score += config.squeeze_weight
+    if row["tick_atr_percent"] <= config.max_tick_atr_percent:
+        score += config.atr_weight
+    if row["recent_move_percent"] <= config.max_recent_move_percent:
+        score += config.stability_weight
+    return score

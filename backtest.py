@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 from logger import logger
-from strategy import AccumulatorStrategyConfig, calculate_tick_indicators, generate_accumulator_signal
+from strategy import AccumulatorStrategyConfig, calculate_tick_indicators
 
 
 def load_ticks(path: Path) -> list[dict[str, Any]]:
@@ -35,6 +35,13 @@ def load_ticks(path: Path) -> list[dict[str, Any]]:
         {"epoch": int(row["epoch"]), "quote": float(row["quote"])}
         for row in df[list(required)].to_dict("records")
     ]
+
+
+def normalize_ticks(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [{"epoch": int(tick["epoch"]), "quote": float(tick["quote"])} for tick in ticks],
+        key=lambda tick: tick["epoch"],
+    )
 
 
 def parse_blocked_hours(value: str) -> tuple[int, ...]:
@@ -68,14 +75,14 @@ def max_drawdown(equity_curve: list[float]) -> float:
     return worst
 
 
-def _metric(row: Any, name: str) -> float | None:
+def _clean_metric(value: Any) -> float | None:
     try:
-        value = float(row.get(name))
+        metric = float(value)
     except (TypeError, ValueError):
         return None
-    if value != value:
+    if metric != metric:
         return None
-    return value
+    return metric
 
 
 def simulate_accumulator_trade(
@@ -150,13 +157,29 @@ def run_accumulator_backtest(
     cooldown_ticks: int,
     strategy_config: AccumulatorStrategyConfig | None = None,
     blocked_utc_hours: tuple[int, ...] = (),
+    indicator_frame: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     strategy_config = strategy_config or AccumulatorStrategyConfig()
-    normalized_ticks = sorted(
-        [{"epoch": int(tick["epoch"]), "quote": float(tick["quote"])} for tick in ticks],
-        key=lambda tick: tick["epoch"],
-    )
-    df = calculate_tick_indicators(normalized_ticks, config=strategy_config)
+    normalized_ticks = normalize_ticks(ticks)
+    df = indicator_frame if indicator_frame is not None else calculate_tick_indicators(normalized_ticks, config=strategy_config)
+
+    if len(normalized_ticks) < strategy_config.minimum_ticks:
+        return {
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "winrate": 0.0,
+            "ending_balance": round(initial_balance, 2),
+            "net_profit": 0.0,
+            "max_drawdown_pct": 0.0,
+            "max_loss_streak": 0,
+            "trades": [],
+        }
+
+    epochs = [int(tick["epoch"]) for tick in normalized_ticks]
+    bb_widths = df["bb_width_percent"].to_numpy()
+    tick_atrs = df["tick_atr_percent"].to_numpy()
+    recent_moves = df["recent_move_percent"].to_numpy()
 
     balance = initial_balance
     equity_curve = [balance]
@@ -166,13 +189,26 @@ def run_accumulator_backtest(
     i = strategy_config.minimum_ticks - 1
 
     while i < len(normalized_ticks) - 1:
-        entry_epoch = int(normalized_ticks[i]["epoch"])
+        entry_epoch = epochs[i]
         if datetime.fromtimestamp(entry_epoch, UTC).hour in blocked_utc_hours:
             i += 1
             continue
 
-        signal, score = generate_accumulator_signal(df.iloc[: i + 1], config=strategy_config)
-        if signal != "ACCU":
+        bb_width = _clean_metric(bb_widths[i])
+        tick_atr = _clean_metric(tick_atrs[i])
+        recent_move = _clean_metric(recent_moves[i])
+        if bb_width is None or tick_atr is None or recent_move is None:
+            i += 1
+            continue
+
+        score = 0
+        if bb_width <= strategy_config.max_bb_width_percent:
+            score += strategy_config.squeeze_weight
+        if tick_atr <= strategy_config.max_tick_atr_percent:
+            score += strategy_config.atr_weight
+        if recent_move <= strategy_config.max_recent_move_percent:
+            score += strategy_config.stability_weight
+        if score < strategy_config.min_score:
             i += 1
             continue
 
@@ -195,7 +231,6 @@ def run_accumulator_backtest(
             loss_streak += 1
             max_loss_streak = max(max_loss_streak, loss_streak)
 
-        row = df.iloc[i]
         trades.append(
             {
                 "entry_epoch": entry_epoch,
@@ -210,9 +245,9 @@ def run_accumulator_backtest(
                 "held_ticks": simulated["held_ticks"],
                 "entry_quote": normalized_ticks[i]["quote"],
                 "exit_quote": simulated["exit_quote"],
-                "bb_width_percent": _metric(row, "bb_width_percent"),
-                "tick_atr_percent": _metric(row, "tick_atr_percent"),
-                "recent_move_percent": _metric(row, "recent_move_percent"),
+                "bb_width_percent": bb_width,
+                "tick_atr_percent": tick_atr,
+                "recent_move_percent": recent_move,
                 "max_adverse_move_percent": simulated["max_adverse_move_percent"],
                 "profit": profit,
                 "result": simulated["result"],
