@@ -20,6 +20,7 @@ except ImportError:
     _HAS_PSYCOPG2 = False
 
 from config import load_config
+from dotenv import load_dotenv
 from strategy import (
     AccumulatorStrategyConfig,
     accumulator_quant_filters_pass,
@@ -365,6 +366,9 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
 
 
 def main() -> None:
+    # Load .env before argparse so PG_DSN and other vars are visible via os.getenv
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Coleta ticks demo e grava dataset shadow com metricas e resultado futuro.")
     parser.add_argument("--ticks", type=int, default=600)
     parser.add_argument("--flush-every", type=int, default=100)
