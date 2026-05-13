@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from strategy import StrategyConfig
+from strategy import AccumulatorStrategyConfig
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -53,24 +53,10 @@ class BotConfig:
     token: str
     app_id: str
     account_mode: str
+    contract_mode: str
     symbol: str
     currency: str
     stake: float
-    duration: int
-    duration_unit: str
-    granularity: int
-    candle_count: int
-    min_signal_score: int
-    use_trend_filter: bool
-    trend_ema_window: int
-    use_atr_filter: bool
-    atr_window: int
-    min_atr_percent: float
-    rsi_extreme_weight: int
-    rsi_soft_weight: int
-    macd_cross_weight: int
-    bollinger_touch_weight: int
-    ema_cross_weight: int
     blocked_utc_hours: tuple[int, ...]
     max_loss_per_day: float
     max_profit_per_day: float
@@ -84,30 +70,40 @@ class BotConfig:
     use_soros: bool
     soros_max_steps: int
     soros_profit_factor: float
-    cooldown_candles: int
     journal_dir: str
     dry_run: bool
     allow_real_trading: bool
     reconnect_delay_seconds: int
+    tick_count: int
+    accumulator_growth_rate: float
+    accumulator_take_profit_percent: float
+    accumulator_max_hold_ticks: int
+    accumulator_cooldown_ticks: int
+    accumulator_use_limit_order: bool
+    accumulator_min_score: int
+    accumulator_bb_window: int
+    accumulator_bb_std_dev: float
+    accumulator_max_bb_width_percent: float
+    accumulator_atr_window: int
+    accumulator_max_tick_atr_percent: float
+    accumulator_recent_window: int
+    accumulator_max_recent_move_percent: float
 
     @property
     def ws_url(self) -> str:
         return f"wss://ws.derivws.com/websockets/v3?app_id={self.app_id}"
 
     @property
-    def strategy_config(self) -> StrategyConfig:
-        return StrategyConfig(
-            min_score=self.min_signal_score,
-            use_trend_filter=self.use_trend_filter,
-            trend_ema_window=self.trend_ema_window,
-            use_atr_filter=self.use_atr_filter,
-            atr_window=self.atr_window,
-            min_atr_percent=self.min_atr_percent,
-            rsi_extreme_weight=self.rsi_extreme_weight,
-            rsi_soft_weight=self.rsi_soft_weight,
-            macd_cross_weight=self.macd_cross_weight,
-            bollinger_touch_weight=self.bollinger_touch_weight,
-            ema_cross_weight=self.ema_cross_weight,
+    def accumulator_strategy_config(self) -> AccumulatorStrategyConfig:
+        return AccumulatorStrategyConfig(
+            min_score=self.accumulator_min_score,
+            bb_window=self.accumulator_bb_window,
+            bb_std_dev=self.accumulator_bb_std_dev,
+            max_bb_width_percent=self.accumulator_max_bb_width_percent,
+            atr_window=self.accumulator_atr_window,
+            max_tick_atr_percent=self.accumulator_max_tick_atr_percent,
+            recent_window=self.accumulator_recent_window,
+            max_recent_move_percent=self.accumulator_max_recent_move_percent,
         )
 
 
@@ -127,24 +123,10 @@ def load_config() -> BotConfig:
         token=token,
         app_id=app_id,
         account_mode=os.getenv("ACCOUNT_MODE", "demo").strip().lower(),
-        symbol=os.getenv("SYMBOL", "R_100").strip(),
+        contract_mode=os.getenv("CONTRACT_MODE", "accumulator").strip().lower(),
+        symbol=os.getenv("SYMBOL", "1HZ100V").strip(),
         currency=os.getenv("CURRENCY", "USD").strip().upper(),
         stake=_float_env("STAKE", 1.0),
-        duration=_int_env("DURATION", 5),
-        duration_unit=os.getenv("DURATION_UNIT", "m").strip(),
-        granularity=_int_env("GRANULARITY", 60),
-        candle_count=_int_env("CANDLE_COUNT", 260),
-        min_signal_score=_int_env("MIN_SIGNAL_SCORE", 5),
-        use_trend_filter=_bool_env("USE_TREND_FILTER", True),
-        trend_ema_window=_int_env("TREND_EMA_WINDOW", 200),
-        use_atr_filter=_bool_env("USE_ATR_FILTER", True),
-        atr_window=_int_env("ATR_WINDOW", 14),
-        min_atr_percent=_float_env("MIN_ATR_PERCENT", 0.05),
-        rsi_extreme_weight=_int_env("RSI_EXTREME_WEIGHT", 3),
-        rsi_soft_weight=_int_env("RSI_SOFT_WEIGHT", 1),
-        macd_cross_weight=_int_env("MACD_CROSS_WEIGHT", 3),
-        bollinger_touch_weight=_int_env("BOLLINGER_TOUCH_WEIGHT", 2),
-        ema_cross_weight=_int_env("EMA_CROSS_WEIGHT", 2),
         blocked_utc_hours=_hours_env("BLOCKED_UTC_HOURS"),
         max_loss_per_day=_float_env("MAX_LOSS_PER_DAY", 20.0),
         max_profit_per_day=_float_env("MAX_PROFIT_PER_DAY", 0.0),
@@ -158,41 +140,32 @@ def load_config() -> BotConfig:
         use_soros=_bool_env("USE_SOROS", False),
         soros_max_steps=_int_env("SOROS_MAX_STEPS", 1),
         soros_profit_factor=_float_env("SOROS_PROFIT_FACTOR", 1.0),
-        cooldown_candles=_int_env("COOLDOWN_CANDLES", 1),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
         dry_run=_bool_env("DRY_RUN", True),
         allow_real_trading=_bool_env("ALLOW_REAL_TRADING", False),
         reconnect_delay_seconds=_int_env("RECONNECT_DELAY_SECONDS", 10),
+        tick_count=_int_env("TICK_COUNT", 300),
+        accumulator_growth_rate=_float_env("ACCUMULATOR_GROWTH_RATE", 0.03),
+        accumulator_take_profit_percent=_float_env("ACCUMULATOR_TAKE_PROFIT_PERCENT", 3.0),
+        accumulator_max_hold_ticks=_int_env("ACCUMULATOR_MAX_HOLD_TICKS", 8),
+        accumulator_cooldown_ticks=_int_env("ACCUMULATOR_COOLDOWN_TICKS", 3),
+        accumulator_use_limit_order=_bool_env("ACCUMULATOR_USE_LIMIT_ORDER", False),
+        accumulator_min_score=_int_env("ACCUMULATOR_MIN_SCORE", 7),
+        accumulator_bb_window=_int_env("ACCUMULATOR_BB_WINDOW", 20),
+        accumulator_bb_std_dev=_float_env("ACCUMULATOR_BB_STD_DEV", 2.0),
+        accumulator_max_bb_width_percent=_float_env("ACCUMULATOR_MAX_BB_WIDTH_PERCENT", 0.08),
+        accumulator_atr_window=_int_env("ACCUMULATOR_ATR_WINDOW", 20),
+        accumulator_max_tick_atr_percent=_float_env("ACCUMULATOR_MAX_TICK_ATR_PERCENT", 0.015),
+        accumulator_recent_window=_int_env("ACCUMULATOR_RECENT_WINDOW", 5),
+        accumulator_max_recent_move_percent=_float_env("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT", 0.05),
     )
 
     if config.stake <= 0:
         raise ValueError("STAKE precisa ser maior que zero.")
-    if config.duration <= 0:
-        raise ValueError("DURATION precisa ser maior que zero.")
-    if config.granularity <= 0:
-        raise ValueError("GRANULARITY precisa ser maior que zero.")
-    if config.candle_count < config.strategy_config.minimum_candles:
-        raise ValueError(
-            f"CANDLE_COUNT deve ser pelo menos {config.strategy_config.minimum_candles} "
-            "para os filtros configurados."
-        )
     if config.account_mode not in {"demo", "real", "any"}:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
-    if config.trend_ema_window <= 0:
-        raise ValueError("TREND_EMA_WINDOW precisa ser maior que zero.")
-    if config.atr_window <= 0:
-        raise ValueError("ATR_WINDOW precisa ser maior que zero.")
-    if config.min_atr_percent < 0:
-        raise ValueError("MIN_ATR_PERCENT nao pode ser negativo.")
-    for name, value in {
-        "RSI_EXTREME_WEIGHT": config.rsi_extreme_weight,
-        "RSI_SOFT_WEIGHT": config.rsi_soft_weight,
-        "MACD_CROSS_WEIGHT": config.macd_cross_weight,
-        "BOLLINGER_TOUCH_WEIGHT": config.bollinger_touch_weight,
-        "EMA_CROSS_WEIGHT": config.ema_cross_weight,
-    }.items():
-        if value < 0:
-            raise ValueError(f"{name} nao pode ser negativo.")
+    if config.contract_mode != "accumulator":
+        raise ValueError("CONTRACT_MODE deve ser accumulator. Pegasus agora opera somente Accumulators por ticks.")
     if config.max_loss_per_day <= 0:
         raise ValueError("MAX_LOSS_PER_DAY precisa ser maior que zero.")
     if config.max_profit_per_day < 0:
@@ -211,7 +184,30 @@ def load_config() -> BotConfig:
         raise ValueError("SOROS_MAX_STEPS nao pode ser negativo.")
     if not 0 <= config.soros_profit_factor <= 1:
         raise ValueError("SOROS_PROFIT_FACTOR deve estar entre 0 e 1.")
-    if config.cooldown_candles < 0:
-        raise ValueError("COOLDOWN_CANDLES nao pode ser negativo.")
+    if config.tick_count < config.accumulator_strategy_config.minimum_ticks:
+        raise ValueError(
+            f"TICK_COUNT deve ser pelo menos {config.accumulator_strategy_config.minimum_ticks} "
+            "para Accumulators."
+        )
+    if config.accumulator_growth_rate not in {0.01, 0.02, 0.03, 0.04, 0.05}:
+        raise ValueError("ACCUMULATOR_GROWTH_RATE deve ser 0.01, 0.02, 0.03, 0.04 ou 0.05.")
+    if config.accumulator_take_profit_percent <= 0:
+        raise ValueError("ACCUMULATOR_TAKE_PROFIT_PERCENT precisa ser maior que zero.")
+    if config.accumulator_max_hold_ticks <= 0:
+        raise ValueError("ACCUMULATOR_MAX_HOLD_TICKS precisa ser maior que zero.")
+    if config.accumulator_cooldown_ticks < 0:
+        raise ValueError("ACCUMULATOR_COOLDOWN_TICKS nao pode ser negativo.")
+    if config.accumulator_min_score <= 0:
+        raise ValueError("ACCUMULATOR_MIN_SCORE precisa ser maior que zero.")
+    if config.accumulator_bb_window <= 1 or config.accumulator_atr_window <= 1:
+        raise ValueError("Janelas do accumulator precisam ser maiores que 1.")
+    if config.accumulator_recent_window <= 0:
+        raise ValueError("ACCUMULATOR_RECENT_WINDOW precisa ser maior que zero.")
+    if config.accumulator_bb_std_dev <= 0:
+        raise ValueError("ACCUMULATOR_BB_STD_DEV precisa ser maior que zero.")
+    if config.accumulator_max_bb_width_percent < 0 or config.accumulator_max_tick_atr_percent < 0:
+        raise ValueError("Filtros percentuais do accumulator nao podem ser negativos.")
+    if config.accumulator_max_recent_move_percent < 0:
+        raise ValueError("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT nao pode ser negativo.")
 
     return config

@@ -11,21 +11,30 @@ from typing import Any
 import pandas as pd
 
 from logger import logger
-from strategy import StrategyConfig, calculate_indicators, generate_signal
+from strategy import AccumulatorStrategyConfig, calculate_tick_indicators, generate_accumulator_signal
 
 
-def load_candles(path: Path) -> list[dict[str, Any]]:
+def load_ticks(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
-        candles = data["candles"] if isinstance(data, dict) and "candles" in data else data
-        return list(candles)
+        if isinstance(data, dict) and "history" in data:
+            history = data["history"]
+            return [
+                {"epoch": int(epoch), "quote": float(quote)}
+                for epoch, quote in zip(history.get("times", []), history.get("prices", []))
+            ]
+        rows = data["ticks"] if isinstance(data, dict) and "ticks" in data else data
+        return [{"epoch": int(row["epoch"]), "quote": float(row["quote"])} for row in rows]
 
     df = pd.read_csv(path)
-    required = {"epoch", "open", "high", "low", "close"}
+    required = {"epoch", "quote"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"Arquivo sem colunas obrigatorias: {sorted(missing)}")
-    return df[list(required)].to_dict("records")
+        raise ValueError(f"Arquivo sem colunas obrigatorias para ticks: {sorted(missing)}")
+    return [
+        {"epoch": int(row["epoch"]), "quote": float(row["quote"])}
+        for row in df[list(required)].to_dict("records")
+    ]
 
 
 def parse_blocked_hours(value: str) -> tuple[int, ...]:
@@ -59,69 +68,159 @@ def max_drawdown(equity_curve: list[float]) -> float:
     return worst
 
 
-def run_backtest(
-    candles: list[dict[str, Any]],
-    min_score: int,
+def _metric(row: Any, name: str) -> float | None:
+    try:
+        value = float(row.get(name))
+    except (TypeError, ValueError):
+        return None
+    if value != value:
+        return None
+    return value
+
+
+def simulate_accumulator_trade(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+    stake: float,
+    growth_rate: float,
+    take_profit_percent: float,
+    barrier_percent: float,
+    max_hold_ticks: int,
+) -> dict[str, Any]:
+    entry = ticks[entry_index]
+    entry_quote = float(entry["quote"])
+    target_profit = stake * take_profit_percent / 100
+    max_exit_index = min(entry_index + max_hold_ticks, len(ticks) - 1)
+    value = stake
+    max_move_percent = 0.0
+
+    for exit_index in range(entry_index + 1, max_exit_index + 1):
+        quote = float(ticks[exit_index]["quote"])
+        move_percent = abs((quote - entry_quote) / entry_quote * 100)
+        max_move_percent = max(max_move_percent, move_percent)
+
+        if move_percent >= barrier_percent:
+            return {
+                "exit_index": exit_index,
+                "exit_epoch": int(ticks[exit_index]["epoch"]),
+                "exit_quote": quote,
+                "held_ticks": exit_index - entry_index,
+                "profit": -stake,
+                "result": "LOSS",
+                "exit_reason": "barrier",
+                "max_adverse_move_percent": max_move_percent,
+            }
+
+        value *= 1 + growth_rate
+        profit = round(value - stake, 2)
+        if profit >= target_profit:
+            return {
+                "exit_index": exit_index,
+                "exit_epoch": int(ticks[exit_index]["epoch"]),
+                "exit_quote": quote,
+                "held_ticks": exit_index - entry_index,
+                "profit": profit,
+                "result": "WIN",
+                "exit_reason": "take_profit",
+                "max_adverse_move_percent": max_move_percent,
+            }
+
+    exit_quote = float(ticks[max_exit_index]["quote"])
+    profit = round(value - stake, 2)
+    return {
+        "exit_index": max_exit_index,
+        "exit_epoch": int(ticks[max_exit_index]["epoch"]),
+        "exit_quote": exit_quote,
+        "held_ticks": max_exit_index - entry_index,
+        "profit": profit,
+        "result": "WIN" if profit > 0 else "LOSS",
+        "exit_reason": "max_hold_ticks",
+        "max_adverse_move_percent": max_move_percent,
+    }
+
+
+def run_accumulator_backtest(
+    ticks: list[dict[str, Any]],
     initial_balance: float,
     stake: float,
-    duration_candles: int,
-    payout: float,
-    cooldown_candles: int,
-    strategy_config: StrategyConfig | None = None,
+    growth_rate: float,
+    take_profit_percent: float,
+    barrier_percent: float,
+    max_hold_ticks: int,
+    cooldown_ticks: int,
+    strategy_config: AccumulatorStrategyConfig | None = None,
     blocked_utc_hours: tuple[int, ...] = (),
 ) -> dict[str, Any]:
-    strategy_config = strategy_config or StrategyConfig(
-        min_score=min_score,
-        use_trend_filter=False,
-        use_atr_filter=False,
+    strategy_config = strategy_config or AccumulatorStrategyConfig()
+    normalized_ticks = sorted(
+        [{"epoch": int(tick["epoch"]), "quote": float(tick["quote"])} for tick in ticks],
+        key=lambda tick: tick["epoch"],
     )
+    df = calculate_tick_indicators(normalized_ticks, config=strategy_config)
+
     balance = initial_balance
     equity_curve = [balance]
     trades: list[dict[str, Any]] = []
     loss_streak = 0
     max_loss_streak = 0
-    i = strategy_config.minimum_candles
-    df = calculate_indicators(candles, config=strategy_config)
+    i = strategy_config.minimum_ticks - 1
 
-    while i < len(candles) - duration_candles:
-        entry_epoch = int(candles[i]["epoch"])
+    while i < len(normalized_ticks) - 1:
+        entry_epoch = int(normalized_ticks[i]["epoch"])
         if datetime.fromtimestamp(entry_epoch, UTC).hour in blocked_utc_hours:
             i += 1
             continue
 
-        signal, score = generate_signal(df.iloc[: i + 1], min_score=min_score, config=strategy_config)
-
-        if not signal:
+        signal, score = generate_accumulator_signal(df.iloc[: i + 1], config=strategy_config)
+        if signal != "ACCU":
             i += 1
             continue
 
-        entry = float(candles[i]["close"])
-        exit_price = float(candles[i + duration_candles]["close"])
-        won = exit_price > entry if signal == "CALL" else exit_price < entry
-        profit = round(stake * payout, 2) if won else -stake
+        simulated = simulate_accumulator_trade(
+            ticks=normalized_ticks,
+            entry_index=i,
+            stake=stake,
+            growth_rate=growth_rate,
+            take_profit_percent=take_profit_percent,
+            barrier_percent=barrier_percent,
+            max_hold_ticks=max_hold_ticks,
+        )
+        profit = float(simulated["profit"])
         balance = round(balance + profit, 2)
         equity_curve.append(balance)
 
-        if won:
+        if profit > 0:
             loss_streak = 0
         else:
             loss_streak += 1
             max_loss_streak = max(max_loss_streak, loss_streak)
 
+        row = df.iloc[i]
         trades.append(
             {
                 "entry_epoch": entry_epoch,
-                "exit_epoch": int(candles[i + duration_candles]["epoch"]),
-                "direction": signal,
+                "exit_epoch": simulated["exit_epoch"],
+                "direction": "ACCU",
                 "score": score,
-                "entry": entry,
-                "exit": exit_price,
+                "stake": stake,
+                "growth_rate": growth_rate,
+                "take_profit_percent": take_profit_percent,
+                "barrier_percent": barrier_percent,
+                "max_hold_ticks": max_hold_ticks,
+                "held_ticks": simulated["held_ticks"],
+                "entry_quote": normalized_ticks[i]["quote"],
+                "exit_quote": simulated["exit_quote"],
+                "bb_width_percent": _metric(row, "bb_width_percent"),
+                "tick_atr_percent": _metric(row, "tick_atr_percent"),
+                "recent_move_percent": _metric(row, "recent_move_percent"),
+                "max_adverse_move_percent": simulated["max_adverse_move_percent"],
                 "profit": profit,
-                "result": "WIN" if won else "LOSS",
+                "result": simulated["result"],
+                "exit_reason": simulated["exit_reason"],
                 "balance": balance,
             }
         )
-        i += duration_candles + cooldown_candles
+        i = int(simulated["exit_index"]) + cooldown_ticks + 1
 
     wins = sum(1 for trade in trades if trade["profit"] > 0)
     losses = len(trades) - wins
@@ -151,51 +250,48 @@ def write_trades(path: Path, trades: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest simples da estrategia do Pegasus.")
-    parser.add_argument("--candles", required=True, type=Path, help="CSV/JSON com epoch,open,high,low,close.")
-    parser.add_argument("--min-score", type=int, default=5)
-    parser.add_argument("--use-trend-filter", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--trend-ema-window", type=int, default=200)
-    parser.add_argument("--use-atr-filter", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--atr-window", type=int, default=14)
-    parser.add_argument("--min-atr-percent", type=float, default=0.05)
-    parser.add_argument("--rsi-extreme-weight", type=int, default=3)
-    parser.add_argument("--rsi-soft-weight", type=int, default=1)
-    parser.add_argument("--macd-cross-weight", type=int, default=3)
-    parser.add_argument("--bollinger-touch-weight", type=int, default=2)
-    parser.add_argument("--ema-cross-weight", type=int, default=2)
+    parser = argparse.ArgumentParser(description="Backtest de Accumulators 1s do Pegasus usando ticks.")
+    parser.add_argument("--ticks", "--data", dest="ticks", required=True, type=Path, help="CSV/JSON com epoch,quote.")
     parser.add_argument("--blocked-utc-hours", default="", help="Ex: 0,1,22-23.")
     parser.add_argument("--initial-balance", type=float, default=1000.0)
     parser.add_argument("--stake", type=float, default=1.0)
-    parser.add_argument("--duration-candles", type=int, default=5)
-    parser.add_argument("--payout", type=float, default=0.85)
-    parser.add_argument("--cooldown-candles", type=int, default=1)
+    parser.add_argument("--growth-rate", type=float, default=0.03)
+    parser.add_argument("--take-profit-percent", type=float, default=3.0)
+    parser.add_argument("--barrier-percent", type=float, default=0.05)
+    parser.add_argument("--max-hold-ticks", type=int, default=8)
+    parser.add_argument("--cooldown-ticks", type=int, default=3)
+    parser.add_argument("--min-score", type=int, default=7)
+    parser.add_argument("--bb-window", type=int, default=20)
+    parser.add_argument("--bb-std-dev", type=float, default=2.0)
+    parser.add_argument("--max-bb-width-percent", type=float, default=0.08)
+    parser.add_argument("--atr-window", type=int, default=20)
+    parser.add_argument("--max-tick-atr-percent", type=float, default=0.015)
+    parser.add_argument("--recent-window", type=int, default=5)
+    parser.add_argument("--max-recent-move-percent", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=None, help="CSV opcional com cada trade simulado.")
     args = parser.parse_args()
 
     logger.setLevel(logging.WARNING)
-    candles = load_candles(args.candles)
-    strategy_config = StrategyConfig(
+    ticks = load_ticks(args.ticks)
+    strategy_config = AccumulatorStrategyConfig(
         min_score=args.min_score,
-        use_trend_filter=args.use_trend_filter,
-        trend_ema_window=args.trend_ema_window,
-        use_atr_filter=args.use_atr_filter,
+        bb_window=args.bb_window,
+        bb_std_dev=args.bb_std_dev,
+        max_bb_width_percent=args.max_bb_width_percent,
         atr_window=args.atr_window,
-        min_atr_percent=args.min_atr_percent,
-        rsi_extreme_weight=args.rsi_extreme_weight,
-        rsi_soft_weight=args.rsi_soft_weight,
-        macd_cross_weight=args.macd_cross_weight,
-        bollinger_touch_weight=args.bollinger_touch_weight,
-        ema_cross_weight=args.ema_cross_weight,
+        max_tick_atr_percent=args.max_tick_atr_percent,
+        recent_window=args.recent_window,
+        max_recent_move_percent=args.max_recent_move_percent,
     )
-    result = run_backtest(
-        candles=candles,
-        min_score=args.min_score,
+    result = run_accumulator_backtest(
+        ticks=ticks,
         initial_balance=args.initial_balance,
         stake=args.stake,
-        duration_candles=args.duration_candles,
-        payout=args.payout,
-        cooldown_candles=args.cooldown_candles,
+        growth_rate=args.growth_rate,
+        take_profit_percent=args.take_profit_percent,
+        barrier_percent=args.barrier_percent,
+        max_hold_ticks=args.max_hold_ticks,
+        cooldown_ticks=args.cooldown_ticks,
         strategy_config=strategy_config,
         blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
     )

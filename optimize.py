@@ -8,9 +8,9 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
-from backtest import load_candles, parse_blocked_hours, run_backtest
+from backtest import load_ticks, parse_blocked_hours, run_accumulator_backtest
 from logger import logger
-from strategy import StrategyConfig
+from strategy import AccumulatorStrategyConfig
 
 
 def parse_int_range(value: str) -> list[int]:
@@ -38,66 +38,55 @@ def parse_float_values(value: str) -> list[float]:
 
 
 def run_grid(
-    candles: list[dict[str, Any]],
+    ticks: list[dict[str, Any]],
     min_scores: list[int],
-    duration_candles: list[int],
-    cooldown_candles: list[int],
-    rsi_extreme_weights: list[int],
-    macd_cross_weights: list[int],
-    bollinger_touch_weights: list[int],
-    ema_cross_weights: list[int],
-    min_atr_percents: list[float],
-    use_trend_filter: bool,
-    trend_ema_window: int,
-    use_atr_filter: bool,
-    atr_window: int,
+    bb_width_percents: list[float],
+    tick_atr_percents: list[float],
+    recent_move_percents: list[float],
+    take_profit_percents: list[float],
+    max_hold_ticks_values: list[int],
+    cooldown_ticks_values: list[int],
+    growth_rate: float,
+    barrier_percent: float,
     blocked_utc_hours: tuple[int, ...],
     initial_balance: float,
     stake: float,
-    payout: float,
     min_trades: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
     for (
         min_score,
-        duration,
-        cooldown,
-        rsi_extreme_weight,
-        macd_cross_weight,
-        bollinger_touch_weight,
-        ema_cross_weight,
-        min_atr_percent,
+        bb_width_percent,
+        tick_atr_percent,
+        recent_move_percent,
+        take_profit_percent,
+        max_hold_ticks,
+        cooldown_ticks,
     ) in product(
         min_scores,
-        duration_candles,
-        cooldown_candles,
-        rsi_extreme_weights,
-        macd_cross_weights,
-        bollinger_touch_weights,
-        ema_cross_weights,
-        min_atr_percents,
+        bb_width_percents,
+        tick_atr_percents,
+        recent_move_percents,
+        take_profit_percents,
+        max_hold_ticks_values,
+        cooldown_ticks_values,
     ):
-        strategy_config = StrategyConfig(
+        strategy_config = AccumulatorStrategyConfig(
             min_score=min_score,
-            use_trend_filter=use_trend_filter,
-            trend_ema_window=trend_ema_window,
-            use_atr_filter=use_atr_filter,
-            atr_window=atr_window,
-            min_atr_percent=min_atr_percent,
-            rsi_extreme_weight=rsi_extreme_weight,
-            macd_cross_weight=macd_cross_weight,
-            bollinger_touch_weight=bollinger_touch_weight,
-            ema_cross_weight=ema_cross_weight,
+            max_bb_width_percent=bb_width_percent,
+            max_tick_atr_percent=tick_atr_percent,
+            max_recent_move_percent=recent_move_percent,
         )
-        result = run_backtest(
-            candles=candles,
-            min_score=min_score,
+        result = run_accumulator_backtest(
+            ticks=ticks,
             initial_balance=initial_balance,
             stake=stake,
-            duration_candles=duration,
-            payout=payout,
-            cooldown_candles=cooldown,
+            growth_rate=growth_rate,
+            take_profit_percent=take_profit_percent,
+            barrier_percent=barrier_percent,
+            max_hold_ticks=max_hold_ticks,
+            cooldown_ticks=cooldown_ticks,
             strategy_config=strategy_config,
             blocked_utc_hours=blocked_utc_hours,
         )
@@ -107,13 +96,14 @@ def run_grid(
         rows.append(
             {
                 "min_score": min_score,
-                "duration_candles": duration,
-                "cooldown_candles": cooldown,
-                "rsi_extreme_weight": rsi_extreme_weight,
-                "macd_cross_weight": macd_cross_weight,
-                "bollinger_touch_weight": bollinger_touch_weight,
-                "ema_cross_weight": ema_cross_weight,
-                "min_atr_percent": min_atr_percent,
+                "max_bb_width_percent": bb_width_percent,
+                "max_tick_atr_percent": tick_atr_percent,
+                "max_recent_move_percent": recent_move_percent,
+                "growth_rate": growth_rate,
+                "take_profit_percent": take_profit_percent,
+                "barrier_percent": barrier_percent,
+                "max_hold_ticks": max_hold_ticks,
+                "cooldown_ticks": cooldown_ticks,
                 "total_trades": result["total_trades"],
                 "wins": result["wins"],
                 "losses": result["losses"],
@@ -131,6 +121,7 @@ def run_grid(
             row["winrate"],
             -row["max_drawdown_pct"],
             -row["max_loss_streak"],
+            row["total_trades"],
         ),
         reverse=True,
     )
@@ -148,49 +139,41 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Otimiza parametros do Pegasus usando backtest em grade.")
-    parser.add_argument("--candles", required=True, type=Path, help="CSV/JSON com epoch,open,high,low,close.")
-    parser.add_argument("--min-scores", default="5:8", help="Ex: 5:8, 4:10:2 ou 5,6,7.")
-    parser.add_argument("--durations", default="3:8", help="Duracao em candles. Ex: 3:8 ou 3,5,10.")
-    parser.add_argument("--cooldowns", default="0:3", help="Cooldown em candles. Ex: 0:3 ou 0,1,2.")
-    parser.add_argument("--rsi-extreme-weights", default="3", help="Ex: 3,4,5 ou 2:5.")
-    parser.add_argument("--macd-cross-weights", default="3", help="Ex: 1:4.")
-    parser.add_argument("--bollinger-touch-weights", default="2", help="Ex: 1:4.")
-    parser.add_argument("--ema-cross-weights", default="2", help="Ex: 0:3.")
-    parser.add_argument("--min-atr-percents", default="0.05", help="Lista separada por virgula. Ex: 0,0.03,0.05.")
-    parser.add_argument("--use-trend-filter", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--trend-ema-window", type=int, default=200)
-    parser.add_argument("--use-atr-filter", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--atr-window", type=int, default=14)
+    parser = argparse.ArgumentParser(description="Otimiza Pegasus Accumulators 1s usando backtest em ticks.")
+    parser.add_argument("--ticks", "--data", dest="ticks", required=True, type=Path, help="CSV/JSON com epoch,quote.")
+    parser.add_argument("--min-scores", default="7:10", help="Ex: 7:10, 6:10:2 ou 7,8,9.")
+    parser.add_argument("--bb-width-percents", default="0.04,0.06,0.08,0.10")
+    parser.add_argument("--tick-atr-percents", default="0.008,0.01,0.015,0.02")
+    parser.add_argument("--recent-move-percents", default="0.02,0.03,0.05")
+    parser.add_argument("--take-profit-percents", default="3,4,5")
+    parser.add_argument("--max-hold-ticks", default="3:8")
+    parser.add_argument("--cooldown-ticks", default="0:5")
+    parser.add_argument("--growth-rate", type=float, default=0.03)
+    parser.add_argument("--barrier-percent", type=float, default=0.05)
     parser.add_argument("--blocked-utc-hours", default="", help="Ex: 0,1,22-23.")
     parser.add_argument("--initial-balance", type=float, default=1000.0)
     parser.add_argument("--stake", type=float, default=1.0)
-    parser.add_argument("--payout", type=float, default=0.85)
     parser.add_argument("--min-trades", type=int, default=10)
     parser.add_argument("--top", type=int, default=10)
-    parser.add_argument("--output", type=Path, default=Path("logs/optimization.csv"))
+    parser.add_argument("--output", type=Path, default=Path("logs/accumulator_optimization.csv"))
     args = parser.parse_args()
 
     logger.setLevel(logging.WARNING)
-    candles = load_candles(args.candles)
+    ticks = load_ticks(args.ticks)
     rows = run_grid(
-        candles=candles,
+        ticks=ticks,
         min_scores=parse_int_range(args.min_scores),
-        duration_candles=parse_int_range(args.durations),
-        cooldown_candles=parse_int_range(args.cooldowns),
-        rsi_extreme_weights=parse_int_range(args.rsi_extreme_weights),
-        macd_cross_weights=parse_int_range(args.macd_cross_weights),
-        bollinger_touch_weights=parse_int_range(args.bollinger_touch_weights),
-        ema_cross_weights=parse_int_range(args.ema_cross_weights),
-        min_atr_percents=parse_float_values(args.min_atr_percents),
-        use_trend_filter=args.use_trend_filter,
-        trend_ema_window=args.trend_ema_window,
-        use_atr_filter=args.use_atr_filter,
-        atr_window=args.atr_window,
+        bb_width_percents=parse_float_values(args.bb_width_percents),
+        tick_atr_percents=parse_float_values(args.tick_atr_percents),
+        recent_move_percents=parse_float_values(args.recent_move_percents),
+        take_profit_percents=parse_float_values(args.take_profit_percents),
+        max_hold_ticks_values=parse_int_range(args.max_hold_ticks),
+        cooldown_ticks_values=parse_int_range(args.cooldown_ticks),
+        growth_rate=args.growth_rate,
+        barrier_percent=args.barrier_percent,
         blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
         initial_balance=args.initial_balance,
         stake=args.stake,
-        payout=args.payout,
         min_trades=args.min_trades,
     )
 

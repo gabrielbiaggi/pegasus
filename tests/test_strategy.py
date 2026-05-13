@@ -1,60 +1,40 @@
 import unittest
 
-import pandas as pd
-
 from logger import logger
-from strategy import StrategyConfig, generate_signal
+from strategy import AccumulatorStrategyConfig, calculate_tick_indicators, generate_accumulator_signal
 
 
 logger.disabled = True
 
 
-def signal_frame(rows: int = 205, close: float = 100, ema_trend: float = 90, atr_percent: float = 0.1) -> pd.DataFrame:
-    data = []
-    for _ in range(rows):
-        data.append(
-            {
-                "close": close,
-                "rsi": 50,
-                "macd_diff": 0,
-                "bb_upper": close + 10,
-                "bb_lower": close - 10,
-                "ema9": close,
-                "ema21": close,
-                "ema_trend": ema_trend,
-                "atr_percent": atr_percent,
-            }
-        )
-    return pd.DataFrame(data)
-
-
 class StrategyTest(unittest.TestCase):
-    def test_trend_filter_allows_call_above_ema200(self) -> None:
-        config = StrategyConfig(min_score=5, use_trend_filter=True, use_atr_filter=True)
-        df = signal_frame(close=110, ema_trend=100)
-        df.loc[df.index[-2], "macd_diff"] = -1
-        df.loc[df.index[-1], "macd_diff"] = 1
-        df.loc[df.index[-1], "rsi"] = 25
+    def test_accumulator_signal_accepts_compressed_ticks(self) -> None:
+        config = AccumulatorStrategyConfig(
+            min_score=7,
+            max_bb_width_percent=0.2,
+            max_tick_atr_percent=0.05,
+            max_recent_move_percent=0.05,
+        )
+        ticks = [{"epoch": 1_700_000_000 + i, "quote": 100 + (i % 2) * 0.001} for i in range(80)]
+        df = calculate_tick_indicators(ticks, config=config)
 
-        self.assertEqual(generate_signal(df, config=config), ("CALL", 6))
+        self.assertEqual(generate_accumulator_signal(df, config=config), ("ACCU", 10))
 
-    def test_trend_filter_blocks_call_below_ema200(self) -> None:
-        config = StrategyConfig(min_score=5, use_trend_filter=True, use_atr_filter=True)
-        df = signal_frame(close=90, ema_trend=100)
-        df.loc[df.index[-2], "macd_diff"] = -1
-        df.loc[df.index[-1], "macd_diff"] = 1
-        df.loc[df.index[-1], "rsi"] = 25
+    def test_accumulator_signal_blocks_wide_ticks(self) -> None:
+        config = AccumulatorStrategyConfig(
+            min_score=7,
+            max_bb_width_percent=0.01,
+            max_tick_atr_percent=0.001,
+            max_recent_move_percent=0.001,
+        )
+        ticks = [{"epoch": 1_700_000_000 + i, "quote": 100 + i * 0.1} for i in range(80)]
+        df = calculate_tick_indicators(ticks, config=config)
 
-        self.assertEqual(generate_signal(df, config=config), (None, 0))
+        self.assertEqual(generate_accumulator_signal(df, config=config), (None, 0))
 
-    def test_atr_filter_blocks_flat_market(self) -> None:
-        config = StrategyConfig(min_score=5, use_trend_filter=False, use_atr_filter=True, min_atr_percent=0.1)
-        df = signal_frame(close=100, atr_percent=0.01)
-        df.loc[df.index[-2], "macd_diff"] = -1
-        df.loc[df.index[-1], "macd_diff"] = 1
-        df.loc[df.index[-1], "rsi"] = 25
-
-        self.assertEqual(generate_signal(df, config=config), (None, 0))
+    def test_calculate_tick_indicators_requires_tick_schema(self) -> None:
+        with self.assertRaises(ValueError):
+            calculate_tick_indicators([{"epoch": 1_700_000_000, "close": 100}])
 
 
 if __name__ == "__main__":

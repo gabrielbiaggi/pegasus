@@ -14,7 +14,7 @@ from config import BotConfig, load_config
 from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
-from strategy import calculate_indicators, generate_signal
+from strategy import calculate_tick_indicators, generate_accumulator_signal
 
 
 class FatalBotError(RuntimeError):
@@ -23,23 +23,24 @@ class FatalBotError(RuntimeError):
 
 @dataclass
 class PendingOrder:
-    direction: str
     stake: float
     score: int
-    candle_epoch: int
+    entry_epoch: int
+    metrics: dict[str, Any] | None = None
 
 
 class DerivBot:
     def __init__(self, config: BotConfig):
         self.config = config
-        self.candle_buffer: deque[dict[str, Any]] = deque(maxlen=config.candle_count + 5)
+        self.tick_buffer: deque[dict[str, Any]] = deque(maxlen=config.tick_count + 5)
         self.risk: Optional[RiskManager] = None
         self.pending_order: Optional[PendingOrder] = None
         self.waiting_for_result = False
         self.current_contract_id: Optional[int] = None
         self.settled_contract_ids: set[int] = set()
-        self.last_evaluated_epoch: Optional[int] = None
-        self.last_trade_candle_epoch: Optional[int] = None
+        self.last_accumulator_entry_epoch: Optional[int] = None
+        self.accumulator_open_epoch: Optional[int] = None
+        self.accumulator_sell_requested = False
         self.journal = TradeJournal(config.journal_dir)
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
@@ -48,69 +49,66 @@ class DerivBot:
     async def authorize(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self.send(ws, {"authorize": self.config.token})
 
-    async def subscribe_candles(self, ws: websockets.WebSocketClientProtocol) -> None:
+    async def subscribe_ticks(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self.send(
             ws,
             {
                 "ticks_history": self.config.symbol,
-                "count": self.config.candle_count,
+                "count": self.config.tick_count,
                 "end": "latest",
-                "granularity": self.config.granularity,
-                "style": "candles",
+                "style": "ticks",
                 "subscribe": 1,
             },
         )
 
-    async def request_proposal(
+    async def request_accumulator_proposal(
         self,
         ws: websockets.WebSocketClientProtocol,
-        direction: str,
         stake: float,
         score: int,
-        candle_epoch: int,
+        entry_epoch: int,
+        metrics: dict[str, Any] | None = None,
     ) -> None:
-        self.pending_order = PendingOrder(direction, stake, score, candle_epoch)
+        self.pending_order = PendingOrder(stake, score, entry_epoch, metrics)
         self.journal.log_signal(
             symbol=self.config.symbol,
-            candle_epoch=candle_epoch,
-            direction=direction,
+            contract_mode=self.config.contract_mode,
+            entry_epoch=entry_epoch,
+            direction="ACCU",
             score=score,
             stake=stake,
             dry_run=self.config.dry_run,
+            metrics=metrics,
         )
 
         if self.config.dry_run:
             logger.info(
-                "DRY_RUN sinal=%s score=%s stake=%.2f candle=%s. Nenhuma ordem enviada.",
-                direction,
+                "DRY_RUN ACCU score=%s stake=%.2f entry=%s. Nenhuma ordem enviada.",
                 score,
                 stake,
-                candle_epoch,
+                entry_epoch,
             )
-            self.last_trade_candle_epoch = candle_epoch
+            self.last_accumulator_entry_epoch = entry_epoch
             self.pending_order = None
             return
 
-        logger.info(
-            "Solicitando proposta %s | stake=%.2f | ativo=%s | candle=%s",
-            direction,
-            stake,
-            self.config.symbol,
-            candle_epoch,
-        )
-        await self.send(
-            ws,
-            {
-                "proposal": 1,
-                "amount": stake,
-                "basis": "stake",
-                "contract_type": direction,
-                "currency": self.config.currency,
-                "duration": self.config.duration,
-                "duration_unit": self.config.duration_unit,
-                "symbol": self.config.symbol,
-            },
-        )
+        logger.info("Solicitando proposta ACCU | stake=%.2f | ativo=%s | epoch=%s", stake, self.config.symbol, entry_epoch)
+        payload: dict[str, Any] = {
+            "proposal": 1,
+            "amount": stake,
+            "basis": "stake",
+            "contract_type": "ACCU",
+            "currency": self.config.currency,
+            "symbol": self.config.symbol,
+            "growth_rate": self.config.accumulator_growth_rate,
+        }
+
+        if self.config.accumulator_use_limit_order:
+            payload["limit_order"] = {
+                "take_profit": round(stake * self.config.accumulator_take_profit_percent / 100, 2)
+            }
+
+        await self.send(ws, payload)
 
     async def buy_from_proposal(self, ws: websockets.WebSocketClientProtocol, proposal: dict[str, Any]) -> None:
         if not self.pending_order:
@@ -125,12 +123,7 @@ class DerivBot:
             return
 
         self.waiting_for_result = True
-        logger.info(
-            "Comprando contrato %s | proposal_id=%s | price=%s",
-            self.pending_order.direction,
-            proposal_id,
-            ask_price,
-        )
+        logger.info("Comprando ACCU | proposal_id=%s | price=%s", proposal_id, ask_price)
         await self.send(ws, {"buy": proposal_id, "price": ask_price})
 
     async def subscribe_contract(self, ws: websockets.WebSocketClientProtocol, contract_id: int) -> None:
@@ -143,64 +136,58 @@ class DerivBot:
             },
         )
 
-    def _append_or_update_candle(self, candle: dict[str, Any]) -> bool:
-        epoch = int(candle["epoch"])
+    async def sell_contract(
+        self,
+        ws: websockets.WebSocketClientProtocol,
+        contract_id: int,
+        price: float = 0.0,
+    ) -> None:
+        if self.accumulator_sell_requested:
+            return
+
+        self.accumulator_sell_requested = True
+        logger.info("Vendendo ACCU id=%s price=%s", contract_id, price)
+        await self.send(ws, {"sell": contract_id, "price": round(float(price), 2)})
+
+    def _append_tick(self, tick: dict[str, Any]) -> bool:
+        epoch = int(tick["epoch"])
         normalized = {
             "epoch": epoch,
-            "open": candle["open"],
-            "high": candle["high"],
-            "low": candle["low"],
-            "close": candle["close"],
+            "quote": tick["quote"],
         }
 
-        if self.candle_buffer and int(self.candle_buffer[-1]["epoch"]) == epoch:
-            self.candle_buffer[-1] = normalized
+        if self.tick_buffer and int(self.tick_buffer[-1]["epoch"]) == epoch:
+            self.tick_buffer[-1] = normalized
             return False
 
-        self.candle_buffer.append(normalized)
+        self.tick_buffer.append(normalized)
         return True
 
-    def _closed_candles_for_signal(self) -> list[dict[str, Any]]:
-        candles = list(self.candle_buffer)
-        if len(candles) < 2:
-            return []
-        return candles[:-1]
-
-    async def evaluate_closed_candle(self, ws: websockets.WebSocketClientProtocol) -> None:
+    async def evaluate_tick(self, ws: websockets.WebSocketClientProtocol, tick_epoch: int) -> None:
         if self.waiting_for_result:
-            logger.info("Aguardando resultado da operacao anterior.")
+            logger.info("Aguardando resultado da operacao ACCU anterior.")
             return
 
         if self.pending_order:
-            logger.info("Aguardando proposta/compra pendente.")
+            logger.info("Aguardando proposta/compra ACCU pendente.")
             return
 
         if not self.risk:
             logger.warning("RiskManager ainda nao inicializado.")
             return
 
-        closed_candles = self._closed_candles_for_signal()
-        if not closed_candles:
+        tick_hour = datetime.fromtimestamp(tick_epoch, UTC).hour
+        if tick_hour in self.config.blocked_utc_hours:
+            logger.info("Hora UTC bloqueada para novas entradas: %s", tick_hour)
             return
 
-        closed_epoch = int(closed_candles[-1]["epoch"])
-        if self.last_evaluated_epoch == closed_epoch:
-            return
-
-        self.last_evaluated_epoch = closed_epoch
-
-        closed_hour = datetime.fromtimestamp(closed_epoch, UTC).hour
-        if closed_hour in self.config.blocked_utc_hours:
-            logger.info("Hora UTC bloqueada para novas entradas: %s", closed_hour)
-            return
-
-        if self.last_trade_candle_epoch is not None:
-            candles_since_trade = (closed_epoch - self.last_trade_candle_epoch) // self.config.granularity
-            if candles_since_trade <= self.config.cooldown_candles:
+        if self.last_accumulator_entry_epoch is not None:
+            ticks_since_entry = tick_epoch - self.last_accumulator_entry_epoch
+            if ticks_since_entry <= self.config.accumulator_cooldown_ticks:
                 logger.info(
-                    "Cooldown ativo: %s candle(s) desde a ultima entrada; minimo=%s.",
-                    candles_since_trade,
-                    self.config.cooldown_candles + 1,
+                    "Cooldown ACCU ativo: %s tick(s) desde a ultima entrada; minimo=%s.",
+                    ticks_since_entry,
+                    self.config.accumulator_cooldown_ticks + 1,
                 )
                 return
 
@@ -208,16 +195,33 @@ class DerivBot:
             logger.warning("Bot pausado por regra de risco.")
             return
 
-        df = calculate_indicators(closed_candles)
-        signal, score = generate_signal(df, config=self.config.strategy_config)
+        df = calculate_tick_indicators(list(self.tick_buffer), config=self.config.accumulator_strategy_config)
+        signal, score = generate_accumulator_signal(df, config=self.config.accumulator_strategy_config)
 
-        if not signal:
-            logger.info("Sem sinal no candle fechado %s.", closed_epoch)
+        if signal != "ACCU":
+            logger.info("Sem setup ACCU no tick %s.", tick_epoch)
             return
 
         stake = self.risk.get_stake()
-        logger.info("Sinal detectado: %s score=%s stake=%.2f", signal, score, stake)
-        await self.request_proposal(ws, signal, stake, score, closed_epoch)
+        metrics = self._last_accumulator_metrics(df)
+        logger.info("Setup ACCU detectado: score=%s stake=%.2f", score, stake)
+        await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
+
+    @staticmethod
+    def _last_accumulator_metrics(df: Any) -> dict[str, float]:
+        if df.empty:
+            return {}
+
+        last = df.iloc[-1]
+        metrics: dict[str, float] = {}
+        for name in ("bb_width_percent", "tick_atr_percent", "recent_move_percent"):
+            try:
+                value = float(last.get(name))
+            except (TypeError, ValueError):
+                continue
+            if value == value:
+                metrics[name] = value
+        return metrics
 
     async def handle_authorize(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         auth = data["authorize"]
@@ -258,38 +262,34 @@ class DerivBot:
             soros_max_steps=self.config.soros_max_steps,
             soros_profit_factor=self.config.soros_profit_factor,
         )
-        await self.subscribe_candles(ws)
+        await self.subscribe_ticks(ws)
 
-    async def handle_candles(self, data: dict[str, Any]) -> None:
-        for candle in data.get("candles", []):
-            self._append_or_update_candle(candle)
-        logger.info("%s candles carregados.", len(self.candle_buffer))
+    async def handle_history(self, data: dict[str, Any]) -> None:
+        history = data.get("history", {})
+        times = history.get("times", [])
+        prices = history.get("prices", [])
+        for epoch, quote in zip(times, prices):
+            self._append_tick({"epoch": epoch, "quote": quote})
+        logger.info("%s ticks carregados.", len(self.tick_buffer))
 
-    async def handle_ohlc(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
-        ohlc = data["ohlc"]
-        is_new_candle = self._append_or_update_candle(
-            {
-                "epoch": ohlc["open_time"],
-                "open": ohlc["open"],
-                "high": ohlc["high"],
-                "low": ohlc["low"],
-                "close": ohlc["close"],
-            }
-        )
-
-        if is_new_candle:
-            await self.evaluate_closed_candle(ws)
+    async def handle_tick(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+        tick = data["tick"]
+        is_new_tick = self._append_tick({"epoch": tick["epoch"], "quote": tick["quote"]})
+        if is_new_tick:
+            await self.evaluate_tick(ws, int(tick["epoch"]))
 
     async def handle_buy(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         buy = data["buy"]
         contract_id = int(buy["contract_id"])
         self.current_contract_id = contract_id
         if self.pending_order:
-            self.last_trade_candle_epoch = self.pending_order.candle_epoch
-        logger.info("Contrato aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
+            self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
+            self.accumulator_open_epoch = self.pending_order.entry_epoch
+            self.accumulator_sell_requested = False
+        logger.info("Contrato ACCU aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
         await self.subscribe_contract(ws, contract_id)
 
-    def handle_contract_update(self, data: dict[str, Any]) -> None:
+    async def handle_contract_update(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         if not self.risk:
             logger.warning("Resultado recebido antes do RiskManager.")
             return
@@ -302,6 +302,23 @@ class DerivBot:
 
         is_sold = contract.get("status") == "sold" or bool(contract.get("is_sold")) or bool(contract.get("is_expired"))
         if not is_sold:
+            order = self.pending_order
+            if order and not self.accumulator_sell_requested:
+                profit = float(contract.get("profit", 0.0))
+                target_profit = order.stake * self.config.accumulator_take_profit_percent / 100
+                current_spot_time = int(contract.get("current_spot_time") or contract.get("date_start") or 0)
+                held_ticks = max(0, current_spot_time - (self.accumulator_open_epoch or current_spot_time))
+                if profit >= target_profit or held_ticks >= self.config.accumulator_max_hold_ticks:
+                    sell_price = float(contract.get("bid_price", 0.0) or 0.0)
+                    reason = "take_profit" if profit >= target_profit else "max_hold_ticks"
+                    logger.info(
+                        "Fechando ACCU por %s | profit=%.2f alvo=%.2f held_ticks=%s",
+                        reason,
+                        profit,
+                        target_profit,
+                        held_ticks,
+                    )
+                    await self.sell_contract(ws, contract_id, sell_price)
             return
 
         if contract_id in self.settled_contract_ids:
@@ -312,15 +329,21 @@ class DerivBot:
         profit = float(contract.get("profit", 0.0))
         buy_price = float(contract.get("buy_price", 0.0))
         if order:
+            exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
+            held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
             self.journal.log_trade(
                 symbol=self.config.symbol,
+                contract_mode=self.config.contract_mode,
                 contract_id=contract_id,
-                candle_epoch=order.candle_epoch,
-                direction=order.direction,
+                entry_epoch=order.entry_epoch,
+                direction="ACCU",
                 score=order.score,
                 stake=order.stake,
                 buy_price=buy_price,
                 profit=profit,
+                exit_epoch=exit_epoch,
+                held_ticks=held_ticks,
+                metrics=order.metrics,
             )
         self.risk.update(profit=profit, buy_price=buy_price)
         logger.info(self.risk.stats())
@@ -328,6 +351,8 @@ class DerivBot:
         self.waiting_for_result = False
         self.current_contract_id = None
         self.pending_order = None
+        self.accumulator_open_epoch = None
+        self.accumulator_sell_requested = False
 
     async def handle_message(self, ws: websockets.WebSocketClientProtocol, message: str) -> None:
         data = json.loads(message)
@@ -345,16 +370,18 @@ class DerivBot:
         msg_type = data.get("msg_type")
         if msg_type == "authorize":
             await self.handle_authorize(ws, data)
-        elif msg_type == "candles":
-            await self.handle_candles(data)
-        elif msg_type == "ohlc":
-            await self.handle_ohlc(ws, data)
+        elif msg_type == "history":
+            await self.handle_history(data)
+        elif msg_type == "tick":
+            await self.handle_tick(ws, data)
         elif msg_type == "proposal":
             await self.buy_from_proposal(ws, data["proposal"])
         elif msg_type == "buy":
             await self.handle_buy(ws, data)
         elif msg_type == "proposal_open_contract":
-            self.handle_contract_update(data)
+            await self.handle_contract_update(ws, data)
+        elif msg_type == "sell":
+            logger.info("Sell confirmado: %s", data.get("sell"))
         elif msg_type == "ping":
             logger.debug("Ping recebido.")
         else:
@@ -364,7 +391,7 @@ class DerivBot:
         while True:
             try:
                 logger.info(
-                    "Iniciando %s | ativo=%s | endpoint=%s",
+                    "Iniciando %s | Accumulators 1s | ativo=%s | endpoint=%s",
                     self.config.bot_name,
                     self.config.symbol,
                     self.config.ws_url,
