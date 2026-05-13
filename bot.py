@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections import deque
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 import websockets
@@ -188,6 +189,11 @@ class DerivBot:
 
         self.last_evaluated_epoch = closed_epoch
 
+        closed_hour = datetime.fromtimestamp(closed_epoch, UTC).hour
+        if closed_hour in self.config.blocked_utc_hours:
+            logger.info("Hora UTC bloqueada para novas entradas: %s", closed_hour)
+            return
+
         if self.last_trade_candle_epoch is not None:
             candles_since_trade = (closed_epoch - self.last_trade_candle_epoch) // self.config.granularity
             if candles_since_trade <= self.config.cooldown_candles:
@@ -203,7 +209,7 @@ class DerivBot:
             return
 
         df = calculate_indicators(closed_candles)
-        signal, score = generate_signal(df, min_score=self.config.min_signal_score)
+        signal, score = generate_signal(df, config=self.config.strategy_config)
 
         if not signal:
             logger.info("Sem sinal no candle fechado %s.", closed_epoch)
@@ -241,11 +247,16 @@ class DerivBot:
             max_loss_day=self.config.max_loss_per_day,
             max_profit_day=self.config.max_profit_per_day,
             max_trades_day=self.config.max_trades_per_day,
+            daily_trailing_start=self.config.daily_trailing_start,
+            daily_trailing_lock=self.config.daily_trailing_lock,
             max_stake_pct=self.config.max_stake_percent,
             fixed_stake=self.config.stake,
             min_stake=self.config.min_stake,
             max_stake=self.config.max_stake,
             max_consecutive_losses=self.config.max_consecutive_losses,
+            use_soros=self.config.use_soros,
+            soros_max_steps=self.config.soros_max_steps,
+            soros_profit_factor=self.config.soros_profit_factor,
         )
         await self.subscribe_candles(ws)
 

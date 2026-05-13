@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
@@ -8,7 +9,29 @@ import ta
 from logger import logger
 
 
-def calculate_indicators(candles: list[dict]) -> pd.DataFrame:
+@dataclass(frozen=True)
+class StrategyConfig:
+    min_score: int = 5
+    use_trend_filter: bool = True
+    trend_ema_window: int = 200
+    use_atr_filter: bool = True
+    atr_window: int = 14
+    min_atr_percent: float = 0.05
+    rsi_extreme_weight: int = 3
+    rsi_soft_weight: int = 1
+    macd_cross_weight: int = 3
+    bollinger_touch_weight: int = 2
+    ema_cross_weight: int = 2
+
+    @property
+    def minimum_candles(self) -> int:
+        trend_need = self.trend_ema_window + 2 if self.use_trend_filter else 35
+        atr_need = self.atr_window + 2 if self.use_atr_filter else 35
+        return max(35, trend_need, atr_need)
+
+
+def calculate_indicators(candles: list[dict], config: StrategyConfig | None = None) -> pd.DataFrame:
+    config = config or StrategyConfig(use_trend_filter=False, use_atr_filter=False)
     df = pd.DataFrame(candles)
     if df.empty:
         return df
@@ -42,56 +65,90 @@ def calculate_indicators(candles: list[dict]) -> pd.DataFrame:
 
     df["ema9"] = ta.trend.EMAIndicator(df["close"], window=9).ema_indicator()
     df["ema21"] = ta.trend.EMAIndicator(df["close"], window=21).ema_indicator()
+    df["ema_trend"] = ta.trend.EMAIndicator(df["close"], window=config.trend_ema_window).ema_indicator()
+    df["atr"] = ta.volatility.AverageTrueRange(
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        window=config.atr_window,
+    ).average_true_range()
+    df["atr_percent"] = df["atr"] / df["close"] * 100
 
     return df
 
 
-def generate_signal(df: pd.DataFrame, min_score: int = 5) -> tuple[Optional[str], int]:
-    if len(df) < 35:
+def generate_signal(
+    df: pd.DataFrame,
+    min_score: int | None = None,
+    config: StrategyConfig | None = None,
+) -> tuple[Optional[str], int]:
+    config = config or StrategyConfig(use_trend_filter=False, use_atr_filter=False)
+    min_score = config.min_score if min_score is None else min_score
+
+    if len(df) < config.minimum_candles:
         return None, 0
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
     required = ["rsi", "macd_diff", "bb_upper", "bb_lower", "ema9", "ema21"]
+    if config.use_trend_filter:
+        required.append("ema_trend")
+    if config.use_atr_filter:
+        required.append("atr_percent")
 
     if last[required].isna().any() or prev[required].isna().any():
+        return None, 0
+
+    if config.use_atr_filter and last["atr_percent"] < config.min_atr_percent:
+        logger.info(
+            "Filtro ATR bloqueou sinal: atr_percent=%.4f minimo=%.4f",
+            last["atr_percent"],
+            config.min_atr_percent,
+        )
         return None, 0
 
     call_score = 0
     put_score = 0
 
     if last["rsi"] < 30:
-        call_score += 3
+        call_score += config.rsi_extreme_weight
     elif last["rsi"] < 40:
-        call_score += 1
+        call_score += config.rsi_soft_weight
 
     if last["rsi"] > 70:
-        put_score += 3
+        put_score += config.rsi_extreme_weight
     elif last["rsi"] > 60:
-        put_score += 1
+        put_score += config.rsi_soft_weight
 
     if prev["macd_diff"] < 0 and last["macd_diff"] > 0:
-        call_score += 3
+        call_score += config.macd_cross_weight
     elif prev["macd_diff"] > 0 and last["macd_diff"] < 0:
-        put_score += 3
+        put_score += config.macd_cross_weight
 
     if last["close"] <= last["bb_lower"]:
-        call_score += 2
+        call_score += config.bollinger_touch_weight
     elif last["close"] >= last["bb_upper"]:
-        put_score += 2
+        put_score += config.bollinger_touch_weight
 
     if prev["ema9"] < prev["ema21"] and last["ema9"] > last["ema21"]:
-        call_score += 2
+        call_score += config.ema_cross_weight
     elif prev["ema9"] > prev["ema21"] and last["ema9"] < last["ema21"]:
-        put_score += 2
+        put_score += config.ema_cross_weight
 
     logger.info(
-        "Score CALL=%s | PUT=%s | RSI=%.1f | close=%s",
+        "Score CALL=%s | PUT=%s | RSI=%.1f | ATR%%=%.4f | close=%s",
         call_score,
         put_score,
         last["rsi"],
+        last.get("atr_percent", 0.0),
         last["close"],
     )
+
+    if config.use_trend_filter:
+        if last["close"] <= last["ema_trend"]:
+            call_score = 0
+        if last["close"] >= last["ema_trend"]:
+            put_score = 0
 
     if call_score >= min_score and call_score > put_score:
         return "CALL", call_score

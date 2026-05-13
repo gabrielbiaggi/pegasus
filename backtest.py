@@ -4,13 +4,14 @@ import argparse
 import csv
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from logger import logger
-from strategy import calculate_indicators, generate_signal
+from strategy import StrategyConfig, calculate_indicators, generate_signal
 
 
 def load_candles(path: Path) -> list[dict[str, Any]]:
@@ -25,6 +26,27 @@ def load_candles(path: Path) -> list[dict[str, Any]]:
     if missing:
         raise ValueError(f"Arquivo sem colunas obrigatorias: {sorted(missing)}")
     return df[list(required)].to_dict("records")
+
+
+def parse_blocked_hours(value: str) -> tuple[int, ...]:
+    if not value:
+        return ()
+
+    hours: set[int] = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = [int(item.strip()) for item in part.split("-", 1)]
+            hours.update(range(start, end + 1))
+        else:
+            hours.add(int(part))
+
+    invalid = [hour for hour in hours if hour < 0 or hour > 23]
+    if invalid:
+        raise ValueError(f"Horas UTC invalidas: {invalid}")
+    return tuple(sorted(hours))
 
 
 def max_drawdown(equity_curve: list[float]) -> float:
@@ -45,18 +67,29 @@ def run_backtest(
     duration_candles: int,
     payout: float,
     cooldown_candles: int,
+    strategy_config: StrategyConfig | None = None,
+    blocked_utc_hours: tuple[int, ...] = (),
 ) -> dict[str, Any]:
+    strategy_config = strategy_config or StrategyConfig(
+        min_score=min_score,
+        use_trend_filter=False,
+        use_atr_filter=False,
+    )
     balance = initial_balance
     equity_curve = [balance]
     trades: list[dict[str, Any]] = []
     loss_streak = 0
     max_loss_streak = 0
-    i = 40
+    i = strategy_config.minimum_candles
+    df = calculate_indicators(candles, config=strategy_config)
 
     while i < len(candles) - duration_candles:
-        history = candles[: i + 1]
-        df = calculate_indicators(history)
-        signal, score = generate_signal(df, min_score=min_score)
+        entry_epoch = int(candles[i]["epoch"])
+        if datetime.fromtimestamp(entry_epoch, UTC).hour in blocked_utc_hours:
+            i += 1
+            continue
+
+        signal, score = generate_signal(df.iloc[: i + 1], min_score=min_score, config=strategy_config)
 
         if not signal:
             i += 1
@@ -77,7 +110,7 @@ def run_backtest(
 
         trades.append(
             {
-                "entry_epoch": int(candles[i]["epoch"]),
+                "entry_epoch": entry_epoch,
                 "exit_epoch": int(candles[i + duration_candles]["epoch"]),
                 "direction": signal,
                 "score": score,
@@ -121,6 +154,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Backtest simples da estrategia do Pegasus.")
     parser.add_argument("--candles", required=True, type=Path, help="CSV/JSON com epoch,open,high,low,close.")
     parser.add_argument("--min-score", type=int, default=5)
+    parser.add_argument("--use-trend-filter", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--trend-ema-window", type=int, default=200)
+    parser.add_argument("--use-atr-filter", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--atr-window", type=int, default=14)
+    parser.add_argument("--min-atr-percent", type=float, default=0.05)
+    parser.add_argument("--rsi-extreme-weight", type=int, default=3)
+    parser.add_argument("--rsi-soft-weight", type=int, default=1)
+    parser.add_argument("--macd-cross-weight", type=int, default=3)
+    parser.add_argument("--bollinger-touch-weight", type=int, default=2)
+    parser.add_argument("--ema-cross-weight", type=int, default=2)
+    parser.add_argument("--blocked-utc-hours", default="", help="Ex: 0,1,22-23.")
     parser.add_argument("--initial-balance", type=float, default=1000.0)
     parser.add_argument("--stake", type=float, default=1.0)
     parser.add_argument("--duration-candles", type=int, default=5)
@@ -131,6 +175,19 @@ def main() -> None:
 
     logger.setLevel(logging.WARNING)
     candles = load_candles(args.candles)
+    strategy_config = StrategyConfig(
+        min_score=args.min_score,
+        use_trend_filter=args.use_trend_filter,
+        trend_ema_window=args.trend_ema_window,
+        use_atr_filter=args.use_atr_filter,
+        atr_window=args.atr_window,
+        min_atr_percent=args.min_atr_percent,
+        rsi_extreme_weight=args.rsi_extreme_weight,
+        rsi_soft_weight=args.rsi_soft_weight,
+        macd_cross_weight=args.macd_cross_weight,
+        bollinger_touch_weight=args.bollinger_touch_weight,
+        ema_cross_weight=args.ema_cross_weight,
+    )
     result = run_backtest(
         candles=candles,
         min_score=args.min_score,
@@ -139,6 +196,8 @@ def main() -> None:
         duration_candles=args.duration_candles,
         payout=args.payout,
         cooldown_candles=args.cooldown_candles,
+        strategy_config=strategy_config,
+        blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
     )
 
     if args.output:

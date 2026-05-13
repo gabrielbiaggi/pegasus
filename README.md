@@ -79,12 +79,32 @@ STAKE=1.00
 
 O bot persiste o estado diario de risco em `logs/risk_state.json` para evitar que um restart zere a perda diaria.
 
+## Estrategia
+
+O score de entrada continua combinando RSI, MACD, Bollinger Bands e cruzamento EMA 9/21, mas agora existem dois filtros de qualidade antes da ordem:
+
+- `USE_TREND_FILTER=true`: CALL so passa se o fechamento estiver acima da `TREND_EMA_WINDOW` e PUT so passa se estiver abaixo.
+- `USE_ATR_FILTER=true`: bloqueia entradas quando `atr_percent` estiver abaixo de `MIN_ATR_PERCENT`.
+- `BLOCKED_UTC_HOURS=0,1,22-23`: bloqueia entradas em horas UTC especificas depois que o journal mostrar periodos ruins.
+
+Os pesos do score sao configuraveis:
+
+```env
+RSI_EXTREME_WEIGHT=3
+RSI_SOFT_WEIGHT=1
+MACD_CROSS_WEIGHT=3
+BOLLINGER_TOUCH_WEIGHT=2
+EMA_CROSS_WEIGHT=2
+```
+
 ## Regras de risco
 
 - Bloqueia novas entradas ao atingir `MAX_LOSS_PER_DAY`.
 - Bloqueia novas entradas ao atingir `MAX_PROFIT_PER_DAY`, quando maior que zero.
 - Bloqueia novas entradas ao atingir `MAX_TRADES_PER_DAY`.
 - Bloqueia novas entradas ao atingir `MAX_CONSECUTIVE_LOSSES`.
+- Ativa trailing diario com `DAILY_TRAILING_START` e protege `DAILY_TRAILING_LOCK`.
+- Pode usar Soros conservador com `USE_SOROS=true`, `SOROS_MAX_STEPS` e `SOROS_PROFIT_FACTOR`.
 - Calcula a stake como o menor valor entre `STAKE`, `balance * MAX_STAKE_PERCENT` e `MAX_STAKE`.
 - Nao opera se a stake calculada ficar abaixo de `MIN_STAKE`.
 - Avalia somente candles fechados para evitar multiplas entradas no mesmo candle em formacao.
@@ -102,7 +122,7 @@ python download_candles.py --symbol R_100 --granularity 60 --count 5000 --output
 Rode a simulacao:
 
 ```bash
-python backtest.py --candles data/candles_R_100.csv --initial-balance 1000 --duration-candles 5 --stake 1 --payout 0.85 --output logs/backtest_trades.csv
+python backtest.py --candles data/candles_R_100.csv --initial-balance 1000 --duration-candles 5 --stake 1 --payout 0.85 --trend-ema-window 200 --min-atr-percent 0.05 --output logs/backtest_trades.csv
 ```
 
 O backtest e aproximado: ele usa fechamento futuro do candle e payout fixo. Ele serve para filtrar configuracoes ruins antes de qualquer teste demo ao vivo, nao para prometer resultado real.
@@ -112,7 +132,7 @@ O backtest e aproximado: ele usa fechamento futuro do candle e payout fixo. Ele 
 Depois de baixar candles, rode uma grade simples de parametros:
 
 ```bash
-python optimize.py --candles data/candles_R_100.csv --min-scores 5:8 --durations 3:8 --cooldowns 0:3 --min-trades 20 --output logs/optimization.csv
+python optimize.py --candles data/candles_R_100.csv --min-scores 5:8 --durations 3:8 --cooldowns 0:3 --rsi-extreme-weights 3:5 --macd-cross-weights 1:3 --ema-cross-weights 0:2 --min-atr-percents 0,0.03,0.05 --min-trades 20 --output logs/optimization.csv
 ```
 
 O resultado ordena por lucro liquido, winrate, drawdown e sequencia de perdas. Use isso como filtro inicial; a configuracao vencedora ainda precisa passar por demo ao vivo.
