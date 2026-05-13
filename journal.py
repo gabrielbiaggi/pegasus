@@ -25,6 +25,10 @@ class TradeJournal:
         "velocity_zscore",
         "acceleration_zscore",
         "pmi_distance_percent",
+        "markov_p_up_given_up",
+        "markov_p_down_given_down",
+        "shannon_entropy",
+        "kalman_residual_zscore",
     ]
     trade_fields = [
         "timestamp",
@@ -49,6 +53,10 @@ class TradeJournal:
         "velocity_zscore",
         "acceleration_zscore",
         "pmi_distance_percent",
+        "markov_p_up_given_up",
+        "markov_p_down_given_down",
+        "shannon_entropy",
+        "kalman_residual_zscore",
     ]
 
     def __init__(self, directory: str = "logs"):
@@ -115,6 +123,10 @@ class TradeJournal:
                 "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
                 "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
                 "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
+                "markov_p_up_given_up": self._format_metric(metrics, "markov_p_up_given_up"),
+                "markov_p_down_given_down": self._format_metric(metrics, "markov_p_down_given_down"),
+                "shannon_entropy": self._format_metric(metrics, "shannon_entropy"),
+                "kalman_residual_zscore": self._format_metric(metrics, "kalman_residual_zscore"),
             },
         )
 
@@ -160,5 +172,9 @@ class TradeJournal:
                 "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
                 "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
                 "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
+                "markov_p_up_given_up": self._format_metric(metrics, "markov_p_up_given_up"),
+                "markov_p_down_given_down": self._format_metric(metrics, "markov_p_down_given_down"),
+                "shannon_entropy": self._format_metric(metrics, "shannon_entropy"),
+                "kalman_residual_zscore": self._format_metric(metrics, "kalman_residual_zscore"),
             },
         )

@@ -12,7 +12,7 @@ def compressed_ticks(total: int = 90, spike_after_setup: bool = False) -> list[d
     ticks = []
     for index in range(total):
         quote = 100 + (index % 2) * 0.001
-        if spike_after_setup and index == 35:
+        if spike_after_setup and index == 60:
             quote = 100.2
         ticks.append({"epoch": 1_700_000_000 + index, "quote": quote})
     return ticks
@@ -43,6 +43,9 @@ class BacktestTest(unittest.TestCase):
                 max_velocity_zscore=10,
                 max_acceleration_zscore=10,
                 max_pmi_distance_percent=10,
+                max_markov_continuation_prob=2,
+                min_shannon_entropy=0,
+                max_kalman_residual_zscore=10,
             ),
         )
 
@@ -72,6 +75,9 @@ class BacktestTest(unittest.TestCase):
                 max_velocity_zscore=10,
                 max_acceleration_zscore=10,
                 max_pmi_distance_percent=10,
+                max_markov_continuation_prob=2,
+                min_shannon_entropy=0,
+                max_kalman_residual_zscore=10,
             ),
         )
 

@@ -224,6 +224,10 @@ class DerivBot:
             "velocity_zscore",
             "acceleration_zscore",
             "pmi_distance_percent",
+            "markov_p_up_given_up",
+            "markov_p_down_given_down",
+            "shannon_entropy",
+            "kalman_residual_zscore",
         ):
             try:
                 value = float(last.get(name))

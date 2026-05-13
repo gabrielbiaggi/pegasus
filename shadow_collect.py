@@ -34,6 +34,10 @@ FIELDS = [
     "velocity_zscore",
     "acceleration_zscore",
     "pmi_distance_percent",
+    "markov_p_up_given_up",
+    "markov_p_down_given_down",
+    "shannon_entropy",
+    "kalman_residual_zscore",
     "future_result",
     "future_exit_epoch",
     "future_exit_quote",
@@ -191,6 +195,10 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                             "velocity_zscore": _metric(last, "velocity_zscore"),
                             "acceleration_zscore": _metric(last, "acceleration_zscore"),
                             "pmi_distance_percent": _metric(last, "pmi_distance_percent"),
+                            "markov_p_up_given_up": _metric(last, "markov_p_up_given_up"),
+                            "markov_p_down_given_down": _metric(last, "markov_p_down_given_down"),
+                            "shannon_entropy": _metric(last, "shannon_entropy"),
+                            "kalman_residual_zscore": _metric(last, "kalman_residual_zscore"),
                         },
                     }
                 )

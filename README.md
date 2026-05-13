@@ -82,6 +82,13 @@ ACCUMULATOR_MAX_VELOCITY_ZSCORE=2.0
 ACCUMULATOR_MAX_ACCELERATION_ZSCORE=2.0
 ACCUMULATOR_INTEGRAL_WINDOW=20
 ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT=0.005
+ACCUMULATOR_MARKOV_WINDOW=50
+ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB=0.45
+ACCUMULATOR_SHANNON_ENTROPY_WINDOW=30
+ACCUMULATOR_MIN_SHANNON_ENTROPY=0.80
+ACCUMULATOR_KALMAN_Q=1e-5
+ACCUMULATOR_KALMAN_R=1e-2
+ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE=2.0
 ```
 
 O score usa tres filtros:
@@ -97,6 +104,9 @@ Depois do score minimo, o sinal passa por filtros quantitativos em cascata:
 - `hawkes_intensity <= 0.2`: rejeita auto-excitacao depois de saltos.
 - `velocity_zscore` e `acceleration_zscore <= 2.0`: bloqueia velocidade/aceleracao anormais.
 - `pmi_distance_percent <= 0.005`: exige preco perto do centro de massa pela integral trapezoidal.
+- `markov_p_up_given_up` e `markov_p_down_given_down < 0.45`: rejeita continuidade direcional.
+- `shannon_entropy >= 0.80`: exige ruido distribuido, sem padrao direcional concentrado.
+- `kalman_residual_zscore <= 2.0`: rejeita tick distante demais do estado estimado pelo filtro de Kalman.
 
 Quando o contrato esta aberto, o bot monitora `proposal_open_contract` e vende via API ao atingir o lucro alvo ou `ACCUMULATOR_MAX_HOLD_TICKS`. A ideia operacional e sair rapido; Accumulators punem permanencia longa em regioes de spike.
 
@@ -147,7 +157,10 @@ python optimize.py \
   --max-hurst-exponents 0.45,0.50,0.55,0.60 \
   --max-pmi-distance-percents 0.005,0.01,0.02,0.05 \
   --max-hawkes-intensities 0.2,0.5,1.0 \
-  --max-abs-tick-imbalances 2,3,4
+  --max-abs-tick-imbalances 2,3,4 \
+  --max-markov-continuation-probs 0.45,0.50,0.60 \
+  --min-shannon-entropies 0.70,0.80,0.90 \
+  --max-kalman-residual-zscores 2.0,2.5,3.0
 ```
 
 - `logs/signals.csv`: sinais aceitos com `entry_epoch`, score e metricas de compressao.
@@ -205,6 +218,13 @@ python optimize.py \
   --bb-width-percents 0.04,0.06,0.08 \
   --tick-atr-percents 0.008,0.01,0.015 \
   --recent-move-percents 0.02,0.03,0.05 \
+  --max-hurst-exponents 0.45,0.55,0.60 \
+  --max-pmi-distance-percents 0.005,0.02,0.05 \
+  --max-hawkes-intensities 0.2,1.0 \
+  --max-abs-tick-imbalances 2,4 \
+  --max-markov-continuation-probs 0.45,0.55 \
+  --min-shannon-entropies 0.70,0.80 \
+  --max-kalman-residual-zscores 2.0,3.0 \
   --take-profit-percents 3,4,5 \
   --max-hold-ticks 3:8 \
   --cooldown-ticks 0:5 \

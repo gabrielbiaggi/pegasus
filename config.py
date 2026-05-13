@@ -101,6 +101,13 @@ class BotConfig:
     accumulator_max_acceleration_zscore: float
     accumulator_integral_window: int
     accumulator_max_pmi_distance_percent: float
+    accumulator_markov_window: int
+    accumulator_max_markov_continuation_prob: float
+    accumulator_shannon_entropy_window: int
+    accumulator_min_shannon_entropy: float
+    accumulator_kalman_q: float
+    accumulator_kalman_r: float
+    accumulator_max_kalman_residual_zscore: float
 
     @property
     def ws_url(self) -> str:
@@ -130,6 +137,13 @@ class BotConfig:
             max_acceleration_zscore=self.accumulator_max_acceleration_zscore,
             integral_window=self.accumulator_integral_window,
             max_pmi_distance_percent=self.accumulator_max_pmi_distance_percent,
+            markov_window=self.accumulator_markov_window,
+            max_markov_continuation_prob=self.accumulator_max_markov_continuation_prob,
+            shannon_entropy_window=self.accumulator_shannon_entropy_window,
+            min_shannon_entropy=self.accumulator_min_shannon_entropy,
+            kalman_q=self.accumulator_kalman_q,
+            kalman_r=self.accumulator_kalman_r,
+            max_kalman_residual_zscore=self.accumulator_max_kalman_residual_zscore,
         )
 
 
@@ -197,6 +211,13 @@ def load_config() -> BotConfig:
         accumulator_max_acceleration_zscore=_float_env("ACCUMULATOR_MAX_ACCELERATION_ZSCORE", 2.0),
         accumulator_integral_window=_int_env("ACCUMULATOR_INTEGRAL_WINDOW", 20),
         accumulator_max_pmi_distance_percent=_float_env("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT", 0.005),
+        accumulator_markov_window=_int_env("ACCUMULATOR_MARKOV_WINDOW", 50),
+        accumulator_max_markov_continuation_prob=_float_env("ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB", 0.45),
+        accumulator_shannon_entropy_window=_int_env("ACCUMULATOR_SHANNON_ENTROPY_WINDOW", 30),
+        accumulator_min_shannon_entropy=_float_env("ACCUMULATOR_MIN_SHANNON_ENTROPY", 0.80),
+        accumulator_kalman_q=_float_env("ACCUMULATOR_KALMAN_Q", 1e-5),
+        accumulator_kalman_r=_float_env("ACCUMULATOR_KALMAN_R", 1e-2),
+        accumulator_max_kalman_residual_zscore=_float_env("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE", 2.0),
     )
 
     if config.stake <= 0:
@@ -250,6 +271,10 @@ def load_config() -> BotConfig:
         raise ValueError("ACCUMULATOR_DERIVATIVE_WINDOW precisa ser maior que 1.")
     if config.accumulator_integral_window <= 1:
         raise ValueError("ACCUMULATOR_INTEGRAL_WINDOW precisa ser maior que 1.")
+    if config.accumulator_markov_window <= 2:
+        raise ValueError("ACCUMULATOR_MARKOV_WINDOW precisa ser maior que 2.")
+    if config.accumulator_shannon_entropy_window <= 2:
+        raise ValueError("ACCUMULATOR_SHANNON_ENTROPY_WINDOW precisa ser maior que 2.")
     if config.accumulator_bb_std_dev <= 0:
         raise ValueError("ACCUMULATOR_BB_STD_DEV precisa ser maior que zero.")
     if config.accumulator_max_bb_width_percent < 0 or config.accumulator_max_tick_atr_percent < 0:
@@ -270,5 +295,13 @@ def load_config() -> BotConfig:
         raise ValueError("Limites de z-score das derivadas nao podem ser negativos.")
     if config.accumulator_max_pmi_distance_percent < 0:
         raise ValueError("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT nao pode ser negativo.")
+    if not 0 <= config.accumulator_max_markov_continuation_prob <= 1:
+        raise ValueError("ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB deve estar entre 0 e 1.")
+    if not 0 <= config.accumulator_min_shannon_entropy <= 1:
+        raise ValueError("ACCUMULATOR_MIN_SHANNON_ENTROPY deve estar entre 0 e 1.")
+    if config.accumulator_kalman_q <= 0 or config.accumulator_kalman_r <= 0:
+        raise ValueError("ACCUMULATOR_KALMAN_Q/R precisam ser maiores que zero.")
+    if config.accumulator_max_kalman_residual_zscore < 0:
+        raise ValueError("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE nao pode ser negativo.")
 
     return config

@@ -41,6 +41,13 @@ class AccumulatorStrategyConfig:
     max_acceleration_zscore: float = 2.0
     integral_window: int = 20
     max_pmi_distance_percent: float = 0.005
+    markov_window: int = 50
+    max_markov_continuation_prob: float = 0.45
+    shannon_entropy_window: int = 30
+    min_shannon_entropy: float = 0.80
+    kalman_q: float = 1e-5
+    kalman_r: float = 1e-2
+    max_kalman_residual_zscore: float = 2.0
 
     @property
     def minimum_ticks(self) -> int:
@@ -52,6 +59,8 @@ class AccumulatorStrategyConfig:
             self.hurst_window + 2,
             self.derivative_window + 2,
             self.integral_window + 2,
+            self.markov_window + 2,
+            self.shannon_entropy_window + 2,
         )
 
 
@@ -98,6 +107,15 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     df["pmi_distance_percent"] = (
         (df["close"] - df["integral_mean_price"]).abs() / df["close"] * 100
     )
+    markov = _markov_transition_probabilities(df["close"], config.markov_window)
+    df["markov_p_up_given_up"] = markov["markov_p_up_given_up"]
+    df["markov_p_down_given_down"] = markov["markov_p_down_given_down"]
+    df["shannon_entropy"] = _shannon_entropy(df["close"], config.shannon_entropy_window)
+    kalman = _kalman_filter_metrics(df["close"], config.kalman_q, config.kalman_r)
+    df["kalman_estimate"] = kalman["kalman_estimate"]
+    df["kalman_covariance"] = kalman["kalman_covariance"]
+    df["kalman_residual"] = kalman["kalman_residual"]
+    df["kalman_residual_zscore"] = _rolling_abs_zscore(df["kalman_residual"], config.derivative_window)
 
     return df
 
@@ -121,7 +139,8 @@ def generate_accumulator_signal(
     logger.info(
         (
             "ACCU score=%s | BBWidth%%=%.4f | TickATR%%=%.4f | RecentMove%%=%.4f | "
-            "H=%.4f | imbalance=%s | hawkes=%.4f | vel_z=%.4f | accel_z=%.4f | pmi_dist%%=%.5f"
+            "H=%.4f | imbalance=%s | hawkes=%.4f | vel_z=%.4f | accel_z=%.4f | "
+            "pmi_dist%%=%.5f | markovUU=%.4f | markovDD=%.4f | entropy=%.4f | kalman_z=%.4f"
         ),
         score,
         last["bb_width_percent"],
@@ -133,6 +152,10 @@ def generate_accumulator_signal(
         last.get("velocity_zscore", float("nan")),
         last.get("acceleration_zscore", float("nan")),
         last.get("pmi_distance_percent", float("nan")),
+        last.get("markov_p_up_given_up", float("nan")),
+        last.get("markov_p_down_given_down", float("nan")),
+        last.get("shannon_entropy", float("nan")),
+        last.get("kalman_residual_zscore", float("nan")),
     )
 
     if score >= config.min_score and quant_pass:
@@ -172,6 +195,10 @@ def accumulator_quant_filters_pass(
         "velocity_zscore": row.get("velocity_zscore"),
         "acceleration_zscore": row.get("acceleration_zscore"),
         "pmi_distance_percent": row.get("pmi_distance_percent"),
+        "markov_p_up_given_up": row.get("markov_p_up_given_up"),
+        "markov_p_down_given_down": row.get("markov_p_down_given_down"),
+        "shannon_entropy": row.get("shannon_entropy"),
+        "kalman_residual_zscore": row.get("kalman_residual_zscore"),
     }
     missing = [name for name, value in checks.items() if pd.isna(value)]
     if missing:
@@ -189,6 +216,14 @@ def accumulator_quant_filters_pass(
         return False, "aceleracao do preco acima do limite"
     if float(checks["pmi_distance_percent"]) > config.max_pmi_distance_percent:
         return False, "preco distante do centro de massa integral"
+    if float(checks["markov_p_up_given_up"]) >= config.max_markov_continuation_prob:
+        return False, "markov continuidade de alta acima do limite"
+    if float(checks["markov_p_down_given_down"]) >= config.max_markov_continuation_prob:
+        return False, "markov continuidade de queda acima do limite"
+    if float(checks["shannon_entropy"]) < config.min_shannon_entropy:
+        return False, "entropia de Shannon abaixo do limite"
+    if abs(float(checks["kalman_residual_zscore"])) > config.max_kalman_residual_zscore:
+        return False, "residual de Kalman acima do limite"
     return True, "ok"
 
 
@@ -257,3 +292,84 @@ def _integral_mean_price(prices: np.ndarray) -> float:
         return np.nan
     duration = max(len(prices) - 1, 1)
     return float(integrate_trapezoid(prices, dx=1.0) / duration)
+
+
+def _markov_transition_probabilities(close: pd.Series, window: int = 50) -> pd.DataFrame:
+    states = np.sign(close.diff()).fillna(0.0).to_numpy(dtype=int)
+    up_given_up: list[float] = [np.nan] * len(states)
+    down_given_down: list[float] = [np.nan] * len(states)
+
+    for end in range(window, len(states)):
+        window_states = states[end - window + 1 : end + 1]
+        previous = window_states[:-1]
+        current = window_states[1:]
+
+        up_mask = previous == 1
+        down_mask = previous == -1
+        up_given_up[end] = float(np.mean(current[up_mask] == 1)) if np.any(up_mask) else 0.0
+        down_given_down[end] = float(np.mean(current[down_mask] == -1)) if np.any(down_mask) else 0.0
+
+    return pd.DataFrame(
+        {
+            "markov_p_up_given_up": up_given_up,
+            "markov_p_down_given_down": down_given_down,
+        },
+        index=close.index,
+    )
+
+
+def _shannon_entropy(close: pd.Series, window: int = 30) -> pd.Series:
+    returns = close.diff().fillna(0.0)
+    scale = returns.abs().rolling(window).median().replace(0, np.nan)
+    normalized = returns / scale
+    categories = pd.cut(
+        normalized,
+        bins=[-np.inf, -1.0, -0.01, 0.01, 1.0, np.inf],
+        labels=False,
+        include_lowest=True,
+    ).fillna(2)
+
+    return categories.rolling(window).apply(_normalized_entropy, raw=True)
+
+
+def _normalized_entropy(categories: np.ndarray) -> float:
+    values = np.asarray(categories, dtype=int)
+    counts = np.bincount(values, minlength=5).astype(float)
+    probabilities = counts[counts > 0] / counts.sum()
+    if probabilities.size == 0:
+        return np.nan
+    entropy = -np.sum(probabilities * np.log2(probabilities))
+    return float(entropy / np.log2(5))
+
+
+def _kalman_filter_metrics(close: pd.Series, process_variance: float, measurement_variance: float) -> pd.DataFrame:
+    prices = close.to_numpy(dtype=float)
+    estimates: list[float] = []
+    covariances: list[float] = []
+    residuals: list[float] = []
+
+    estimate = prices[0] if len(prices) else np.nan
+    covariance = 1.0
+    process_variance = max(float(process_variance), 1e-12)
+    measurement_variance = max(float(measurement_variance), 1e-12)
+
+    for price in prices:
+        predicted_estimate = estimate
+        predicted_covariance = covariance + process_variance
+        gain = predicted_covariance / (predicted_covariance + measurement_variance)
+        residual = price - predicted_estimate
+        estimate = predicted_estimate + gain * residual
+        covariance = (1 - gain) * predicted_covariance
+
+        estimates.append(float(estimate))
+        covariances.append(float(covariance))
+        residuals.append(float(residual))
+
+    return pd.DataFrame(
+        {
+            "kalman_estimate": estimates,
+            "kalman_covariance": covariances,
+            "kalman_residual": residuals,
+        },
+        index=close.index,
+    )

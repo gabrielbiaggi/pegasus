@@ -47,6 +47,9 @@ def run_grid(
     max_pmi_distance_percents: list[float],
     max_hawkes_intensities: list[float],
     max_abs_tick_imbalances: list[int],
+    max_markov_continuation_probs: list[float],
+    min_shannon_entropies: list[float],
+    max_kalman_residual_zscores: list[float],
     take_profit_percents: list[float],
     max_hold_ticks_values: list[int],
     cooldown_ticks_values: list[int],
@@ -70,6 +73,9 @@ def run_grid(
         max_pmi_distance_percent,
         max_hawkes_intensity,
         max_abs_tick_imbalance,
+        max_markov_continuation_prob,
+        min_shannon_entropy,
+        max_kalman_residual_zscore,
         take_profit_percent,
         max_hold_ticks,
         cooldown_ticks,
@@ -82,6 +88,9 @@ def run_grid(
         max_pmi_distance_percents,
         max_hawkes_intensities,
         max_abs_tick_imbalances,
+        max_markov_continuation_probs,
+        min_shannon_entropies,
+        max_kalman_residual_zscores,
         take_profit_percents,
         max_hold_ticks_values,
         cooldown_ticks_values,
@@ -95,6 +104,9 @@ def run_grid(
             max_pmi_distance_percent=max_pmi_distance_percent,
             max_hawkes_intensity=max_hawkes_intensity,
             max_abs_tick_imbalance=max_abs_tick_imbalance,
+            max_markov_continuation_prob=max_markov_continuation_prob,
+            min_shannon_entropy=min_shannon_entropy,
+            max_kalman_residual_zscore=max_kalman_residual_zscore,
         )
         result = run_accumulator_backtest(
             ticks=normalized_ticks,
@@ -122,6 +134,9 @@ def run_grid(
                 "max_pmi_distance_percent": max_pmi_distance_percent,
                 "max_hawkes_intensity": max_hawkes_intensity,
                 "max_abs_tick_imbalance": max_abs_tick_imbalance,
+                "max_markov_continuation_prob": max_markov_continuation_prob,
+                "min_shannon_entropy": min_shannon_entropy,
+                "max_kalman_residual_zscore": max_kalman_residual_zscore,
                 "growth_rate": growth_rate,
                 "take_profit_percent": take_profit_percent,
                 "barrier_percent": barrier_percent,
@@ -172,6 +187,9 @@ def main() -> None:
     parser.add_argument("--max-pmi-distance-percents", default="0.005,0.01,0.02,0.05")
     parser.add_argument("--max-hawkes-intensities", default="0.2,0.5,1.0")
     parser.add_argument("--max-abs-tick-imbalances", default="2,3,4")
+    parser.add_argument("--max-markov-continuation-probs", default="0.45,0.50,0.60")
+    parser.add_argument("--min-shannon-entropies", default="0.70,0.80,0.90")
+    parser.add_argument("--max-kalman-residual-zscores", default="2.0,2.5,3.0")
     parser.add_argument("--take-profit-percents", default="3,4,5")
     parser.add_argument("--max-hold-ticks", default="3:8")
     parser.add_argument("--cooldown-ticks", default="0:5")
@@ -197,6 +215,9 @@ def main() -> None:
         max_pmi_distance_percents=parse_float_values(args.max_pmi_distance_percents),
         max_hawkes_intensities=parse_float_values(args.max_hawkes_intensities),
         max_abs_tick_imbalances=parse_int_range(args.max_abs_tick_imbalances),
+        max_markov_continuation_probs=parse_float_values(args.max_markov_continuation_probs),
+        min_shannon_entropies=parse_float_values(args.min_shannon_entropies),
+        max_kalman_residual_zscores=parse_float_values(args.max_kalman_residual_zscores),
         take_profit_percents=parse_float_values(args.take_profit_percents),
         max_hold_ticks_values=parse_int_range(args.max_hold_ticks),
         cooldown_ticks_values=parse_int_range(args.cooldown_ticks),
