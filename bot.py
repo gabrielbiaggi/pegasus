@@ -10,9 +10,14 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from config import BotConfig, load_config
+from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
 from strategy import calculate_indicators, generate_signal
+
+
+class FatalBotError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -33,6 +38,8 @@ class DerivBot:
         self.current_contract_id: Optional[int] = None
         self.settled_contract_ids: set[int] = set()
         self.last_evaluated_epoch: Optional[int] = None
+        self.last_trade_candle_epoch: Optional[int] = None
+        self.journal = TradeJournal(config.journal_dir)
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
         await ws.send(json.dumps(payload))
@@ -62,6 +69,14 @@ class DerivBot:
         candle_epoch: int,
     ) -> None:
         self.pending_order = PendingOrder(direction, stake, score, candle_epoch)
+        self.journal.log_signal(
+            symbol=self.config.symbol,
+            candle_epoch=candle_epoch,
+            direction=direction,
+            score=score,
+            stake=stake,
+            dry_run=self.config.dry_run,
+        )
 
         if self.config.dry_run:
             logger.info(
@@ -71,6 +86,7 @@ class DerivBot:
                 stake,
                 candle_epoch,
             )
+            self.last_trade_candle_epoch = candle_epoch
             self.pending_order = None
             return
 
@@ -172,6 +188,16 @@ class DerivBot:
 
         self.last_evaluated_epoch = closed_epoch
 
+        if self.last_trade_candle_epoch is not None:
+            candles_since_trade = (closed_epoch - self.last_trade_candle_epoch) // self.config.granularity
+            if candles_since_trade <= self.config.cooldown_candles:
+                logger.info(
+                    "Cooldown ativo: %s candle(s) desde a ultima entrada; minimo=%s.",
+                    candles_since_trade,
+                    self.config.cooldown_candles + 1,
+                )
+                return
+
         if not self.risk.can_trade():
             logger.warning("Bot pausado por regra de risco.")
             return
@@ -193,8 +219,16 @@ class DerivBot:
         loginid = str(auth.get("loginid", ""))
         is_demo = loginid.upper().startswith("VRTC")
 
+        if self.config.account_mode == "demo" and not is_demo:
+            raise FatalBotError(
+                f"ACCOUNT_MODE=demo, mas a API autorizou loginid={loginid}. Use token demo VRTC ou mude a config."
+            )
+        if self.config.account_mode == "real" and is_demo:
+            raise FatalBotError(
+                f"ACCOUNT_MODE=real, mas a API autorizou loginid={loginid}. Use token real ou mude a config."
+            )
         if not self.config.dry_run and not is_demo and not self.config.allow_real_trading:
-            raise RuntimeError(
+            raise FatalBotError(
                 "Conta real detectada. Defina ALLOW_REAL_TRADING=true somente depois dos testes em demo."
             )
 
@@ -205,6 +239,8 @@ class DerivBot:
         self.risk = RiskManager(
             balance=balance,
             max_loss_day=self.config.max_loss_per_day,
+            max_profit_day=self.config.max_profit_per_day,
+            max_trades_day=self.config.max_trades_per_day,
             max_stake_pct=self.config.max_stake_percent,
             fixed_stake=self.config.stake,
             min_stake=self.config.min_stake,
@@ -237,6 +273,8 @@ class DerivBot:
         buy = data["buy"]
         contract_id = int(buy["contract_id"])
         self.current_contract_id = contract_id
+        if self.pending_order:
+            self.last_trade_candle_epoch = self.pending_order.candle_epoch
         logger.info("Contrato aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
         await self.subscribe_contract(ws, contract_id)
 
@@ -259,8 +297,20 @@ class DerivBot:
             return
 
         self.settled_contract_ids.add(contract_id)
+        order = self.pending_order
         profit = float(contract.get("profit", 0.0))
         buy_price = float(contract.get("buy_price", 0.0))
+        if order:
+            self.journal.log_trade(
+                symbol=self.config.symbol,
+                contract_id=contract_id,
+                candle_epoch=order.candle_epoch,
+                direction=order.direction,
+                score=order.score,
+                stake=order.stake,
+                buy_price=buy_price,
+                profit=profit,
+            )
         self.risk.update(profit=profit, buy_price=buy_price)
         logger.info(self.risk.stats())
 
@@ -274,6 +324,8 @@ class DerivBot:
         if "error" in data:
             error = data["error"]
             logger.error("Erro da API (%s): %s", error.get("code"), error.get("message"))
+            if data.get("msg_type") == "authorize":
+                raise FatalBotError(f"Falha na autorizacao: {error.get('message')}")
             if data.get("msg_type") in {"proposal", "buy"}:
                 self.pending_order = None
                 self.waiting_for_result = False
@@ -317,6 +369,9 @@ class DerivBot:
                         await self.handle_message(ws, message)
             except asyncio.CancelledError:
                 raise
+            except FatalBotError as exc:
+                logger.error("Erro fatal: %s", exc)
+                return
             except (ConnectionClosed, OSError, RuntimeError, json.JSONDecodeError) as exc:
                 logger.error("Conexao/execucao interrompida: %s", exc)
                 logger.info("Reconectando em %s segundos...", self.config.reconnect_delay_seconds)

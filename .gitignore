@@ -7,4 +7,7 @@ __pycache__/
 .mypy_cache/
 logs/*.log
 logs/*.json
+logs/*.csv
+data/*.csv
 !logs/.gitkeep
+!data/.gitkeep

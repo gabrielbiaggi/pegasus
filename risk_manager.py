@@ -10,6 +10,8 @@ class RiskManager:
         self,
         balance: float,
         max_loss_day: float,
+        max_profit_day: float,
+        max_trades_day: int,
         max_stake_pct: float,
         fixed_stake: float,
         min_stake: float,
@@ -19,6 +21,8 @@ class RiskManager:
     ):
         self.balance = float(balance)
         self.max_loss_day = float(max_loss_day)
+        self.max_profit_day = float(max_profit_day)
+        self.max_trades_day = int(max_trades_day)
         self.max_stake_pct = float(max_stake_pct)
         self.fixed_stake = float(fixed_stake)
         self.min_stake = float(min_stake)
@@ -28,6 +32,7 @@ class RiskManager:
 
         self.day = date.today().isoformat()
         self.daily_loss = 0.0
+        self.daily_net_profit = 0.0
         self.trades_today = 0
         self.wins = 0
         self.losses = 0
@@ -50,14 +55,16 @@ class RiskManager:
             return
 
         self.daily_loss = float(data.get("daily_loss", 0.0))
+        self.daily_net_profit = float(data.get("daily_net_profit", data.get("daily_profit", 0.0)))
         self.trades_today = int(data.get("trades_today", 0))
         self.wins = int(data.get("wins", 0))
         self.losses = int(data.get("losses", 0))
         self.consecutive_losses = int(data.get("consecutive_losses", 0))
         self.max_loss_streak_today = int(data.get("max_loss_streak_today", 0))
         logger.info(
-            "Estado de risco restaurado: perda_dia=%.2f, trades=%s, streak_loss=%s",
+            "Estado de risco restaurado: perda_dia=%.2f, lucro_liquido_dia=%.2f, trades=%s, streak_loss=%s",
             self.daily_loss,
+            self.daily_net_profit,
             self.trades_today,
             self.consecutive_losses,
         )
@@ -67,6 +74,7 @@ class RiskManager:
         data = {
             "day": self.day,
             "daily_loss": self.daily_loss,
+            "daily_net_profit": self.daily_net_profit,
             "trades_today": self.trades_today,
             "wins": self.wins,
             "losses": self.losses,
@@ -83,6 +91,7 @@ class RiskManager:
         logger.info("Novo dia detectado. Zerando contadores diarios de risco.")
         self.day = today
         self.daily_loss = 0.0
+        self.daily_net_profit = 0.0
         self.trades_today = 0
         self.wins = 0
         self.losses = 0
@@ -105,6 +114,14 @@ class RiskManager:
 
         if self.daily_loss >= self.max_loss_day:
             logger.warning("Limite de perda diaria atingido: %.2f", self.daily_loss)
+            return False
+
+        if self.max_profit_day > 0 and self.daily_net_profit >= self.max_profit_day:
+            logger.warning("Meta de lucro diaria atingida: %.2f", self.daily_net_profit)
+            return False
+
+        if self.trades_today >= self.max_trades_day:
+            logger.warning("Limite diario de operacoes atingido: %s", self.trades_today)
             return False
 
         if self.consecutive_losses >= self.max_consecutive_losses:
@@ -138,6 +155,7 @@ class RiskManager:
         buy_price = float(buy_price)
         self.trades_today += 1
         self.balance += profit
+        self.daily_net_profit += profit
 
         if profit > 0:
             self.wins += 1
@@ -163,5 +181,6 @@ class RiskManager:
         return (
             f"Operacoes={self.trades_today} | Wins={self.wins} | Losses={self.losses} | "
             f"WinRate={winrate:.1f}% | LossStreak={self.consecutive_losses} | "
-            f"PerdaDia={self.daily_loss:.2f} | SaldoEstimado={self.balance:.2f}"
+            f"PerdaDia={self.daily_loss:.2f} | LucroLiquidoDia={self.daily_net_profit:.2f} | "
+            f"SaldoEstimado={self.balance:.2f}"
         )

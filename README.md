@@ -35,6 +35,7 @@ Edite `.env` e coloque um token demo da Deriv. O arquivo `.env` esta no `.gitign
 ## Rodar em modo seguro
 
 Com `DRY_RUN=true`, o bot conecta, carrega candles, calcula sinais e registra o que faria, mas nao envia compras.
+Com `ACCOUNT_MODE=demo`, o Pegasus encerra se o token autorizado nao for de conta demo.
 
 ```bash
 source venv/bin/activate
@@ -46,6 +47,12 @@ Logs:
 ```bash
 tail -f logs/trades.log
 ```
+
+O Pegasus tambem grava:
+
+- `logs/signals.csv`: todos os sinais aceitos pela estrategia.
+- `logs/trades.csv`: contratos executados e resultado final.
+- `logs/risk_state.json`: estado diario de risco para sobreviver a restart.
 
 ## Habilitar compra em demo
 
@@ -75,10 +82,30 @@ O bot persiste o estado diario de risco em `logs/risk_state.json` para evitar qu
 ## Regras de risco
 
 - Bloqueia novas entradas ao atingir `MAX_LOSS_PER_DAY`.
+- Bloqueia novas entradas ao atingir `MAX_PROFIT_PER_DAY`, quando maior que zero.
+- Bloqueia novas entradas ao atingir `MAX_TRADES_PER_DAY`.
 - Bloqueia novas entradas ao atingir `MAX_CONSECUTIVE_LOSSES`.
 - Calcula a stake como o menor valor entre `STAKE`, `balance * MAX_STAKE_PERCENT` e `MAX_STAKE`.
 - Nao opera se a stake calculada ficar abaixo de `MIN_STAKE`.
 - Avalia somente candles fechados para evitar multiplas entradas no mesmo candle em formacao.
+- Respeita `COOLDOWN_CANDLES` depois de cada entrada.
+
+## Backtest
+
+Baixe candles publicos da Deriv:
+
+```bash
+source venv/bin/activate
+python download_candles.py --symbol R_100 --granularity 60 --count 5000 --output data/candles_R_100.csv
+```
+
+Rode a simulacao:
+
+```bash
+python backtest.py --candles data/candles_R_100.csv --initial-balance 1000 --duration-candles 5 --stake 1 --payout 0.85 --output logs/backtest_trades.csv
+```
+
+O backtest e aproximado: ele usa fechamento futuro do candle e payout fixo. Ele serve para filtrar configuracoes ruins antes de qualquer teste demo ao vivo, nao para prometer resultado real.
 
 ## Documentacao oficial usada
 
