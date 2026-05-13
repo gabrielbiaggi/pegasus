@@ -43,6 +43,9 @@ FIELDS = [
     "future_exit_quote",
     "future_held_ticks",
     "future_max_move_percent",
+    # Regression targets for WFO/SHAP analysis
+    "y1_max_drawdown_5ticks",  # max adverse move % in next 5 ticks
+    "y2_seconds_to_3pct",      # seconds until price moves >=3%; -1 if never within max_hold
 ]
 
 
@@ -54,6 +57,44 @@ def _metric(row: Any, name: str) -> float | str:
     if value != value:
         return ""
     return round(value, 8)
+
+
+def _y1_max_drawdown_5ticks(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+) -> float | None:
+    """Return max adverse % move in the next 5 ticks after entry_index."""
+    lookahead = 5
+    if len(ticks) <= entry_index + lookahead:
+        return None
+    entry_quote = float(ticks[entry_index]["quote"])
+    max_move = 0.0
+    for i in range(entry_index + 1, entry_index + lookahead + 1):
+        move = abs(float(ticks[i]["quote"]) - entry_quote) / entry_quote * 100
+        max_move = max(max_move, move)
+    return round(max_move, 8)
+
+
+def _y2_seconds_to_3pct(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+    barrier_percent: float,
+    max_hold_ticks: int,
+) -> float | None:
+    """Return seconds until price moves >= barrier_percent from entry.
+
+    Returns -1.0 if barrier is never touched within max_hold_ticks.
+    Returns None if there are not enough ticks yet to resolve.
+    """
+    if len(ticks) <= entry_index + max_hold_ticks:
+        return None
+    entry_quote = float(ticks[entry_index]["quote"])
+    entry_epoch = float(ticks[entry_index]["epoch"])
+    for i in range(entry_index + 1, entry_index + max_hold_ticks + 1):
+        move = abs(float(ticks[i]["quote"]) - entry_quote) / entry_quote * 100
+        if move >= barrier_percent:
+            return round(float(ticks[i]["epoch"]) - entry_epoch, 4)
+    return -1.0
 
 
 def _future_result(
@@ -205,9 +246,10 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
 
             while pending:
                 item = pending[0]
+                idx = int(item["entry_index"])
                 result = _future_result(
                     all_ticks,
-                    int(item["entry_index"]),
+                    idx,
                     bot_config.accumulator_growth_rate,
                     bot_config.accumulator_take_profit_percent,
                     barrier_percent=0.05,
@@ -215,8 +257,23 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                 )
                 if result is None:
                     break
+                y1 = _y1_max_drawdown_5ticks(all_ticks, idx)
+                if y1 is None:
+                    break
+                y2 = _y2_seconds_to_3pct(
+                    all_ticks, idx,
+                    barrier_percent=3.0,
+                    max_hold_ticks=bot_config.accumulator_max_hold_ticks,
+                )
+                if y2 is None:
+                    break
                 pending.popleft()
-                rows.append({**item["row"], **result})
+                rows.append({
+                    **item["row"],
+                    **result,
+                    "y1_max_drawdown_5ticks": y1,
+                    "y2_seconds_to_3pct": y2,
+                })
 
             if len(rows) >= flush_every:
                 _write_rows(output, rows)

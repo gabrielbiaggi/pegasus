@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -13,6 +13,20 @@ try:
     from scipy.integrate import trapezoid as integrate_trapezoid
 except ImportError:  # pragma: no cover - numpy keeps the bot usable without scipy installed.
     integrate_trapezoid = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
+try:
+    from hmmlearn import hmm as _hmm_lib
+    _HMM_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _HMM_AVAILABLE = False
+    _hmm_lib = None  # type: ignore[assignment]
+
+try:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    _SKLEARN_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _SKLEARN_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +62,13 @@ class AccumulatorStrategyConfig:
     kalman_q: float = 1e-5
     kalman_r: float = 1e-2
     max_kalman_residual_zscore: float = 2.0
+    # HMM regime filter
+    hmm_window: int = 200
+    hmm_n_states: int = 2
+    hmm_high_variance_blocks: bool = True
+    # Ensemble scoring (logistic regression)
+    use_ensemble: bool = False
+    ensemble_min_prob: float = 0.70
 
     @property
     def minimum_ticks(self) -> int:
@@ -123,6 +144,7 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
 def generate_accumulator_signal(
     df: pd.DataFrame,
     config: AccumulatorStrategyConfig | None = None,
+    ensemble_scorer: EnsembleScorer | None = None,
 ) -> tuple[Optional[str], int]:
     config = config or AccumulatorStrategyConfig()
     if len(df) < config.minimum_ticks:
@@ -133,6 +155,12 @@ def generate_accumulator_signal(
 
     if score == 0 and last[["bb_width_percent", "tick_atr_percent", "recent_move_percent"]].isna().any():
         return None, 0
+
+    # --- HMM regime gate: block trades during high-variance regime ---
+    if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
+        if hmm_regime_is_high_variance(df["close"], n_states=config.hmm_n_states, window=config.hmm_window):
+            logger.info("HMM: regime de alta variancia detectado. Trade bloqueado.")
+            return None, 0
 
     quant_pass, reason = accumulator_quant_filters_pass(last, config)
 
@@ -159,6 +187,13 @@ def generate_accumulator_signal(
     )
 
     if score >= config.min_score and quant_pass:
+        # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
+        if config.use_ensemble and ensemble_scorer is not None:
+            prob = ensemble_scorer.predict_proba(last)
+            logger.info("EnsembleScorer P(WIN)=%.4f limiar=%.2f", prob, config.ensemble_min_prob)
+            if prob < config.ensemble_min_prob:
+                logger.info("Ensemble bloqueou entrada: P(WIN)=%.4f < %.2f", prob, config.ensemble_min_prob)
+                return None, 0
         return "ACCU", score
 
     if score >= config.min_score:
@@ -373,3 +408,124 @@ def _kalman_filter_metrics(close: pd.Series, process_variance: float, measuremen
         },
         index=close.index,
     )
+
+
+# ---------------------------------------------------------------------------
+# HMM Regime Detection
+# ---------------------------------------------------------------------------
+
+def hmm_regime_is_high_variance(close: pd.Series, n_states: int = 2, window: int = 200) -> bool:
+    """Return True if the HMM identifies the current market as a high-variance regime.
+
+    Uses a Gaussian HMM on log-returns. The state with the higher emission variance
+    is labeled as the "high-variance regime". If hmmlearn is not installed the
+    function always returns False (conservative: never blocks a trade for regime).
+    """
+    if not _HMM_AVAILABLE:
+        return False
+
+    if len(close) < max(window // 2, 20):
+        return False
+
+    prices = close.iloc[-window:].to_numpy(dtype=float)
+    if len(prices) < 10 or np.any(prices <= 0):
+        return False
+
+    returns = np.diff(np.log(prices)).reshape(-1, 1)
+    if len(returns) < 10:
+        return False
+
+    try:
+        model = _hmm_lib.GaussianHMM(
+            n_components=n_states,
+            covariance_type="full",
+            n_iter=100,
+            random_state=42,
+        )
+        model.fit(returns)
+        hidden_states = model.predict(returns)
+        current_state = int(hidden_states[-1])
+        # The high-variance state is the one with the largest variance
+        variances = [float(model.covars_[s][0, 0]) for s in range(n_states)]
+        high_var_state = int(np.argmax(variances))
+        return current_state == high_var_state
+    except Exception:  # pragma: no cover - hmmlearn convergence failures
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Ensemble Scorer (Logistic Regression on shadow dataset)
+# ---------------------------------------------------------------------------
+
+#: Feature columns used by the ensemble scorer (must match shadow CSV columns).
+ENSEMBLE_FEATURE_COLS = [
+    "hurst_exponent",
+    "shannon_entropy",
+    "tick_imbalance",
+    "hawkes_intensity",
+    "velocity_zscore",
+    "acceleration_zscore",
+    "kalman_residual_zscore",
+    "pmi_distance_percent",
+    "markov_p_up_given_up",
+    "markov_p_down_given_down",
+    "bb_width_percent",
+    "tick_atr_percent",
+    "recent_move_percent",
+]
+
+
+class EnsembleScorer:
+    """Logistic regression wrapper trained on the shadow dataset.
+
+    Usage
+    -----
+    scorer = EnsembleScorer()
+    scorer.fit_from_csv("logs/shadow_ticks.csv")
+    prob = scorer.predict_proba(row_series)
+    """
+
+    def __init__(self) -> None:
+        if not _SKLEARN_AVAILABLE:
+            raise RuntimeError("scikit-learn nao instalado. Execute: pip install scikit-learn")
+        self._scaler = StandardScaler()
+        self._model = LogisticRegression(max_iter=1000, class_weight="balanced")
+        self._fitted = False
+
+    def fit_from_csv(self, path: str) -> None:
+        """Train on a shadow CSV that has a 'future_result' column ('WIN'/'LOSS')."""
+        df = pd.read_csv(path)
+        missing = [c for c in ENSEMBLE_FEATURE_COLS if c not in df.columns]
+        if missing:
+            raise ValueError(f"Colunas ausentes no CSV: {missing}")
+        if "future_result" not in df.columns:
+            raise ValueError("CSV sem coluna 'future_result'.")
+
+        df = df.dropna(subset=ENSEMBLE_FEATURE_COLS + ["future_result"])
+        df = df[df["future_result"].isin(["WIN", "LOSS"])]
+        if len(df) < 50:
+            raise ValueError(f"Amostra insuficiente para treino: {len(df)} linhas (minimo 50).")
+
+        X = df[ENSEMBLE_FEATURE_COLS].to_numpy(dtype=float)
+        y = (df["future_result"] == "WIN").astype(int).to_numpy()
+        X_scaled = self._scaler.fit_transform(X)
+        self._model.fit(X_scaled, y)
+        self._fitted = True
+        logger.info(
+            "EnsembleScorer treinado: %d amostras, %d WIN, %d LOSS",
+            len(y),
+            int(y.sum()),
+            int((1 - y).sum()),
+        )
+
+    def predict_proba(self, row: pd.Series) -> float:
+        """Return P(WIN) for a single indicator row. Returns 0.0 if not fitted."""
+        if not self._fitted:
+            return 0.0
+        values = [row.get(c, np.nan) for c in ENSEMBLE_FEATURE_COLS]
+        if any(v != v for v in values):  # NaN check
+            return 0.0
+        X = np.array(values, dtype=float).reshape(1, -1)
+        X_scaled = self._scaler.transform(X)
+        prob: float = float(self._model.predict_proba(X_scaled)[0, 1])
+        return prob

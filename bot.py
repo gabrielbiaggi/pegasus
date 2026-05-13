@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +16,9 @@ from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
 from strategy import calculate_tick_indicators, generate_accumulator_signal
+
+#: Maximum acceptable tick age in seconds before an entry is skipped.
+MAX_TICK_LATENCY_SECONDS: float = 0.200
 
 
 class FatalBotError(RuntimeError):
@@ -42,6 +46,8 @@ class DerivBot:
         self.accumulator_open_epoch: Optional[int] = None
         self.accumulator_sell_requested = False
         self.journal = TradeJournal(config.journal_dir)
+        # EDA: tick queue decouples feed from analytical engine
+        self._tick_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=500)
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
         await ws.send(json.dumps(payload))
@@ -276,6 +282,8 @@ class DerivBot:
             soros_max_steps=self.config.soros_max_steps,
             soros_profit_factor=self.config.soros_profit_factor,
         )
+        # Zombie-trade protection: reconcile open positions before subscribing ticks
+        await self._reconcile_open_positions(ws)
         await self.subscribe_ticks(ws)
 
     async def handle_history(self, data: dict[str, Any]) -> None:
@@ -288,9 +296,26 @@ class DerivBot:
 
     async def handle_tick(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         tick = data["tick"]
+        tick_time = float(tick.get("epoch", 0))
+        receive_time = time.time()
+        latency_ms = (receive_time - tick_time) * 1000 if tick_time > 0 else 0.0
+        if latency_ms > MAX_TICK_LATENCY_SECONDS * 1000:
+            logger.warning(
+                "Tick atrasado ignorado: latencia=%.0fms > %.0fms epoch=%s",
+                latency_ms,
+                MAX_TICK_LATENCY_SECONDS * 1000,
+                tick_time,
+            )
+            # Still buffer the tick for continuity but do not signal entry
+            self._append_tick({"epoch": tick["epoch"], "quote": tick["quote"]})
+            return
+
         is_new_tick = self._append_tick({"epoch": tick["epoch"], "quote": tick["quote"]})
         if is_new_tick:
-            await self.evaluate_tick(ws, int(tick["epoch"]))
+            try:
+                self._tick_queue.put_nowait({"epoch": int(tick["epoch"]), "quote": tick["quote"], "_ws": ws})
+            except asyncio.QueueFull:
+                logger.warning("Fila de ticks cheia. Tick %s descartado da fila de analise.", tick["epoch"])
 
     async def handle_buy(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         buy = data["buy"]
@@ -398,10 +423,55 @@ class DerivBot:
             await self.handle_contract_update(ws, data)
         elif msg_type == "sell":
             logger.info("Sell confirmado: %s", data.get("sell"))
+        elif msg_type == "portfolio":
+            await self.handle_portfolio(ws, data)
         elif msg_type == "ping":
             logger.debug("Ping recebido.")
         else:
             logger.debug("Mensagem ignorada: %s", msg_type)
+
+    async def _tick_consumer(self) -> None:
+        """Consumer coroutine: drains _tick_queue and calls evaluate_tick."""
+        while True:
+            item = await self._tick_queue.get()
+            ws = item["_ws"]
+            epoch = item["epoch"]
+            try:
+                await self.evaluate_tick(ws, epoch)
+            except Exception as exc:  # pragma: no cover - surface unexpected errors
+                logger.error("Erro no consumer de ticks: %s", exc)
+            finally:
+                self._tick_queue.task_done()
+
+    async def _reconcile_open_positions(self, ws: websockets.WebSocketClientProtocol) -> None:
+        """Zombie-trade protection: check for open contracts on reconnect.
+
+        Sends a portfolio request and, if an open ACCU contract is found while
+        the bot thinks it has no position, marks it as the current contract so
+        the bot can manage it properly.
+        """
+        logger.info("Verificando contratos abertos no portfolio (protecao zombie trade)...")
+        await self.send(ws, {"portfolio": 1, "contract_type": ["ACCU"]})
+
+    async def handle_portfolio(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+        portfolio = data.get("portfolio", {})
+        contracts = portfolio.get("contracts", [])
+        open_contracts = [c for c in contracts if not c.get("is_sold") and not c.get("is_expired")]
+        if not open_contracts:
+            logger.info("Portfolio: nenhum contrato ACCU aberto encontrado.")
+            return
+        for contract in open_contracts:
+            cid = int(contract.get("contract_id", 0))
+            if not cid:
+                continue
+            if self.current_contract_id is None and cid not in self.settled_contract_ids:
+                logger.warning(
+                    "Zombie trade detectado: contrato ACCU id=%s aberto sem rastreamento local. Subscrevendo.",
+                    cid,
+                )
+                self.current_contract_id = cid
+                self.waiting_for_result = True
+                await self.subscribe_contract(ws, cid)
 
     async def run_forever(self) -> None:
         while True:
@@ -419,8 +489,17 @@ class DerivBot:
                     close_timeout=10,
                 ) as ws:
                     await self.authorize(ws)
-                    async for message in ws:
-                        await self.handle_message(ws, message)
+                    # Start EDA consumer task
+                    consumer_task = asyncio.create_task(self._tick_consumer())
+                    try:
+                        async for message in ws:
+                            await self.handle_message(ws, message)
+                    finally:
+                        consumer_task.cancel()
+                        try:
+                            await consumer_task
+                        except asyncio.CancelledError:
+                            pass
             except asyncio.CancelledError:
                 raise
             except FatalBotError as exc:

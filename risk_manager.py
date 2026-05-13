@@ -1,4 +1,6 @@
 import json
+import time
+from collections import deque
 from datetime import date
 from pathlib import Path
 
@@ -23,6 +25,8 @@ class RiskManager:
         soros_max_steps: int,
         soros_profit_factor: float,
         state_path: str = "logs/risk_state.json",
+        max_losses_in_window: int = 2,
+        loss_window_seconds: float = 300.0,
     ):
         self.balance = float(balance)
         self.max_loss_day = float(max_loss_day)
@@ -39,6 +43,8 @@ class RiskManager:
         self.soros_max_steps = int(soros_max_steps)
         self.soros_profit_factor = float(soros_profit_factor)
         self.state_path = Path(state_path)
+        self.max_losses_in_window = int(max_losses_in_window)
+        self.loss_window_seconds = float(loss_window_seconds)
 
         self.day = date.today().isoformat()
         self.daily_loss = 0.0
@@ -52,6 +58,8 @@ class RiskManager:
         self.max_loss_streak_today = 0
         self.soros_step = 0
         self.soros_profit = 0.0
+        # Sliding window timestamps of recent losses (monotonic clock)
+        self._recent_loss_times: deque[float] = deque()
 
         self._load_state()
 
@@ -195,6 +203,20 @@ class RiskManager:
             )
             return False
 
+        # Frequency-based drawdown: stop if too many losses in sliding time window
+        now = time.monotonic()
+        cutoff = now - self.loss_window_seconds
+        while self._recent_loss_times and self._recent_loss_times[0] < cutoff:
+            self._recent_loss_times.popleft()
+        if len(self._recent_loss_times) >= self.max_losses_in_window:
+            logger.warning(
+                "Frequencia de losses excedida: %d losses nos ultimos %.0fs (limite=%d). Bot pausado.",
+                len(self._recent_loss_times),
+                self.loss_window_seconds,
+                self.max_losses_in_window,
+            )
+            return False
+
         return True
 
     def update(self, profit: float, buy_price: float) -> None:
@@ -229,6 +251,8 @@ class RiskManager:
             self.max_loss_streak_today = max(self.max_loss_streak_today, self.consecutive_losses)
             realized_loss = abs(profit) if profit < 0 else buy_price
             self.daily_loss += realized_loss
+            # Record timestamp for frequency-based MDD
+            self._recent_loss_times.append(time.monotonic())
             logger.info(
                 "LOSS -%0.2f | saldo_estimado=%0.2f | perda_dia=%0.2f",
                 realized_loss,

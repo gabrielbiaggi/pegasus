@@ -158,6 +158,7 @@ def run_accumulator_backtest(
     strategy_config: AccumulatorStrategyConfig | None = None,
     blocked_utc_hours: tuple[int, ...] = (),
     indicator_frame: pd.DataFrame | None = None,
+    slippage_ticks: int = 0,
 ) -> dict[str, Any]:
     strategy_config = strategy_config or AccumulatorStrategyConfig()
     normalized_ticks = normalize_ticks(ticks)
@@ -208,9 +209,15 @@ def run_accumulator_backtest(
             i += 1
             continue
 
+        # Slippage: signal fires at tick i but execution starts at tick i+slippage_ticks
+        execution_index = i + max(0, slippage_ticks)
+        if execution_index >= len(normalized_ticks) - 1:
+            i += 1
+            continue
+
         simulated = simulate_accumulator_trade(
             ticks=normalized_ticks,
-            entry_index=i,
+            entry_index=execution_index,
             stake=stake,
             growth_rate=growth_rate,
             take_profit_percent=take_profit_percent,
@@ -291,6 +298,12 @@ def main() -> None:
     parser.add_argument("--barrier-percent", type=float, default=0.05)
     parser.add_argument("--max-hold-ticks", type=int, default=8)
     parser.add_argument("--cooldown-ticks", type=int, default=3)
+    parser.add_argument(
+        "--slippage-ticks",
+        type=int,
+        default=0,
+        help="Numero de ticks de atraso entre sinal (t) e execucao (t+N). Simula latencia da corretora.",
+    )
     parser.add_argument("--min-score", type=int, default=7)
     parser.add_argument("--bb-window", type=int, default=20)
     parser.add_argument("--bb-std-dev", type=float, default=2.0)
@@ -325,6 +338,7 @@ def main() -> None:
         cooldown_ticks=args.cooldown_ticks,
         strategy_config=strategy_config,
         blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
+        slippage_ticks=args.slippage_ticks,
     )
 
     if args.output:
