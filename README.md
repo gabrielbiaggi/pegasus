@@ -107,6 +107,22 @@ python backtest.py --candles data/candles_R_100.csv --initial-balance 1000 --dur
 
 O backtest e aproximado: ele usa fechamento futuro do candle e payout fixo. Ele serve para filtrar configuracoes ruins antes de qualquer teste demo ao vivo, nao para prometer resultado real.
 
+## Otimizar parametros
+
+Depois de baixar candles, rode uma grade simples de parametros:
+
+```bash
+python optimize.py --candles data/candles_R_100.csv --min-scores 5:8 --durations 3:8 --cooldowns 0:3 --min-trades 20 --output logs/optimization.csv
+```
+
+O resultado ordena por lucro liquido, winrate, drawdown e sequencia de perdas. Use isso como filtro inicial; a configuracao vencedora ainda precisa passar por demo ao vivo.
+
+## Testes
+
+```bash
+python -m unittest discover -s tests
+```
+
 ## Documentacao oficial usada
 
 - Deriv Ticks History: https://developers.deriv.com/docs/data/ticks-history/
