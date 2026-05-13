@@ -1,0 +1,5 @@
+websockets>=12.0
+pandas>=2.0
+ta>=0.11.0
+python-dotenv>=1.0
+aiohttp>=3.9
