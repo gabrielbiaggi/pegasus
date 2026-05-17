@@ -15,7 +15,7 @@ from config import BotConfig, load_config
 from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
-from strategy import calculate_tick_indicators, generate_accumulator_signal
+from strategy import calculate_tick_indicators, generate_accumulator_signal, EnsembleScorer
 
 #: Maximum acceptable tick age in seconds before an entry is skipped.
 MAX_TICK_LATENCY_SECONDS: float = 0.200
@@ -46,7 +46,14 @@ class DerivBot:
         self.accumulator_open_epoch: Optional[int] = None
         self.accumulator_sell_requested = False
         self.journal = TradeJournal(config.journal_dir)
-        # EDA: tick queue decouples feed from analytical engine
+        # Load XGBoost ensemble scorer if enabled
+        self._ensemble_scorer: EnsembleScorer | None = None
+        if config.accumulator_use_ensemble:
+            try:
+                self._ensemble_scorer = EnsembleScorer()
+                logger.info("EnsembleScorer XGBoost carregado para producao.")
+            except Exception as exc:
+                logger.warning("EnsembleScorer nao carregado: %s", exc)
         self._tick_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=500)
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
@@ -215,7 +222,11 @@ class DerivBot:
             return
 
         df = calculate_tick_indicators(list(self.tick_buffer), config=self.config.accumulator_strategy_config)
-        signal, score = generate_accumulator_signal(df, config=self.config.accumulator_strategy_config)
+        signal, score = generate_accumulator_signal(
+            df,
+            config=self.config.accumulator_strategy_config,
+            ensemble_scorer=self._ensemble_scorer,
+        )
 
         if signal != "ACCU":
             logger.info("Sem setup ACCU no tick %s.", tick_epoch)

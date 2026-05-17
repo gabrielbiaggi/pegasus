@@ -115,6 +115,8 @@ class BotConfig:
     accumulator_kalman_q: float
     accumulator_kalman_r: float
     accumulator_max_kalman_residual_zscore: float
+    accumulator_use_ensemble: bool
+    accumulator_ensemble_min_prob: float
 
     @property
     def ws_url(self) -> str:
@@ -151,6 +153,8 @@ class BotConfig:
             kalman_q=self.accumulator_kalman_q,
             kalman_r=self.accumulator_kalman_r,
             max_kalman_residual_zscore=self.accumulator_max_kalman_residual_zscore,
+            use_ensemble=self.accumulator_use_ensemble,
+            ensemble_min_prob=self.accumulator_ensemble_min_prob,
         )
 
 
@@ -232,6 +236,8 @@ def load_config() -> BotConfig:
         accumulator_kalman_q=_float_env("ACCUMULATOR_KALMAN_Q", 1e-5),
         accumulator_kalman_r=_float_env("ACCUMULATOR_KALMAN_R", 1e-2),
         accumulator_max_kalman_residual_zscore=_float_env("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE", 2.0),
+        accumulator_use_ensemble=_bool_env("USE_ENSEMBLE", False),
+        accumulator_ensemble_min_prob=_float_env("ENSEMBLE_MIN_PROB", 0.294),
     )
 
     if config.stake <= 0:

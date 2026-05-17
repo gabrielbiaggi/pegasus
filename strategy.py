@@ -28,6 +28,13 @@ try:
 except ImportError:  # pragma: no cover
     _SKLEARN_AVAILABLE = False
 
+try:
+    import xgboost as xgb
+    _XGB_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _XGB_AVAILABLE = False
+    xgb = None  # type: ignore[assignment]
+
 
 @dataclass(frozen=True)
 class AccumulatorStrategyConfig:
@@ -66,9 +73,9 @@ class AccumulatorStrategyConfig:
     hmm_window: int = 200
     hmm_n_states: int = 2
     hmm_high_variance_blocks: bool = True
-    # Ensemble scoring (logistic regression)
+    # Ensemble scoring (XGBoost P(LOSS) gate)
     use_ensemble: bool = False
-    ensemble_min_prob: float = 0.70
+    ensemble_min_prob: float = 0.294
 
     @property
     def minimum_ticks(self) -> int:
@@ -189,10 +196,10 @@ def generate_accumulator_signal(
     if score >= config.min_score and quant_pass:
         # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
         if config.use_ensemble and ensemble_scorer is not None:
-            prob = ensemble_scorer.predict_proba(last)
-            logger.info("EnsembleScorer P(WIN)=%.4f limiar=%.2f", prob, config.ensemble_min_prob)
-            if prob < config.ensemble_min_prob:
-                logger.info("Ensemble bloqueou entrada: P(WIN)=%.4f < %.2f", prob, config.ensemble_min_prob)
+            p_loss = ensemble_scorer.predict_loss_probability(last)
+            logger.info("EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob)
+            if p_loss >= config.ensemble_min_prob:
+                logger.warning("⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f", p_loss, config.ensemble_min_prob)
                 return None, 0
         return "ACCU", score
 
@@ -476,56 +483,33 @@ ENSEMBLE_FEATURE_COLS = [
 
 
 class EnsembleScorer:
-    """Logistic regression wrapper trained on the shadow dataset.
-
-    Usage
-    -----
-    scorer = EnsembleScorer()
-    scorer.fit_from_csv("logs/shadow_ticks.csv")
-    prob = scorer.predict_proba(row_series)
+    """XGBoost Booster inference — loads pre-trained model from disk.
+    Predicts P(LOSS): high value = dangerous entry. Block when >= ensemble_min_prob.
     """
 
-    def __init__(self) -> None:
-        if not _SKLEARN_AVAILABLE:
-            raise RuntimeError("scikit-learn nao instalado. Execute: pip install scikit-learn")
-        self._scaler = StandardScaler()
-        self._model = LogisticRegression(max_iter=1000, class_weight="balanced")
-        self._fitted = False
-
-    def fit_from_csv(self, path: str) -> None:
-        """Train on a shadow CSV that has a 'future_result' column ('WIN'/'LOSS')."""
-        df = pd.read_csv(path)
-        missing = [c for c in ENSEMBLE_FEATURE_COLS if c not in df.columns]
-        if missing:
-            raise ValueError(f"Colunas ausentes no CSV: {missing}")
-        if "future_result" not in df.columns:
-            raise ValueError("CSV sem coluna 'future_result'.")
-
-        df = df.dropna(subset=ENSEMBLE_FEATURE_COLS + ["future_result"])
-        df = df[df["future_result"].isin(["WIN", "LOSS"])]
-        if len(df) < 50:
-            raise ValueError(f"Amostra insuficiente para treino: {len(df)} linhas (minimo 50).")
-
-        X = df[ENSEMBLE_FEATURE_COLS].to_numpy(dtype=float)
-        y = (df["future_result"] == "WIN").astype(int).to_numpy()
-        X_scaled = self._scaler.fit_transform(X)
-        self._model.fit(X_scaled, y)
-        self._fitted = True
+    def __init__(
+        self,
+        model_path: str = "models/pegasus_xgb_v1.json",
+        features_path: str = "models/pegasus_features_v1.json",
+    ) -> None:
+        if not _XGB_AVAILABLE:
+            raise RuntimeError("xgboost nao instalado. Execute: pip install xgboost")
+        import json as _json
+        with open(features_path) as _f:
+            self.feature_names: list[str] = _json.load(_f)
+        self.booster = xgb.Booster()
+        self.booster.load_model(model_path)
         logger.info(
-            "EnsembleScorer treinado: %d amostras, %d WIN, %d LOSS",
-            len(y),
-            int(y.sum()),
-            int((1 - y).sum()),
+            "EnsembleScorer XGBoost carregado: %d features, modelo=%s",
+            len(self.feature_names),
+            model_path,
         )
 
-    def predict_proba(self, row: pd.Series) -> float:
-        """Return P(WIN) for a single indicator row. Returns 0.0 if not fitted."""
-        if not self._fitted:
+    def predict_loss_probability(self, row: pd.Series) -> float:
+        """Return P(LOSS) for a single indicator row. LOSS=1 = positive class."""
+        values = [float(row.get(feat, 0.0)) for feat in self.feature_names]
+        if any(v != v for v in values):  # NaN guard
             return 0.0
-        values = [row.get(c, np.nan) for c in ENSEMBLE_FEATURE_COLS]
-        if any(v != v for v in values):  # NaN check
-            return 0.0
-        X = np.array(values, dtype=float).reshape(1, -1)
-        X_scaled = self._scaler.transform(X)
-        prob: float = float(self._model.predict_proba(X_scaled)[0, 1])
-        return prob
+        x = np.array([values], dtype=float)
+        dmatrix = xgb.DMatrix(x, feature_names=self.feature_names)
+        return float(self.booster.predict(dmatrix)[0])
