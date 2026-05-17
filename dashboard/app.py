@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,26 +25,76 @@ def _bot_running() -> bool:
     return r.returncode == 0
 
 
-def _last_balance() -> str:
+# Cache: balance changes only at login, so refresh at most every 60s
+_balance_cache: tuple[float, str] = (0.0, "—")
+
+
+def _search_log_backward(pattern: bytes, chunk: int = 65536) -> str:
+    """Scan log backward in chunks; return first line containing pattern from EOF."""
     if not TRADES_LOG.exists():
-        return "—"
+        return ""
     try:
-        text = TRADES_LOG.read_text(encoding="utf-8", errors="replace")
-        m = re.findall(r"saldo=([\d.]+)", text)
-        return m[-1] if m else "—"
+        with TRADES_LOG.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            buf = b""
+            pos = size
+            while pos > 0:
+                read = min(chunk, pos)
+                pos -= read
+                f.seek(pos)
+                data = f.read(read) + buf
+                idx = data.rfind(pattern)
+                if idx != -1:
+                    eol = data.find(b"\n", idx)
+                    line = data[idx: eol if eol != -1 else len(data)]
+                    return line.decode("utf-8", errors="replace")
+                # Keep tail bytes in case pattern spans a chunk boundary
+                buf = data[: len(pattern) - 1]
     except Exception:
+        pass
+    return ""
+
+
+def _last_balance() -> str:
+    global _balance_cache
+    now = _time.monotonic()
+    # saldo= only appears at login — cache for 60 s to avoid repeated full scans
+    if now - _balance_cache[0] < 60.0 and _balance_cache[1] != "—":
+        return _balance_cache[1]
+    line = _search_log_backward(b"saldo=")
+    if not line:
         return "—"
+    m = re.search(r"saldo=([\d.]+)", line)
+    val = m.group(1) if m else "—"
+    if val != "—":
+        _balance_cache = (now, val)
+    return val
 
 
 def _last_p_loss() -> float | None:
-    if not TRADES_LOG.exists():
+    line = _search_log_backward(b"P(LOSS)=")
+    if not line:
         return None
     try:
-        text = TRADES_LOG.read_text(encoding="utf-8", errors="replace")
-        m = re.findall(r"P\(LOSS\)=([\d.]+)", text)
-        return float(m[-1]) if m else None
+        m = re.search(r"P\(LOSS\)=([\d.]+)", line)
+        return float(m.group(1)) if m else None
     except Exception:
         return None
+
+
+def _read_log_tail(n_bytes: int = 65536) -> str:
+    """Read the last n_bytes of trades.log for the live-log endpoint."""
+    if not TRADES_LOG.exists():
+        return ""
+    try:
+        with TRADES_LOG.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - n_bytes))
+            return f.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def _today_df() -> pd.DataFrame:
@@ -96,6 +147,7 @@ def api_status(response: Response):
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
     total = wins + losses
     pnl = round(float(df["profit"].sum()), 4) if not df.empty else 0.0
+    last_ts = str(df["timestamp"].max()) if not df.empty else None
     return {
         "running": _bot_running(),
         "balance": _last_balance(),
@@ -105,6 +157,7 @@ def api_status(response: Response):
         "winrate": round(wins / total * 100, 1) if total else 0.0,
         "pnl": pnl,
         "p_loss": _last_p_loss(),
+        "last_trade_ts": last_ts,
         "block_weekends": _get_env("BLOCK_WEEKENDS") == "true",
         "use_ensemble": _get_env("USE_ENSEMBLE") == "true",
         "ensemble_min_prob": _get_env("ENSEMBLE_MIN_PROB") or "0.294",
@@ -168,9 +221,13 @@ def api_trades():
 
 @app.get("/api/logs")
 def api_logs():
-    if not TRADES_LOG.exists():
+    text = _read_log_tail(65536)  # last 64KB is plenty for 100 log lines
+    if not text:
         return {"lines": []}
-    lines = TRADES_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = text.splitlines()
+    # Drop first (possibly partial) line from the middle of the tail read
+    if len(lines) > 1:
+        lines = lines[1:]
     return {"lines": lines[-100:]}
 
 
