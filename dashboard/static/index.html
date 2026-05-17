@@ -14,15 +14,16 @@
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
   header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   header h1 { font-size: 1.1rem; font-weight: 600; color: var(--blue); letter-spacing: .5px; }
-  .badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
+  .badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 600; transition: all .3s; }
   .badge.online  { background: #1a3a1f; color: var(--green); border: 1px solid var(--green); }
   .badge.offline { background: #3a1a1a; color: var(--red);   border: 1px solid var(--red); }
+  .badge.pending { background: #2a2a1a; color: var(--yellow); border: 1px solid var(--yellow); }
   .last-update { margin-left: auto; font-size: .75rem; color: var(--muted); }
-
   .ctrl-bar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 10px 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .btn { padding: 7px 16px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; font-size: .82rem; font-weight: 600; transition: opacity .15s; }
-  .btn:hover { opacity: .8; }
-  .btn:active { opacity: .6; }
+  .btn:hover:not(:disabled) { opacity: .8; }
+  .btn:active:not(:disabled) { opacity: .6; }
+  .btn:disabled { opacity: .3; cursor: not-allowed; filter: grayscale(.5); }
   .btn-green  { background: #1a3a1f; color: var(--green); border-color: var(--green); }
   .btn-red    { background: #3a1a1a; color: var(--red);   border-color: var(--red); }
   .btn-yellow { background: #3a2f1a; color: var(--yellow);border-color: var(--yellow); }
@@ -30,46 +31,39 @@
   .toggle-row { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
   .toggle { position: relative; display: inline-block; width: 38px; height: 20px; }
   .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle input:disabled + .slider { opacity: .35; cursor: not-allowed; }
   .slider { position: absolute; inset: 0; background: #333; border-radius: 20px; cursor: pointer; transition: .2s; }
   .slider:before { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
   input:checked + .slider { background: var(--green); }
   input:checked + .slider:before { transform: translateX(18px); }
   .sep { color: var(--border); margin: 0 4px; }
+  .param-row { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
+  .param-row input[type=number] { width: 80px; background: #0d1117; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: .82rem; }
+  .param-row input[type=number]:focus { outline: 1px solid var(--blue); }
+  .param-row input:disabled { opacity: .35; cursor: not-allowed; }
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 18px; font-size: .82rem; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99; }
   .toast.show { opacity: 1; }
-
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 20px 24px 0; }
   .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
   .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
   .card .value { font-size: 1.6rem; font-weight: 700; }
-  .card .value.green { color: var(--green); }
-  .card .value.red   { color: var(--red); }
-  .card .value.blue  { color: var(--blue); }
-  .card .value.yellow{ color: var(--yellow); }
+  .card .value.green { color: var(--green); } .card .value.red { color: var(--red); }
+  .card .value.blue  { color: var(--blue);  } .card .value.yellow { color: var(--yellow); }
   .card .sub { font-size: .72rem; color: var(--muted); margin-top: 4px; }
-
   section { padding: 20px 24px; }
   section h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 10px; }
-
   table { width: 100%; border-collapse: collapse; font-size: .82rem; }
   th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }
   td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
   tr:hover td { background: #1c2129; }
-  .win  { color: var(--green); font-weight: 600; }
-  .loss { color: var(--red);   font-weight: 600; }
-
-  .log-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; height: 220px; overflow-y: auto; font-family: 'Cascadia Code', 'Fira Mono', monospace; font-size: .74rem; line-height: 1.55; }
-  .log-box .warn { color: var(--yellow); }
-  .log-box .err  { color: var(--red); }
-  .log-box .info { color: var(--muted); }
-  .log-box .ai   { color: var(--blue); }
-
+  .win { color: var(--green); font-weight: 600; } .loss { color: var(--red); font-weight: 600; }
+  .log-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; height: 220px; overflow-y: auto; font-family: 'Cascadia Code','Fira Mono',monospace; font-size: .74rem; line-height: 1.55; }
+  .log-box .warn { color: var(--yellow); } .log-box .err { color: var(--red); }
+  .log-box .info { color: var(--muted); }  .log-box .ai  { color: var(--blue); }
   .ai-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; margin-top: 6px; }
   .ai-bar-fill { height: 100%; border-radius: 4px; transition: width .4s ease; }
-
-  .param-row { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
-  .param-row input[type=number] { width: 80px; background: #0d1117; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: .82rem; }
-  .param-row input[type=number]:focus { outline: 1px solid var(--blue); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin .6s linear infinite; }
 </style>
 </head>
 <body>
@@ -81,23 +75,23 @@
 </header>
 
 <div class="ctrl-bar">
-  <button class="btn btn-green" onclick="botAction('start')">▶ Iniciar Bot</button>
-  <button class="btn btn-red"   onclick="botAction('stop')">■ Parar Bot</button>
-  <button class="btn btn-yellow" onclick="botAction('restart')">↻ Reiniciar</button>
+  <button id="btn-start"   class="btn btn-green"  onclick="botAction('start')"  >▶ Iniciar Bot</button>
+  <button id="btn-stop"    class="btn btn-red"    onclick="botAction('stop')"   >■ Parar Bot</button>
+  <button id="btn-restart" class="btn btn-yellow" onclick="botAction('restart')">↻ Reiniciar</button>
   <span class="sep">|</span>
   <div class="toggle-row">
-    <label class="toggle"><input type="checkbox" id="tog-weekends" onchange="setEnv('BLOCK_WEEKENDS', this.checked?'true':'false', true)"><span class="slider"></span></label>
+    <label class="toggle"><input type="checkbox" id="tog-weekends" onchange="setEnvToggle('BLOCK_WEEKENDS',this)"><span class="slider"></span></label>
     Bloquear Fim de Semana
   </div>
   <div class="toggle-row">
-    <label class="toggle"><input type="checkbox" id="tog-ensemble" onchange="setEnv('USE_ENSEMBLE', this.checked?'true':'false', true)"><span class="slider"></span></label>
+    <label class="toggle"><input type="checkbox" id="tog-ensemble" onchange="setEnvToggle('USE_ENSEMBLE',this)"><span class="slider"></span></label>
     IA Gate (XGBoost)
   </div>
   <span class="sep">|</span>
   <div class="param-row">
     Limiar P(LOSS):
     <input type="number" id="inp-threshold" min="0.01" max="0.99" step="0.001" value="0.294"/>
-    <button class="btn btn-blue" onclick="setThreshold()">Aplicar</button>
+    <button id="btn-threshold" class="btn btn-blue" onclick="setThreshold()">Aplicar</button>
   </div>
 </div>
 
@@ -128,9 +122,7 @@
 <section>
   <h2>Últimas operações</h2>
   <table>
-    <thead>
-      <tr><th>Hora (UTC)</th><th>Resultado</th><th>Lucro</th><th>Score</th><th>Stake</th><th>Ticks</th></tr>
-    </thead>
+    <thead><tr><th>Hora (UTC)</th><th>Resultado</th><th>Lucro</th><th>Score</th><th>Stake</th><th>Ticks</th></tr></thead>
     <tbody id="trades-body">
       <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Carregando...</td></tr>
     </tbody>
@@ -145,61 +137,153 @@
 <div class="toast" id="toast"></div>
 
 <script>
-let _threshold = 0.294;
+// ── state ─────────────────────────────────────────────────────────────────────
+let _botRunning = false;
+let _actionLock = false;
+let _threshold  = 0.294;
 
+const BTN_META = {
+  start:   { id:'btn-start',   orig:'▶ Iniciar Bot', loading:'Iniciando…' },
+  stop:    { id:'btn-stop',    orig:'■ Parar Bot',   loading:'Parando…' },
+  restart: { id:'btn-restart', orig:'↻ Reiniciar',   loading:'Reiniciando…' },
+};
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 function toast(msg, color) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.style.borderColor = color || 'var(--blue)';
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2800);
+  setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+function lockAll(locked) {
+  ['btn-start','btn-stop','btn-restart','btn-threshold',
+   'tog-weekends','tog-ensemble','inp-threshold'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  });
+}
+
+function applyButtonStates(running) {
+  if (_actionLock) return;
+  document.getElementById('btn-start').disabled   =  running;
+  document.getElementById('btn-stop').disabled    = !running;
+  document.getElementById('btn-restart').disabled = !running;
+  ['btn-threshold','tog-weekends','tog-ensemble','inp-threshold'].forEach(id => {
+    document.getElementById(id).disabled = false;
+  });
+}
+
+async function pollUntilState(expected, maxMs) {
+  const step = 700;
+  let elapsed = 0;
+  while (elapsed < maxMs) {
+    await new Promise(r => setTimeout(r, step));
+    elapsed += step;
+    try {
+      const d = await fetch('/api/status').then(r => r.json());
+      if (d.running === expected) return true;
+    } catch(_) {}
+  }
+  return false;
+}
+
+// ── bot actions ───────────────────────────────────────────────────────────────
 async function botAction(action) {
-  const r = await fetch('/api/bot/' + action, {method:'POST'});
-  const d = await r.json();
-  toast(d.msg, action==='stop'?'var(--red)':action==='start'?'var(--green)':'var(--yellow)');
-  setTimeout(fetchStatus, 2000);
+  if (_actionLock) return;
+  _actionLock = true;
+  lockAll(true);
+
+  const meta  = BTN_META[action];
+  const btnEl = document.getElementById(meta.id);
+  btnEl.innerHTML = `<span class="spin">⟳</span> ${meta.loading}`;
+
+  const badge = document.getElementById('status-badge');
+  badge.className = 'badge pending';
+  badge.textContent = meta.loading;
+
+  try {
+    const res = await fetch('/api/bot/' + action, { method: 'POST' });
+    const d   = await res.json();
+    const col = action === 'stop' ? 'var(--red)' : action === 'start' ? 'var(--green)' : 'var(--yellow)';
+    toast(d.msg, col);
+
+    const expectedRunning = (action !== 'stop');
+    const maxWait = action === 'restart' ? 22000 : 14000;
+    await pollUntilState(expectedRunning, maxWait);
+  } catch(e) {
+    toast('Erro: ' + e.message, 'var(--red)');
+  }
+
+  btnEl.textContent = meta.orig;
+  _actionLock = false;
+  await fetchStatus();   // authoritative refresh + re-enables buttons
 }
 
-async function setEnv(key, value, restart) {
-  await fetch('/api/env', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key, value})});
-  toast(`${key} = ${value}`, 'var(--blue)');
-  if (restart) {
-    await fetch('/api/bot/restart', {method:'POST'});
-    setTimeout(fetchStatus, 2500);
+// ── env ───────────────────────────────────────────────────────────────────────
+async function setEnvToggle(key, el) {
+  const value = el.checked ? 'true' : 'false';
+  try {
+    await fetch('/api/env', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key, value})
+    });
+    toast(`${key} = ${value}`, 'var(--blue)');
+    if (_botRunning) await botAction('restart');
+  } catch(e) {
+    toast('Erro ao atualizar env', 'var(--red)');
+    el.checked = !el.checked;
   }
 }
 
 async function setThreshold() {
-  const val = parseFloat(document.getElementById('inp-threshold').value).toFixed(4);
-  await setEnv('ENSEMBLE_MIN_PROB', val, true);
-  _threshold = parseFloat(val);
-  document.getElementById('ploss-sub').textContent = 'limiar ' + val;
+  const raw = parseFloat(document.getElementById('inp-threshold').value);
+  if (isNaN(raw) || raw < 0.01 || raw > 0.99) { toast('Valor inválido', 'var(--red)'); return; }
+  const val = raw.toFixed(4);
+  try {
+    await fetch('/api/env', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key:'ENSEMBLE_MIN_PROB', value:val})
+    });
+    _threshold = parseFloat(val);
+    document.getElementById('ploss-sub').textContent = 'limiar ' + val;
+    toast('ENSEMBLE_MIN_PROB = ' + val, 'var(--blue)');
+    if (_botRunning) await botAction('restart');
+  } catch(e) {
+    toast('Erro ao atualizar limiar', 'var(--red)');
+  }
 }
 
+// ── data ──────────────────────────────────────────────────────────────────────
 async function fetchStatus() {
   try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
+    const d = await fetch('/api/status').then(r => r.json());
+    _botRunning = !!d.running;
+    applyButtonStates(_botRunning);
+
     const badge = document.getElementById('status-badge');
     badge.textContent = d.running ? 'Online' : 'Offline';
-    badge.className = 'badge ' + (d.running ? 'online' : 'offline');
+    badge.className   = 'badge ' + (d.running ? 'online' : 'offline');
 
-    document.getElementById('balance').textContent = d.balance !== '—' ? '$' + d.balance : '—';
+    document.getElementById('balance').textContent =
+      d.balance !== '—' ? '$' + d.balance : '—';
 
-    const pnl = d.pnl ?? 0;
+    const pnl   = d.pnl ?? 0;
     const pnlEl = document.getElementById('pnl');
     pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-    pnlEl.className = 'value ' + (pnl >= 0 ? 'green' : 'red');
+    pnlEl.className   = 'value ' + (pnl >= 0 ? 'green' : 'red');
     document.getElementById('pnl-sub').textContent = d.total + ' operações hoje';
-
     document.getElementById('wl').textContent = d.wins + ' / ' + d.losses;
     document.getElementById('wr').textContent = 'Winrate: ' + d.winrate + '%';
 
-    // toggles
-    document.getElementById('tog-weekends').checked = !!d.block_weekends;
-    document.getElementById('tog-ensemble').checked = !!d.use_ensemble;
+    // sync toggles from server (no onchange)
+    const wkEl = document.getElementById('tog-weekends');
+    const enEl = document.getElementById('tog-ensemble');
+    wkEl.checked = !!d.block_weekends;
+    enEl.checked = !!d.use_ensemble;
     if (d.ensemble_min_prob) {
       _threshold = parseFloat(d.ensemble_min_prob);
       document.getElementById('inp-threshold').value = _threshold;
@@ -210,262 +294,57 @@ async function fetchStatus() {
     const plEl = document.getElementById('ploss');
     if (pl !== null && pl !== undefined) {
       plEl.textContent = (pl * 100).toFixed(1) + '%';
-      const pct = Math.min(pl * 100, 100);
       const bar = document.getElementById('ploss-bar');
-      bar.style.width = pct + '%';
+      bar.style.width = Math.min(pl * 100, 100) + '%';
       if (pl >= _threshold) {
-        plEl.className = 'value red';
-        bar.style.background = '#f85149';
+        plEl.className = 'value red'; bar.style.background = '#f85149';
       } else {
-        plEl.className = 'value green';
-        bar.style.background = '#3fb950';
+        plEl.className = 'value green'; bar.style.background = '#3fb950';
       }
     } else {
       plEl.textContent = '—';
     }
 
-    document.getElementById('last-update').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
-  } catch(e) { /* silent */ }
+    document.getElementById('last-update').textContent =
+      'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
+  } catch(_) {}
 }
 
 async function fetchTrades() {
   try {
-    const r = await fetch('/api/trades');
-    const data = await r.json();
+    const data  = await fetch('/api/trades').then(r => r.json());
     const tbody = document.getElementById('trades-body');
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Sem operações hoje</td></tr>';
       return;
     }
     tbody.innerHTML = data.map(t => {
-      const ts = t.timestamp ? t.timestamp.replace('T', ' ').slice(0, 19) : '—';
-      const res = t.result || '—';
-      const cls = res === 'WIN' ? 'win' : res === 'LOSS' ? 'loss' : '';
-      const profit = (t.profit !== '' && t.profit !== undefined) ? (parseFloat(t.profit) >= 0 ? '+' : '') + parseFloat(t.profit).toFixed(4) : '—';
+      const ts     = t.timestamp ? t.timestamp.replace('T',' ').slice(0,19) : '—';
+      const res    = t.result || '—';
+      const cls    = res === 'WIN' ? 'win' : res === 'LOSS' ? 'loss' : '';
+      const profit = (t.profit !== '' && t.profit !== undefined)
+        ? (parseFloat(t.profit) >= 0 ? '+':'') + parseFloat(t.profit).toFixed(4) : '—';
       return `<tr><td>${ts}</td><td class="${cls}">${res}</td><td class="${cls}">${profit}</td><td>${t.score??'—'}</td><td>${t.stake??'—'}</td><td>${t.held_ticks??'—'}</td></tr>`;
     }).join('');
-  } catch(e) { /* silent */ }
+  } catch(_) {}
 }
 
 async function fetchLogs() {
   try {
-    const r = await fetch('/api/logs');
-    const d = await r.json();
+    const d   = await fetch('/api/logs').then(r => r.json());
     const box = document.getElementById('log-box');
     box.innerHTML = d.lines.map(l => {
       let cls = 'info';
-      if (l.includes('[WARNING]') || l.includes('cancelado')) cls = 'warn';
-      else if (l.includes('[ERROR]') || l.includes('[CRITICAL]')) cls = 'err';
+      if (l.includes('[WARNING]') || l.includes('cancelado'))                             cls = 'warn';
+      else if (l.includes('[ERROR]') || l.includes('[CRITICAL]'))                         cls = 'err';
       else if (l.includes('P(LOSS)') || l.includes('EnsembleScorer') || l.includes('Comprando')) cls = 'ai';
       return `<div class="${cls}">${l.replace(/</g,'&lt;')}</div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
-  } catch(e) { /* silent */ }
+  } catch(_) {}
 }
 
 function refresh() { fetchStatus(); fetchTrades(); fetchLogs(); }
-refresh();
-setInterval(refresh, 5000);
-</script>
-</body>
-</html>
-
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Pegasus Dashboard</title>
-<style>
-  :root {
-    --bg: #0d1117; --bg2: #161b22; --border: #30363d;
-    --green: #3fb950; --red: #f85149; --yellow: #d29922;
-    --blue: #58a6ff; --text: #c9d1d9; --muted: #8b949e;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
-  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 1.1rem; font-weight: 600; color: var(--blue); letter-spacing: .5px; }
-  .badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
-  .badge.online  { background: #1a3a1f; color: var(--green); border: 1px solid var(--green); }
-  .badge.offline { background: #3a1a1a; color: var(--red);   border: 1px solid var(--red); }
-  .last-update { margin-left: auto; font-size: .75rem; color: var(--muted); }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 20px 24px 0; }
-  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-  .card .value { font-size: 1.6rem; font-weight: 700; }
-  .card .value.green { color: var(--green); }
-  .card .value.red   { color: var(--red); }
-  .card .value.blue  { color: var(--blue); }
-  .card .value.yellow{ color: var(--yellow); }
-  .card .sub { font-size: .72rem; color: var(--muted); margin-top: 4px; }
-
-  section { padding: 20px 24px; }
-  section h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 10px; }
-
-  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-  td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
-  tr:hover td { background: #1c2129; }
-  .win  { color: var(--green); font-weight: 600; }
-  .loss { color: var(--red);   font-weight: 600; }
-
-  .log-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; height: 220px; overflow-y: auto; font-family: 'Cascadia Code', 'Fira Mono', monospace; font-size: .74rem; line-height: 1.55; }
-  .log-box .warn { color: var(--yellow); }
-  .log-box .err  { color: var(--red); }
-  .log-box .info { color: var(--muted); }
-  .log-box .ai   { color: var(--blue); }
-
-  .ai-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; margin-top: 6px; }
-  .ai-bar-fill { height: 100%; border-radius: 4px; transition: width .4s ease; }
-</style>
-</head>
-<body>
-
-<header>
-  <h1>🦅 Pegasus</h1>
-  <span id="status-badge" class="badge offline">Offline</span>
-  <span class="last-update" id="last-update">—</span>
-</header>
-
-<div class="grid">
-  <div class="card">
-    <div class="label">Saldo Virtual</div>
-    <div class="value blue" id="balance">—</div>
-    <div class="sub">VRTC demo</div>
-  </div>
-  <div class="card">
-    <div class="label">P&amp;L Hoje</div>
-    <div class="value" id="pnl">—</div>
-    <div class="sub" id="pnl-sub">—</div>
-  </div>
-  <div class="card">
-    <div class="label">Wins / Losses</div>
-    <div class="value green" id="wl">—</div>
-    <div class="sub" id="wr">—</div>
-  </div>
-  <div class="card">
-    <div class="label">IA — P(LOSS)</div>
-    <div class="value" id="ploss">—</div>
-    <div class="ai-bar"><div class="ai-bar-fill" id="ploss-bar" style="width:0%;background:#3fb950"></div></div>
-    <div class="sub">limiar 0.294</div>
-  </div>
-</div>
-
-<section>
-  <h2>Últimas operações</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Hora (UTC)</th>
-        <th>Resultado</th>
-        <th>Lucro</th>
-        <th>Score</th>
-        <th>Stake</th>
-        <th>Ticks</th>
-      </tr>
-    </thead>
-    <tbody id="trades-body">
-      <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Carregando...</td></tr>
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>Log ao vivo</h2>
-  <div class="log-box" id="log-box">Carregando...</div>
-</section>
-
-<script>
-async function fetchStatus() {
-  try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
-    const badge = document.getElementById('status-badge');
-    badge.textContent = d.running ? 'Online' : 'Offline';
-    badge.className = 'badge ' + (d.running ? 'online' : 'offline');
-
-    document.getElementById('balance').textContent = d.balance !== '—' ? '$' + d.balance : '—';
-
-    const pnlEl = document.getElementById('pnl');
-    const pnl = d.pnl ?? 0;
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-    pnlEl.className = 'value ' + (pnl >= 0 ? 'green' : 'red');
-    document.getElementById('pnl-sub').textContent = d.total + ' operações hoje';
-
-    document.getElementById('wl').textContent = d.wins + ' / ' + d.losses;
-    document.getElementById('wr').textContent = 'Winrate: ' + d.winrate + '%';
-
-    const pl = d.p_loss;
-    const plEl = document.getElementById('ploss');
-    if (pl !== null && pl !== undefined) {
-      plEl.textContent = (pl * 100).toFixed(1) + '%';
-      const pct = Math.min(pl * 100, 100);
-      const bar = document.getElementById('ploss-bar');
-      bar.style.width = pct + '%';
-      if (pl >= 0.294) {
-        plEl.className = 'value red';
-        bar.style.background = '#f85149';
-      } else {
-        plEl.className = 'value green';
-        bar.style.background = '#3fb950';
-      }
-    } else {
-      plEl.textContent = '—';
-    }
-
-    document.getElementById('last-update').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
-  } catch(e) { /* silent */ }
-}
-
-async function fetchTrades() {
-  try {
-    const r = await fetch('/api/trades');
-    const data = await r.json();
-    const tbody = document.getElementById('trades-body');
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Sem operações hoje</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map(t => {
-      const ts = t.timestamp ? t.timestamp.replace('T', ' ').slice(0, 19) : '—';
-      const res = t.result || '—';
-      const cls = res === 'WIN' ? 'win' : res === 'LOSS' ? 'loss' : '';
-      const profit = (t.profit !== '' && t.profit !== undefined) ? (parseFloat(t.profit) >= 0 ? '+' : '') + parseFloat(t.profit).toFixed(4) : '—';
-      return `<tr>
-        <td>${ts}</td>
-        <td class="${cls}">${res}</td>
-        <td class="${cls}">${profit}</td>
-        <td>${t.score ?? '—'}</td>
-        <td>${t.stake ?? '—'}</td>
-        <td>${t.held_ticks ?? '—'}</td>
-      </tr>`;
-    }).join('');
-  } catch(e) { /* silent */ }
-}
-
-async function fetchLogs() {
-  try {
-    const r = await fetch('/api/logs');
-    const d = await r.json();
-    const box = document.getElementById('log-box');
-    box.innerHTML = d.lines.map(l => {
-      let cls = 'info';
-      if (l.includes('[WARNING]') || l.includes('cancelado')) cls = 'warn';
-      else if (l.includes('[ERROR]') || l.includes('[CRITICAL]')) cls = 'err';
-      else if (l.includes('P(LOSS)') || l.includes('EnsembleScorer') || l.includes('Comprando')) cls = 'ai';
-      return `<div class="${cls}">${l.replace(/</g,'&lt;')}</div>`;
-    }).join('');
-    box.scrollTop = box.scrollHeight;
-  } catch(e) { /* silent */ }
-}
-
-function refresh() {
-  fetchStatus();
-  fetchTrades();
-  fetchLogs();
-}
-
 refresh();
 setInterval(refresh, 5000);
 </script>
