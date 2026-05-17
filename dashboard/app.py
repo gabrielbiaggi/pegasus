@@ -156,6 +156,11 @@ def api_trades():
     if not TRADES_CSV.exists():
         return []
     df = pd.read_csv(TRADES_CSV)
+    if "timestamp" in df.columns:
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        df = df[df["timestamp"].astype(str).str.startswith(today_str)]
+    if df.empty:
+        return []
     cols = ["timestamp", "result", "profit", "score", "stake", "held_ticks"]
     available = [c for c in cols if c in df.columns]
     return df[available].tail(50).iloc[::-1].fillna("").to_dict(orient="records")
