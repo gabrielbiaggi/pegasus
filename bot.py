@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -18,7 +19,9 @@ from risk_manager import RiskManager
 from strategy import calculate_tick_indicators, generate_accumulator_signal, EnsembleScorer
 
 #: Maximum acceptable tick age in seconds before an entry is skipped.
-MAX_TICK_LATENCY_SECONDS: float = 0.200
+#: Configurable via MAX_TICK_LATENCY_MS env var (default 500ms to handle
+#: real-world network latency between Deriv servers and the bot host).
+MAX_TICK_LATENCY_SECONDS: float = float(os.getenv("MAX_TICK_LATENCY_MS", "500")) / 1000.0
 
 
 class FatalBotError(RuntimeError):
