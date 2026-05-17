@@ -20,9 +20,18 @@ SCREEN_BOT = "pegasus"
 VENV_PYTHON = str(BASE / ".venv/bin/python")
 
 
+_bot_running_cache: tuple[float, bool] = (0.0, False)
+
+
 def _bot_running() -> bool:
+    global _bot_running_cache
+    now = _time.monotonic()
+    if now - _bot_running_cache[0] < 5.0:
+        return _bot_running_cache[1]
     r = subprocess.run(["pgrep", "-f", "python.*bot.py"], capture_output=True)
-    return r.returncode == 0
+    result = r.returncode == 0
+    _bot_running_cache = (now, result)
+    return result
 
 
 # Cache: balance changes only at login, so refresh at most every 60s
@@ -236,12 +245,7 @@ def update_env(body: EnvUpdate):
 
 @app.get("/api/trades")
 def api_trades():
-    if not TRADES_CSV.exists():
-        return []
-    df = pd.read_csv(TRADES_CSV)
-    if "timestamp" in df.columns:
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        df = df[df["timestamp"].astype(str).str.startswith(today_str)]
+    df = _today_df()
     if df.empty:
         return []
     cols = ["timestamp", "result", "profit", "score", "stake", "held_ticks"]
