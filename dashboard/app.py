@@ -107,6 +107,7 @@ def api_status():
         "block_weekends": _get_env("BLOCK_WEEKENDS") == "true",
         "use_ensemble": _get_env("USE_ENSEMBLE") == "true",
         "ensemble_min_prob": _get_env("ENSEMBLE_MIN_PROB") or "0.294",
+        "stake": _get_env("STAKE") or "1.00",
     }
 
 
