@@ -3,98 +3,112 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Pegasus Dashboard</title>
+<title>🦅 Pegasus</title>
 <style>
-  :root {
-    --bg: #0d1117; --bg2: #161b22; --border: #30363d;
-    --green: #3fb950; --red: #f85149; --yellow: #d29922;
-    --blue: #58a6ff; --text: #c9d1d9; --muted: #8b949e;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
-  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  header h1 { font-size: 1.1rem; font-weight: 600; color: var(--blue); letter-spacing: .5px; }
-  .badge { font-size: .7rem; padding: 2px 8px; border-radius: 20px; font-weight: 600; transition: all .3s; }
-  .badge.online  { background: #1a3a1f; color: var(--green); border: 1px solid var(--green); }
-  .badge.offline { background: #3a1a1a; color: var(--red);   border: 1px solid var(--red); }
-  .badge.pending { background: #2a2a1a; color: var(--yellow); border: 1px solid var(--yellow); }
-  .last-update { margin-left: auto; font-size: .75rem; color: var(--muted); }
-  .ctrl-bar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 10px 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .btn { padding: 7px 16px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; font-size: .82rem; font-weight: 600; transition: opacity .15s; }
-  .btn:hover:not(:disabled) { opacity: .8; }
-  .btn:active:not(:disabled) { opacity: .6; }
-  .btn:disabled { opacity: .3; cursor: not-allowed; filter: grayscale(.5); }
-  .btn-green  { background: #1a3a1f; color: var(--green); border-color: var(--green); }
-  .btn-red    { background: #3a1a1a; color: var(--red);   border-color: var(--red); }
-  .btn-yellow { background: #3a2f1a; color: var(--yellow);border-color: var(--yellow); }
-  .btn-blue   { background: #1a2a3a; color: var(--blue);  border-color: var(--blue); }
-  .toggle-row { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
-  .toggle { position: relative; display: inline-block; width: 38px; height: 20px; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle input:disabled + .slider { opacity: .35; cursor: not-allowed; }
-  .slider { position: absolute; inset: 0; background: #333; border-radius: 20px; cursor: pointer; transition: .2s; }
-  .slider:before { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
-  input:checked + .slider { background: var(--green); }
-  input:checked + .slider:before { transform: translateX(18px); }
-  .sep { color: var(--border); margin: 0 4px; }
-  .param-row { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
-  .param-row input[type=number] { width: 80px; background: #0d1117; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: .82rem; }
-  .param-row input[type=number]:focus { outline: 1px solid var(--blue); }
-  .param-row input:disabled { opacity: .35; cursor: not-allowed; }
-  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 18px; font-size: .82rem; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99; }
-  .toast.show { opacity: 1; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 20px 24px 0; }
-  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-  .card .value { font-size: 1.6rem; font-weight: 700; }
-  .card .value.green { color: var(--green); } .card .value.red { color: var(--red); }
-  .card .value.blue  { color: var(--blue);  } .card .value.yellow { color: var(--yellow); }
-  .card .sub { font-size: .72rem; color: var(--muted); margin-top: 4px; }
-  section { padding: 20px 24px; }
-  section h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 10px; }
-  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-  td { padding: 7px 10px; border-bottom: 1px solid #21262d; }
-  tr:hover td { background: #1c2129; }
-  .win { color: var(--green); font-weight: 600; } .loss { color: var(--red); font-weight: 600; }
-  .log-box { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; height: 220px; overflow-y: auto; font-family: 'Cascadia Code','Fira Mono',monospace; font-size: .74rem; line-height: 1.55; }
-  .log-box .warn { color: var(--yellow); } .log-box .err { color: var(--red); }
-  .log-box .info { color: var(--muted); }  .log-box .ai  { color: var(--blue); }
-  .ai-bar { height: 8px; border-radius: 4px; background: #21262d; overflow: hidden; margin-top: 6px; }
-  .ai-bar-fill { height: 100%; border-radius: 4px; transition: width .4s ease; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .spin { display: inline-block; animation: spin .6s linear infinite; }
+  :root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--green:#3fb950;--red:#f85149;--yellow:#d29922;--blue:#58a6ff;--text:#c9d1d9;--muted:#8b949e}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+  header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  header h1{font-size:1.05rem;font-weight:700;color:var(--blue);letter-spacing:.5px}
+  .badge{font-size:.7rem;padding:2px 8px;border-radius:20px;font-weight:600;transition:all .3s}
+  .badge.online{background:#1a3a1f;color:var(--green);border:1px solid var(--green)}
+  .badge.offline{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+  .badge.pending{background:#2a2a1a;color:var(--yellow);border:1px solid var(--yellow)}
+  .last-trade{font-size:.72rem;color:var(--muted)}
+  .conn-err{font-size:.72rem;color:var(--red);display:none}
+  .last-update{margin-left:auto;font-size:.72rem;color:var(--muted)}
+  .ctrl-bar{background:var(--bg2);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{padding:6px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:.8rem;font-weight:600;transition:opacity .15s;white-space:nowrap}
+  .btn:hover:not(:disabled){opacity:.8}.btn:active:not(:disabled){opacity:.6}
+  .btn:disabled{opacity:.3;cursor:not-allowed;filter:grayscale(.5)}
+  .btn-green{background:#1a3a1f;color:var(--green);border-color:var(--green)}
+  .btn-red{background:#3a1a1a;color:var(--red);border-color:var(--red)}
+  .btn-yellow{background:#3a2f1a;color:var(--yellow);border-color:var(--yellow)}
+  .btn-blue{background:#1a2a3a;color:var(--blue);border-color:var(--blue)}
+  .toggle-row{display:flex;align-items:center;gap:7px;font-size:.8rem}
+  .toggle{position:relative;display:inline-block;width:36px;height:19px}
+  .toggle input{opacity:0;width:0;height:0}
+  .toggle input:disabled+.slider{opacity:.35;cursor:not-allowed}
+  .slider{position:absolute;inset:0;background:#333;border-radius:20px;cursor:pointer;transition:.2s}
+  .slider:before{content:"";position:absolute;width:13px;height:13px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+  input:checked+.slider{background:var(--green)}
+  input:checked+.slider:before{transform:translateX(17px)}
+  .sep{color:var(--border);margin:0 2px}
+  .param-row{display:flex;align-items:center;gap:6px;font-size:.8rem}
+  .param-row input[type=number]{width:72px;background:#0d1117;border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px;font-size:.8rem}
+  .param-row input:focus{outline:1px solid var(--blue)}
+  .param-row input:disabled{opacity:.35;cursor:not-allowed}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:.8rem;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;padding:16px 24px 0}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:hidden}
+  .card .label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  .card .value{font-size:1.55rem;font-weight:700}
+  .card .value.green{color:var(--green)}.card .value.red{color:var(--red)}
+  .card .value.blue{color:var(--blue)}.card .value.yellow{color:var(--yellow)}
+  .card .sub{font-size:.7rem;color:var(--muted);margin-top:3px}
+  .card .sub2{font-size:.7rem;color:var(--muted);margin-top:1px}
+  .sparkline{display:block;width:100%;height:30px;margin-top:8px}
+  .spark-line{fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .spark-zero{stroke:#30363d;stroke-width:1;stroke-dasharray:3 3}
+  .ai-bar{height:7px;border-radius:4px;background:#21262d;overflow:hidden;margin-top:6px}
+  .ai-bar-fill{height:100%;border-radius:4px;transition:width .4s ease}
+  .streak-val{font-size:1.55rem;font-weight:700}
+  .streak-val.pos{color:var(--green)}.streak-val.neg{color:var(--red)}.streak-val.zero{color:var(--muted)}
+  section{padding:16px 24px}
+  .section-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .section-header h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  .section-header .tools{margin-left:auto;display:flex;gap:4px}
+  .filter-btn{padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.72rem;cursor:pointer;transition:all .15s}
+  .filter-btn.active{background:var(--bg2);color:var(--text);border-color:var(--blue)}
+  table{width:100%;border-collapse:collapse;font-size:.8rem}
+  th{text-align:left;color:var(--muted);font-weight:500;padding:6px 10px;border-bottom:1px solid var(--border)}
+  td{padding:6px 10px;border-bottom:1px solid #21262d}
+  tr:hover td{background:#1c2129}
+  .win{color:var(--green);font-weight:600}.loss{color:var(--red);font-weight:600}
+  @keyframes flash-win{0%{background:#1a3a1f}100%{background:transparent}}
+  @keyframes flash-loss{0%{background:#3a1a1a}100%{background:transparent}}
+  .flash-win td{animation:flash-win 1.2s ease-out}
+  .flash-loss td{animation:flash-loss 1.2s ease-out}
+  .log-box{background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:10px 14px;height:220px;overflow-y:auto;font-family:'Cascadia Code','Fira Mono',monospace;font-size:.73rem;line-height:1.55}
+  .log-box .warn{color:var(--yellow)}.log-box .err{color:var(--red)}.log-box .info{color:var(--muted)}.log-box .ai{color:var(--blue)}
+  .scroll-lock-btn{padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.72rem;cursor:pointer}
+  .scroll-lock-btn.locked{color:var(--yellow);border-color:var(--yellow)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .spin{display:inline-block;animation:spin .6s linear infinite}
 </style>
 </head>
 <body>
-
 <header>
   <h1>🦅 Pegasus</h1>
   <span id="status-badge" class="badge offline">Offline</span>
+  <span class="last-trade" id="last-trade-time"></span>
+  <span class="conn-err" id="conn-err">⚠ Sem conexão</span>
   <span class="last-update" id="last-update">—</span>
 </header>
-
 <div class="ctrl-bar">
-  <button id="btn-start"   class="btn btn-green"  onclick="botAction('start')"  >▶ Iniciar Bot</button>
-  <button id="btn-stop"    class="btn btn-red"    onclick="botAction('stop')"   >■ Parar Bot</button>
+  <button id="btn-start" class="btn btn-green" onclick="botAction('start')">▶ Iniciar</button>
+  <button id="btn-stop" class="btn btn-red" onclick="confirmStop()">■ Parar</button>
   <button id="btn-restart" class="btn btn-yellow" onclick="botAction('restart')">↻ Reiniciar</button>
   <span class="sep">|</span>
   <div class="toggle-row">
     <label class="toggle"><input type="checkbox" id="tog-weekends" onchange="setEnvToggle('BLOCK_WEEKENDS',this)"><span class="slider"></span></label>
-    Bloquear Fim de Semana
+    Bloquear FS
   </div>
   <div class="toggle-row">
     <label class="toggle"><input type="checkbox" id="tog-ensemble" onchange="setEnvToggle('USE_ENSEMBLE',this)"><span class="slider"></span></label>
-    IA Gate (XGBoost)
+    IA Gate
   </div>
   <span class="sep">|</span>
   <div class="param-row">
-    Limiar P(LOSS):
-    <input type="number" id="inp-threshold" min="0.01" max="0.99" step="0.001" value="0.294"/>
+    P(LOSS): <input type="number" id="inp-threshold" min="0.01" max="0.99" step="0.001" value="0.294"/>
     <button id="btn-threshold" class="btn btn-blue" onclick="setThreshold()">Aplicar</button>
   </div>
+  <div class="param-row">
+    Stake: <input type="number" id="inp-stake" min="0.35" max="100" step="0.01" value="1.00"/>
+    <button id="btn-stake" class="btn btn-blue" onclick="setStake()">Aplicar</button>
+  </div>
 </div>
-
 <div class="grid">
   <div class="card">
     <div class="label">Saldo Virtual</div>
@@ -105,11 +119,21 @@
     <div class="label">P&amp;L Hoje</div>
     <div class="value" id="pnl">—</div>
     <div class="sub" id="pnl-sub">—</div>
+    <div class="sub2" id="pnl-avg"></div>
+    <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <line class="spark-zero" x1="0" y1="15" x2="100" y2="15"/>
+      <polyline class="spark-line" id="spark-path" points=""/>
+    </svg>
   </div>
   <div class="card">
     <div class="label">Wins / Losses</div>
     <div class="value green" id="wl">—</div>
     <div class="sub" id="wr">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Streak Atual</div>
+    <div class="streak-val zero" id="streak">—</div>
+    <div class="sub" id="streak-sub">—</div>
   </div>
   <div class="card">
     <div class="label">IA — P(LOSS)</div>
@@ -118,235 +142,53 @@
     <div class="sub" id="ploss-sub">limiar 0.294</div>
   </div>
 </div>
-
 <section>
-  <h2>Últimas operações</h2>
+  <div class="section-header"><h2>Últimas operações</h2></div>
   <table>
     <thead><tr><th>Hora (UTC)</th><th>Resultado</th><th>Lucro</th><th>Score</th><th>Stake</th><th>Ticks</th></tr></thead>
-    <tbody id="trades-body">
-      <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Carregando...</td></tr>
-    </tbody>
+    <tbody id="trades-body"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Carregando...</td></tr></tbody>
   </table>
 </section>
-
 <section>
-  <h2>Log ao vivo</h2>
+  <div class="section-header">
+    <h2>Log ao vivo</h2>
+    <div class="tools">
+      <button class="filter-btn active" onclick="setLogFilter('all',this)">Tudo</button>
+      <button class="filter-btn" onclick="setLogFilter('ai',this)">IA</button>
+      <button class="filter-btn" onclick="setLogFilter('warn',this)">Aviso</button>
+      <button class="filter-btn" onclick="setLogFilter('err',this)">Erro</button>
+      <button class="scroll-lock-btn" id="scroll-lock-btn" onclick="toggleScrollLock()">⇩ Auto</button>
+    </div>
+  </div>
   <div class="log-box" id="log-box">Carregando...</div>
 </section>
-
 <div class="toast" id="toast"></div>
-
 <script>
-// ── state ─────────────────────────────────────────────────────────────────────
-let _botRunning = false;
-let _actionLock = false;
-let _threshold  = 0.294;
-
-const BTN_META = {
-  start:   { id:'btn-start',   orig:'▶ Iniciar Bot', loading:'Iniciando…' },
-  stop:    { id:'btn-stop',    orig:'■ Parar Bot',   loading:'Parando…' },
-  restart: { id:'btn-restart', orig:'↻ Reiniciar',   loading:'Reiniciando…' },
-};
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-function toast(msg, color) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.style.borderColor = color || 'var(--blue)';
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3000);
-}
-
-function lockAll(locked) {
-  ['btn-start','btn-stop','btn-restart','btn-threshold',
-   'tog-weekends','tog-ensemble','inp-threshold'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = locked;
-  });
-}
-
-function applyButtonStates(running) {
-  if (_actionLock) return;
-  document.getElementById('btn-start').disabled   =  running;
-  document.getElementById('btn-stop').disabled    = !running;
-  document.getElementById('btn-restart').disabled = !running;
-  ['btn-threshold','tog-weekends','tog-ensemble','inp-threshold'].forEach(id => {
-    document.getElementById(id).disabled = false;
-  });
-}
-
-async function pollUntilState(expected, maxMs) {
-  const step = 700;
-  let elapsed = 0;
-  while (elapsed < maxMs) {
-    await new Promise(r => setTimeout(r, step));
-    elapsed += step;
-    try {
-      const d = await fetch('/api/status').then(r => r.json());
-      if (d.running === expected) return true;
-    } catch(_) {}
-  }
-  return false;
-}
-
-// ── bot actions ───────────────────────────────────────────────────────────────
-async function botAction(action) {
-  if (_actionLock) return;
-  _actionLock = true;
-  lockAll(true);
-
-  const meta  = BTN_META[action];
-  const btnEl = document.getElementById(meta.id);
-  btnEl.innerHTML = `<span class="spin">⟳</span> ${meta.loading}`;
-
-  const badge = document.getElementById('status-badge');
-  badge.className = 'badge pending';
-  badge.textContent = meta.loading;
-
-  try {
-    const res = await fetch('/api/bot/' + action, { method: 'POST' });
-    const d   = await res.json();
-    const col = action === 'stop' ? 'var(--red)' : action === 'start' ? 'var(--green)' : 'var(--yellow)';
-    toast(d.msg, col);
-
-    const expectedRunning = (action !== 'stop');
-    const maxWait = action === 'restart' ? 22000 : 14000;
-    await pollUntilState(expectedRunning, maxWait);
-  } catch(e) {
-    toast('Erro: ' + e.message, 'var(--red)');
-  }
-
-  btnEl.textContent = meta.orig;
-  _actionLock = false;
-  await fetchStatus();   // authoritative refresh + re-enables buttons
-}
-
-// ── env ───────────────────────────────────────────────────────────────────────
-async function setEnvToggle(key, el) {
-  const value = el.checked ? 'true' : 'false';
-  try {
-    await fetch('/api/env', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({key, value})
-    });
-    toast(`${key} = ${value}`, 'var(--blue)');
-    if (_botRunning) await botAction('restart');
-  } catch(e) {
-    toast('Erro ao atualizar env', 'var(--red)');
-    el.checked = !el.checked;
-  }
-}
-
-async function setThreshold() {
-  const raw = parseFloat(document.getElementById('inp-threshold').value);
-  if (isNaN(raw) || raw < 0.01 || raw > 0.99) { toast('Valor inválido', 'var(--red)'); return; }
-  const val = raw.toFixed(4);
-  try {
-    await fetch('/api/env', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({key:'ENSEMBLE_MIN_PROB', value:val})
-    });
-    _threshold = parseFloat(val);
-    document.getElementById('ploss-sub').textContent = 'limiar ' + val;
-    toast('ENSEMBLE_MIN_PROB = ' + val, 'var(--blue)');
-    if (_botRunning) await botAction('restart');
-  } catch(e) {
-    toast('Erro ao atualizar limiar', 'var(--red)');
-  }
-}
-
-// ── data ──────────────────────────────────────────────────────────────────────
-async function fetchStatus() {
-  try {
-    const d = await fetch('/api/status').then(r => r.json());
-    _botRunning = !!d.running;
-    applyButtonStates(_botRunning);
-
-    const badge = document.getElementById('status-badge');
-    badge.textContent = d.running ? 'Online' : 'Offline';
-    badge.className   = 'badge ' + (d.running ? 'online' : 'offline');
-
-    document.getElementById('balance').textContent =
-      d.balance !== '—' ? '$' + d.balance : '—';
-
-    const pnl   = d.pnl ?? 0;
-    const pnlEl = document.getElementById('pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-    pnlEl.className   = 'value ' + (pnl >= 0 ? 'green' : 'red');
-    document.getElementById('pnl-sub').textContent = d.total + ' operações hoje';
-    document.getElementById('wl').textContent = d.wins + ' / ' + d.losses;
-    document.getElementById('wr').textContent = 'Winrate: ' + d.winrate + '%';
-
-    // sync toggles from server (no onchange)
-    const wkEl = document.getElementById('tog-weekends');
-    const enEl = document.getElementById('tog-ensemble');
-    wkEl.checked = !!d.block_weekends;
-    enEl.checked = !!d.use_ensemble;
-    if (d.ensemble_min_prob) {
-      _threshold = parseFloat(d.ensemble_min_prob);
-      document.getElementById('inp-threshold').value = _threshold;
-      document.getElementById('ploss-sub').textContent = 'limiar ' + _threshold.toFixed(3);
-    }
-
-    const pl = d.p_loss;
-    const plEl = document.getElementById('ploss');
-    if (pl !== null && pl !== undefined) {
-      plEl.textContent = (pl * 100).toFixed(1) + '%';
-      const bar = document.getElementById('ploss-bar');
-      bar.style.width = Math.min(pl * 100, 100) + '%';
-      if (pl >= _threshold) {
-        plEl.className = 'value red'; bar.style.background = '#f85149';
-      } else {
-        plEl.className = 'value green'; bar.style.background = '#3fb950';
-      }
-    } else {
-      plEl.textContent = '—';
-    }
-
-    document.getElementById('last-update').textContent =
-      'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
-  } catch(_) {}
-}
-
-async function fetchTrades() {
-  try {
-    const data  = await fetch('/api/trades').then(r => r.json());
-    const tbody = document.getElementById('trades-body');
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Sem operações hoje</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map(t => {
-      const ts     = t.timestamp ? t.timestamp.replace('T',' ').slice(0,19) : '—';
-      const res    = t.result || '—';
-      const cls    = res === 'WIN' ? 'win' : res === 'LOSS' ? 'loss' : '';
-      const profit = (t.profit !== '' && t.profit !== undefined)
-        ? (parseFloat(t.profit) >= 0 ? '+':'') + parseFloat(t.profit).toFixed(4) : '—';
-      return `<tr><td>${ts}</td><td class="${cls}">${res}</td><td class="${cls}">${profit}</td><td>${t.score??'—'}</td><td>${t.stake??'—'}</td><td>${t.held_ticks??'—'}</td></tr>`;
-    }).join('');
-  } catch(_) {}
-}
-
-async function fetchLogs() {
-  try {
-    const d   = await fetch('/api/logs').then(r => r.json());
-    const box = document.getElementById('log-box');
-    box.innerHTML = d.lines.map(l => {
-      let cls = 'info';
-      if (l.includes('[WARNING]') || l.includes('cancelado'))                             cls = 'warn';
-      else if (l.includes('[ERROR]') || l.includes('[CRITICAL]'))                         cls = 'err';
-      else if (l.includes('P(LOSS)') || l.includes('EnsembleScorer') || l.includes('Comprando')) cls = 'ai';
-      return `<div class="${cls}">${l.replace(/</g,'&lt;')}</div>`;
-    }).join('');
-    box.scrollTop = box.scrollHeight;
-  } catch(_) {}
-}
-
-function refresh() { fetchStatus(); fetchTrades(); fetchLogs(); }
+var _botRunning=false,_actionLock=false,_threshold=0.294,_prevTradeCount=0,_logFilter='all',_scrollLocked=false,_logLines=[],_connFailed=0;
+var BTN_META={start:{id:'btn-start',orig:'\u25b6 Iniciar',loading:'Iniciando\u2026'},stop:{id:'btn-stop',orig:'\u25a0 Parar',loading:'Parando\u2026'},restart:{id:'btn-restart',orig:'\u21bb Reiniciar',loading:'Reiniciando\u2026'}};
+function toast(msg,color){var el=document.getElementById('toast');el.textContent=msg;el.style.borderColor=color||'var(--blue)';el.classList.add('show');setTimeout(function(){el.classList.remove('show')},3000)}
+function lockAll(locked){['btn-start','btn-stop','btn-restart','btn-threshold','btn-stake','tog-weekends','tog-ensemble','inp-threshold','inp-stake'].forEach(function(id){var el=document.getElementById(id);if(el)el.disabled=locked})}
+function applyButtonStates(running){if(_actionLock)return;document.getElementById('btn-start').disabled=running;document.getElementById('btn-stop').disabled=!running;document.getElementById('btn-restart').disabled=!running;['btn-threshold','btn-stake','tog-weekends','tog-ensemble','inp-threshold','inp-stake'].forEach(function(id){document.getElementById(id).disabled=false})}
+async function pollUntilState(expected,maxMs){var step=700,elapsed=0;while(elapsed<maxMs){await new Promise(function(r){setTimeout(r,step)});elapsed+=step;try{var d=await fetch('/api/status').then(function(r){return r.json()});if(d.running===expected)return true}catch(e){}}return false}
+function timeSince(s){if(!s)return'';var diff=Math.floor((Date.now()-new Date(s))/1000);if(diff<60)return'\u00faltimo trade: '+diff+'s atr\u00e1s';if(diff<3600)return'\u00faltimo trade: '+Math.floor(diff/60)+'m atr\u00e1s';return'\u00faltimo trade: '+Math.floor(diff/3600)+'h atr\u00e1s'}
+function drawSparkline(profits){var path=document.getElementById('spark-path');if(!profits||profits.length<2){path.setAttribute('points','');return}var cumul=[];profits.reduce(function(acc,p){var v=acc+p;cumul.push(v);return v},0);var mn=Math.min.apply(null,cumul),mx=Math.max.apply(null,cumul),range=mx-mn||0.001;var pts=cumul.map(function(v,i){return((i/(cumul.length-1))*100).toFixed(1)+','+(28-((v-mn)/range)*24).toFixed(1)}).join(' ');path.setAttribute('points',pts);path.style.stroke=cumul[cumul.length-1]>=0?'#3fb950':'#f85149'}
+function calcStreak(trades){if(!trades||!trades.length)return{val:0,label:'\u2014'};var streak=0,dir=trades[0].result;for(var i=0;i<trades.length;i++){if(trades[i].result===dir)streak++;else break}var el=document.getElementById('streak');if(dir==='WIN'){el.className='streak-val pos';return{val:streak,label:streak+' WIN consecutivos'}}if(dir==='LOSS'){el.className='streak-val neg';return{val:-streak,label:streak+' LOSS consecutivos'}}el.className='streak-val zero';return{val:0,label:'\u2014'}}
+function confirmStop(){if(!confirm('Parar o bot?'))return;botAction('stop')}
+async function botAction(action){if(_actionLock)return;_actionLock=true;lockAll(true);var meta=BTN_META[action],btnEl=document.getElementById(meta.id),badge=document.getElementById('status-badge');btnEl.innerHTML='<span class="spin">\u27f3</span> '+meta.loading;badge.className='badge pending';badge.textContent=meta.loading;try{var res=await fetch('/api/bot/'+action,{method:'POST'}),d=await res.json(),color=action==='stop'?'var(--red)':action==='start'?'var(--green)':'var(--yellow)';toast(d.msg,color);await pollUntilState(action!=='stop',action==='restart'?22000:14000)}catch(e){toast('Erro: '+e.message,'var(--red)')}btnEl.textContent=meta.orig;_actionLock=false;await fetchStatus()}
+async function _postEnv(key,value){await fetch('/api/env',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,value:value})})}
+async function setEnvToggle(key,el){var value=el.checked?'true':'false';try{await _postEnv(key,value);toast(key+' = '+value,'var(--blue)');if(_botRunning)await botAction('restart')}catch(e){toast('Erro','var(--red)');el.checked=!el.checked}}
+async function setThreshold(){var raw=parseFloat(document.getElementById('inp-threshold').value);if(isNaN(raw)||raw<0.01||raw>0.99){toast('Valor inv\u00e1lido (0.01\u20130.99)','var(--red)');return}var val=raw.toFixed(4);try{await _postEnv('ENSEMBLE_MIN_PROB',val);_threshold=parseFloat(val);document.getElementById('ploss-sub').textContent='limiar '+val;toast('P(LOSS) limiar = '+val,'var(--blue)');if(_botRunning)await botAction('restart')}catch(e){toast('Erro','var(--red)')}}
+async function setStake(){var raw=parseFloat(document.getElementById('inp-stake').value);if(isNaN(raw)||raw<0.35){toast('Stake m\u00ednimo: 0.35','var(--red)');return}var val=raw.toFixed(2);try{await _postEnv('STAKE',val);toast('STAKE = $'+val,'var(--blue)');if(_botRunning)await botAction('restart')}catch(e){toast('Erro','var(--red)')}}
+function setLogFilter(f,btn){_logFilter=f;document.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');renderLog()}
+function toggleScrollLock(){_scrollLocked=!_scrollLocked;var btn=document.getElementById('scroll-lock-btn');btn.textContent=_scrollLocked?'\u21e9 Lock':'\u21e9 Auto';btn.classList.toggle('locked',_scrollLocked)}
+function renderLog(){var box=document.getElementById('log-box'),filtered=_logFilter==='all'?_logLines:_logLines.filter(function(l){if(_logFilter==='warn')return l.includes('[WARNING]')||l.includes('cancelado');if(_logFilter==='err')return l.includes('[ERROR]')||l.includes('[CRITICAL]');if(_logFilter==='ai')return l.includes('P(LOSS)')||l.includes('EnsembleScorer')||l.includes('Comprando');return true});box.innerHTML=filtered.map(function(l){var cls='info';if(l.includes('[WARNING]')||l.includes('cancelado'))cls='warn';else if(l.includes('[ERROR]')||l.includes('[CRITICAL]'))cls='err';else if(l.includes('P(LOSS)')||l.includes('EnsembleScorer')||l.includes('Comprando'))cls='ai';return'<div class="'+cls+'">'+l.replace(/</g,'&lt;')+'</div>'}).join('');if(!_scrollLocked)box.scrollTop=box.scrollHeight}
+async function fetchStatus(){try{var d=await fetch('/api/status').then(function(r){return r.json()});_connFailed=0;document.getElementById('conn-err').style.display='none';_botRunning=!!d.running;applyButtonStates(_botRunning);var badge=document.getElementById('status-badge');badge.textContent=d.running?'Online':'Offline';badge.className='badge '+(d.running?'online':'offline');document.getElementById('balance').textContent=(d.balance&&d.balance!=='\u2014')?'$'+d.balance:'\u2014';var pnl=d.pnl!=null?d.pnl:0,pnlEl=document.getElementById('pnl');pnlEl.textContent=(pnl>=0?'+':'')+pnl.toFixed(4);pnlEl.className='value '+(pnl>=0?'green':'red');document.getElementById('pnl-sub').textContent=(d.total||0)+' opera\u00e7\u00f5es hoje';document.getElementById('wl').textContent=(d.wins||0)+' / '+(d.losses||0);document.getElementById('wr').textContent='Winrate: '+(d.winrate||0)+'%';if(!_actionLock){document.getElementById('tog-weekends').checked=!!d.block_weekends;document.getElementById('tog-ensemble').checked=!!d.use_ensemble}if(d.ensemble_min_prob){_threshold=parseFloat(d.ensemble_min_prob);document.getElementById('inp-threshold').value=_threshold;document.getElementById('ploss-sub').textContent='limiar '+_threshold.toFixed(3)}if(d.stake)document.getElementById('inp-stake').value=parseFloat(d.stake).toFixed(2);var pl=d.p_loss,plEl=document.getElementById('ploss');if(pl!=null){plEl.textContent=(pl*100).toFixed(1)+'%';var bar=document.getElementById('ploss-bar');bar.style.width=Math.min(pl*100,100)+'%';if(pl>=_threshold){plEl.className='value red';bar.style.background='#f85149'}else{plEl.className='value green';bar.style.background='#3fb950'}}else{plEl.textContent='\u2014'}document.getElementById('last-update').textContent='Atualizado: '+new Date().toLocaleTimeString('pt-BR');document.title=d.running?'\U0001f985 '+(d.wins||0)+'W/'+(d.losses||0)+'L '+(pnl>=0?'+':'')+pnl.toFixed(2)+' | Pegasus':'\U0001f985 Pegasus [Offline]'}catch(e){_connFailed++;if(_connFailed>=2)document.getElementById('conn-err').style.display='inline'}}
+async function fetchTrades(){try{var data=await fetch('/api/trades').then(function(r){return r.json()}),tbody=document.getElementById('trades-body');if(!data.length){tbody.innerHTML='<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Sem opera\u00e7\u00f5es hoje</td></tr>';_prevTradeCount=0;document.getElementById('pnl-avg').textContent='';document.getElementById('streak').textContent='\u2014';document.getElementById('streak-sub').textContent='\u2014';drawSparkline([]);return}var streak=calcStreak(data);document.getElementById('streak').textContent=streak.val===0?'\u2014':(streak.val>0?'+':'')+Math.abs(streak.val);document.getElementById('streak-sub').textContent=streak.label;var profits=data.map(function(t){return parseFloat(t.profit||0)}).filter(function(p){return!isNaN(p)}),avg=profits.length?profits.reduce(function(a,b){return a+b},0)/profits.length:0;document.getElementById('pnl-avg').textContent='m\u00e9d. '+(avg>=0?'+':'')+avg.toFixed(4)+'/op';drawSparkline(profits.slice().reverse());if(data[0]&&data[0].timestamp)document.getElementById('last-trade-time').textContent=timeSince(data[0].timestamp);var isNew=data.length>_prevTradeCount&&_prevTradeCount>0;_prevTradeCount=data.length;tbody.innerHTML=data.map(function(t,i){var ts=t.timestamp?t.timestamp.replace('T',' ').slice(0,19):'\u2014',res=t.result||'\u2014',cls=res==='WIN'?'win':res==='LOSS'?'loss':'',profit=(t.profit!==''&&t.profit!=null)?((parseFloat(t.profit)>=0?'+':'')+parseFloat(t.profit).toFixed(4)):'\u2014',flashCls=(i===0&&isNew)?(res==='WIN'?' flash-win':' flash-loss'):'';return'<tr class="'+flashCls+'"><td>'+ts+'</td><td class="'+cls+'">'+res+'</td><td class="'+cls+'">'+profit+'</td><td>'+(t.score!=null?t.score:'\u2014')+'</td><td>'+(t.stake!=null?t.stake:'\u2014')+'</td><td>'+(t.held_ticks!=null?t.held_ticks:'\u2014')+'</td></tr>'}).join('')}catch(e){}}
+async function fetchLogs(){try{var d=await fetch('/api/logs').then(function(r){return r.json()});_logLines=d.lines||[];renderLog()}catch(e){}}
+function refresh(){fetchStatus();fetchTrades();fetchLogs()}
 refresh();
-setInterval(refresh, 5000);
-</script>
+setInterval(fetchStatus,3000);
+setInterval(function(){fetchTrades();fetchLogs()},5000);
+<\/script>
 </body>
 </html>
