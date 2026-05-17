@@ -78,6 +78,12 @@ class BotConfig:
     accumulator_growth_rate: float
     accumulator_take_profit_percent: float
     accumulator_max_hold_ticks: int
+    accumulator_shadow_barrier_atr_multiplier: float
+    accumulator_shadow_barrier_min_percent: float
+    accumulator_shadow_barrier_max_percent: float
+    accumulator_shadow_proposal_enabled: bool
+    accumulator_shadow_proposal_throttle_seconds: int
+    accumulator_shadow_proposal_min_score: int
     accumulator_cooldown_ticks: int
     accumulator_use_limit_order: bool
     accumulator_min_score: int
@@ -188,6 +194,12 @@ def load_config() -> BotConfig:
         accumulator_growth_rate=_float_env("ACCUMULATOR_GROWTH_RATE", 0.03),
         accumulator_take_profit_percent=_float_env("ACCUMULATOR_TAKE_PROFIT_PERCENT", 3.0),
         accumulator_max_hold_ticks=_int_env("ACCUMULATOR_MAX_HOLD_TICKS", 8),
+        accumulator_shadow_barrier_atr_multiplier=_float_env("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER", 5.0),
+        accumulator_shadow_barrier_min_percent=_float_env("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT", 0.03),
+        accumulator_shadow_barrier_max_percent=_float_env("ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT", 0.10),
+        accumulator_shadow_proposal_enabled=_bool_env("ACCUMULATOR_SHADOW_PROPOSAL_ENABLED", True),
+        accumulator_shadow_proposal_throttle_seconds=_int_env("ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS", 5),
+        accumulator_shadow_proposal_min_score=_int_env("ACCUMULATOR_SHADOW_PROPOSAL_MIN_SCORE", 4),
         accumulator_cooldown_ticks=_int_env("ACCUMULATOR_COOLDOWN_TICKS", 3),
         accumulator_use_limit_order=_bool_env("ACCUMULATOR_USE_LIMIT_ORDER", False),
         accumulator_min_score=_int_env("ACCUMULATOR_MIN_SCORE", 7),
@@ -255,6 +267,18 @@ def load_config() -> BotConfig:
         raise ValueError("ACCUMULATOR_TAKE_PROFIT_PERCENT precisa ser maior que zero.")
     if config.accumulator_max_hold_ticks <= 0:
         raise ValueError("ACCUMULATOR_MAX_HOLD_TICKS precisa ser maior que zero.")
+    if config.accumulator_shadow_barrier_atr_multiplier <= 0:
+        raise ValueError("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER precisa ser maior que zero.")
+    if config.accumulator_shadow_barrier_min_percent <= 0:
+        raise ValueError("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT precisa ser maior que zero.")
+    if config.accumulator_shadow_barrier_max_percent < config.accumulator_shadow_barrier_min_percent:
+        raise ValueError(
+            "ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT precisa ser >= ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT."
+        )
+    if config.accumulator_shadow_proposal_throttle_seconds < 1:
+        raise ValueError("ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS precisa ser >= 1.")
+    if config.accumulator_shadow_proposal_min_score < 0:
+        raise ValueError("ACCUMULATOR_SHADOW_PROPOSAL_MIN_SCORE nao pode ser negativo.")
     if config.accumulator_cooldown_ticks < 0:
         raise ValueError("ACCUMULATOR_COOLDOWN_TICKS nao pode ser negativo.")
     if config.accumulator_min_score <= 0:

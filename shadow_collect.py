@@ -48,7 +48,14 @@ FIELDS = [
     "markov_p_down_given_down",
     "shannon_entropy",
     "kalman_residual_zscore",
+    "accu_barrier_est_percent",
+    "real_high_barrier",
+    "real_low_barrier",
+    "real_barrier_percent",
+    "barrier_source",
     "future_result",
+    "future_result_atr_est",
+    "future_result_spot_005",
     "future_exit_epoch",
     "future_exit_quote",
     "future_held_ticks",
@@ -156,6 +163,107 @@ def _future_result(
     }
 
 
+def _ticks_to_take_profit(growth_rate: float, take_profit_percent: float, max_hold_ticks: int) -> int:
+    target_profit = take_profit_percent / 100
+    value = 1.0
+    for held_ticks in range(1, max_hold_ticks + 1):
+        value *= 1 + growth_rate
+        if value - 1.0 >= target_profit:
+            return held_ticks
+    return max_hold_ticks
+
+
+def _estimate_accu_barrier_percent(
+    indicator_row: dict[str, Any],
+    atr_multiplier: float,
+    min_percent: float,
+    max_percent: float,
+) -> float:
+    raw_atr = indicator_row.get("tick_atr_percent")
+    try:
+        tick_atr_percent = float(raw_atr)
+    except (TypeError, ValueError):
+        tick_atr_percent = float("nan")
+
+    if tick_atr_percent != tick_atr_percent or tick_atr_percent <= 0:
+        return round(min_percent, 8)
+
+    barrier_percent = tick_atr_percent * atr_multiplier
+    barrier_percent = max(min_percent, min(max_percent, barrier_percent))
+    return round(barrier_percent, 8)
+
+
+def _future_result_with_estimated_barrier(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+    barrier_percent: float,
+    win_ticks: int,
+) -> dict[str, Any] | None:
+    if len(ticks) <= entry_index + win_ticks:
+        return None
+
+    entry_quote = float(ticks[entry_index]["quote"])
+    max_move_percent = 0.0
+
+    for index in range(entry_index + 1, entry_index + win_ticks + 1):
+        quote = float(ticks[index]["quote"])
+        move_percent = abs((quote - entry_quote) / entry_quote * 100)
+        max_move_percent = max(max_move_percent, move_percent)
+        if move_percent >= barrier_percent:
+            return {
+                "future_result": "LOSS",
+                "future_exit_epoch": int(ticks[index]["epoch"]),
+                "future_exit_quote": quote,
+                "future_held_ticks": index - entry_index,
+                "future_max_move_percent": round(max_move_percent, 8),
+            }
+
+    exit_index = entry_index + win_ticks
+    return {
+        "future_result": "WIN",
+        "future_exit_epoch": int(ticks[exit_index]["epoch"]),
+        "future_exit_quote": float(ticks[exit_index]["quote"]),
+        "future_held_ticks": win_ticks,
+        "future_max_move_percent": round(max_move_percent, 8),
+    }
+
+
+def _future_result_with_real_barrier(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+    low_barrier: float,
+    high_barrier: float,
+    win_ticks: int,
+) -> dict[str, Any] | None:
+    if len(ticks) <= entry_index + win_ticks:
+        return None
+
+    max_move_percent = 0.0
+    entry_quote = float(ticks[entry_index]["quote"])
+
+    for index in range(entry_index + 1, entry_index + win_ticks + 1):
+        quote = float(ticks[index]["quote"])
+        move_percent = abs((quote - entry_quote) / entry_quote * 100)
+        max_move_percent = max(max_move_percent, move_percent)
+        if quote <= low_barrier or quote >= high_barrier:
+            return {
+                "future_result": "LOSS",
+                "future_exit_epoch": int(ticks[index]["epoch"]),
+                "future_exit_quote": quote,
+                "future_held_ticks": index - entry_index,
+                "future_max_move_percent": round(max_move_percent, 8),
+            }
+
+    exit_index = entry_index + win_ticks
+    return {
+        "future_result": "WIN",
+        "future_exit_epoch": int(ticks[exit_index]["epoch"]),
+        "future_exit_quote": float(ticks[exit_index]["quote"]),
+        "future_held_ticks": win_ticks,
+        "future_max_move_percent": round(max_move_percent, 8),
+    }
+
+
 def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -193,7 +301,14 @@ CREATE TABLE IF NOT EXISTS shadow_ticks (
     markov_p_down_given_down  DOUBLE PRECISION,
     shannon_entropy           DOUBLE PRECISION,
     kalman_residual_zscore    DOUBLE PRECISION,
+    accu_barrier_est_percent  DOUBLE PRECISION,
+    real_high_barrier         DOUBLE PRECISION,
+    real_low_barrier          DOUBLE PRECISION,
+    real_barrier_percent      DOUBLE PRECISION,
+    barrier_source            TEXT,
     future_result             TEXT,
+    future_result_atr_est     TEXT,
+    future_result_spot_005    TEXT,
     future_exit_epoch         BIGINT,
     future_exit_quote         DOUBLE PRECISION,
     future_held_ticks         INTEGER,
@@ -202,6 +317,13 @@ CREATE TABLE IF NOT EXISTS shadow_ticks (
     y2_seconds_to_3pct        DOUBLE PRECISION,
     inserted_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS accu_barrier_est_percent DOUBLE PRECISION;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS real_high_barrier DOUBLE PRECISION;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS real_low_barrier DOUBLE PRECISION;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS real_barrier_percent DOUBLE PRECISION;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS barrier_source TEXT;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_result_atr_est TEXT;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_result_spot_005 TEXT;
 CREATE INDEX IF NOT EXISTS shadow_ticks_entry_epoch_idx ON shadow_ticks (entry_epoch);
 """
 
@@ -238,11 +360,20 @@ def _pg_write_rows(pg_dsn: str, rows: list[dict[str, Any]]) -> None:
 async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: int, pg_dsn: str = "") -> int:
     bot_config = load_config()
     strategy_config = bot_config.accumulator_strategy_config
+    win_ticks = _ticks_to_take_profit(
+        growth_rate=bot_config.accumulator_growth_rate,
+        take_profit_percent=bot_config.accumulator_take_profit_percent,
+        max_hold_ticks=bot_config.accumulator_max_hold_ticks,
+    )
     buffer: deque[dict[str, Any]] = deque(maxlen=bot_config.tick_count + bot_config.accumulator_max_hold_ticks + 10)
     all_ticks: list[dict[str, Any]] = []
     pending: deque[dict[str, Any]] = deque()
     rows: list[dict[str, Any]] = []
     written = 0
+    pending_proposal_epochs: dict[int, dict[str, Any]] = {}
+    proposal_snapshots: dict[int, dict[str, float]] = {}
+    proposal_seq = 0
+    last_proposal_request_epoch = 0
 
     async with websockets.connect(bot_config.ws_url, ping_interval=None, open_timeout=10) as ws:
         await ws.send(json.dumps({"authorize": bot_config.token}))
@@ -276,7 +407,29 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
             message = json.loads(await asyncio.wait_for(ws.recv(), timeout=20))
             if message.get("error"):
                 raise RuntimeError(message["error"])
-            if message.get("msg_type") != "tick":
+            msg_type = message.get("msg_type")
+            if msg_type == "proposal":
+                req_id = int(message.get("req_id") or 0)
+                proposal_epoch = pending_proposal_epochs.pop(req_id, {}).get("entry_epoch")
+                proposal = message.get("proposal", {})
+                details = proposal.get("contract_details", {}) if isinstance(proposal, dict) else {}
+                if proposal_epoch and details:
+                    try:
+                        high_barrier = float(details.get("high_barrier"))
+                        low_barrier = float(details.get("low_barrier"))
+                    except (TypeError, ValueError):
+                        high_barrier = float("nan")
+                        low_barrier = float("nan")
+                    if high_barrier == high_barrier and low_barrier == low_barrier:
+                        spot = float(proposal.get("spot") or (high_barrier + low_barrier) / 2.0)
+                        barrier_percent = abs((high_barrier - spot) / spot * 100) if spot else float("nan")
+                        proposal_snapshots[int(proposal_epoch)] = {
+                            "real_high_barrier": round(high_barrier, 8),
+                            "real_low_barrier": round(low_barrier, 8),
+                            "real_barrier_percent": round(barrier_percent, 8) if barrier_percent == barrier_percent else None,
+                        }
+                continue
+            if msg_type != "tick":
                 continue
 
             tick = message["tick"]
@@ -295,6 +448,12 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                 score = score_accumulator_row(last, strategy_config)
                 quant_pass, reason = accumulator_quant_filters_pass(last, strategy_config)
                 signal = score >= strategy_config.min_score and quant_pass
+                barrier_est_percent = _estimate_accu_barrier_percent(
+                    indicator_row=last.to_dict(),
+                    atr_multiplier=bot_config.accumulator_shadow_barrier_atr_multiplier,
+                    min_percent=bot_config.accumulator_shadow_barrier_min_percent,
+                    max_percent=bot_config.accumulator_shadow_barrier_max_percent,
+                )
                 pending.append(
                     {
                         "entry_index": len(all_ticks) - 1,
@@ -317,14 +476,68 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                             "markov_p_down_given_down": _metric(last, "markov_p_down_given_down"),
                             "shannon_entropy": _metric(last, "shannon_entropy"),
                             "kalman_residual_zscore": _metric(last, "kalman_residual_zscore"),
+                            "accu_barrier_est_percent": barrier_est_percent,
+                            "real_high_barrier": "",
+                            "real_low_barrier": "",
+                            "real_barrier_percent": "",
+                            "barrier_source": "atr_estimate",
                         },
                     }
                 )
+                if (
+                    bot_config.accumulator_shadow_proposal_enabled
+                    and score >= bot_config.accumulator_shadow_proposal_min_score
+                    and epoch - last_proposal_request_epoch >= bot_config.accumulator_shadow_proposal_throttle_seconds
+                ):
+                    proposal_seq += 1
+                    req_id = proposal_seq
+                    pending_proposal_epochs[req_id] = {"entry_epoch": epoch}
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "proposal": 1,
+                                "amount": bot_config.stake,
+                                "basis": "stake",
+                                "contract_type": "ACCU",
+                                "currency": bot_config.currency,
+                                "symbol": bot_config.symbol,
+                                "growth_rate": bot_config.accumulator_growth_rate,
+                                "req_id": req_id,
+                            }
+                        )
+                    )
+                    last_proposal_request_epoch = epoch
 
             while pending:
                 item = pending[0]
                 idx = int(item["entry_index"])
-                result = _future_result(
+                row = item["row"]
+                atr_result = _future_result_with_estimated_barrier(
+                    all_ticks,
+                    idx,
+                    barrier_percent=float(row["accu_barrier_est_percent"]),
+                    win_ticks=win_ticks,
+                )
+                if atr_result is None:
+                    break
+                real_snapshot = proposal_snapshots.get(int(row["entry_epoch"]))
+                if real_snapshot:
+                    result = _future_result_with_real_barrier(
+                        all_ticks,
+                        idx,
+                        low_barrier=float(real_snapshot["real_low_barrier"]),
+                        high_barrier=float(real_snapshot["real_high_barrier"]),
+                        win_ticks=win_ticks,
+                    )
+                    if result is None:
+                        break
+                    row["real_high_barrier"] = real_snapshot["real_high_barrier"]
+                    row["real_low_barrier"] = real_snapshot["real_low_barrier"]
+                    row["real_barrier_percent"] = real_snapshot["real_barrier_percent"]
+                    row["barrier_source"] = "real_proposal"
+                else:
+                    result = atr_result
+                spot_result = _future_result(
                     all_ticks,
                     idx,
                     bot_config.accumulator_growth_rate,
@@ -332,7 +545,7 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                     barrier_percent=0.05,
                     max_hold_ticks=bot_config.accumulator_max_hold_ticks,
                 )
-                if result is None:
+                if spot_result is None:
                     break
                 y1 = _y1_max_drawdown_5ticks(all_ticks, idx)
                 if y1 is None:
@@ -346,8 +559,10 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                     break
                 pending.popleft()
                 rows.append({
-                    **item["row"],
+                    **row,
                     **result,
+                    "future_result_atr_est": atr_result["future_result"],
+                    "future_result_spot_005": spot_result["future_result"],
                     "y1_max_drawdown_5ticks": y1,
                     "y2_seconds_to_3pct": y2,
                 })
