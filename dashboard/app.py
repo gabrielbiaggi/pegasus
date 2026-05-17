@@ -147,7 +147,7 @@ def api_status(response: Response):
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
     total = wins + losses
     pnl = round(float(df["profit"].sum()), 4) if not df.empty else 0.0
-    last_ts = str(df["timestamp"].max()) if not df.empty else None
+    last_ts = df["timestamp"].max().isoformat() if not df.empty else None
     return {
         "running": _bot_running(),
         "balance": _last_balance(),
