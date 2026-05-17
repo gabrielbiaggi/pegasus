@@ -106,7 +106,7 @@ def _read_log_tail(n_bytes: int = 65536) -> str:
         return ""
 
 
-_csv_cache: dict = {"mtime": -1.0, "df": None}
+_csv_cache: dict = {"mtime": -1.0, "date": "", "df": None}
 
 
 def _today_df() -> pd.DataFrame:
@@ -115,12 +115,12 @@ def _today_df() -> pd.DataFrame:
         return pd.DataFrame()
     try:
         mtime = TRADES_CSV.stat().st_mtime
-        if mtime == _csv_cache["mtime"] and _csv_cache["df"] is not None:
+        today = datetime.now(timezone.utc).date().isoformat()
+        if mtime == _csv_cache["mtime"] and _csv_cache["date"] == today and _csv_cache["df"] is not None:
             return _csv_cache["df"]
         df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
-        today = datetime.now(timezone.utc).date()
-        filtered = df[df["timestamp"].dt.date == today].copy()
-        _csv_cache = {"mtime": mtime, "df": filtered}
+        filtered = df[df["timestamp"].dt.date.astype(str) == today].copy()
+        _csv_cache = {"mtime": mtime, "date": today, "df": filtered}
         return filtered
     except Exception:
         return pd.DataFrame()
