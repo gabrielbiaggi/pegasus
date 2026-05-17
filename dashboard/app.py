@@ -168,5 +168,6 @@ def api_logs():
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.head("/")
 def root():
     return (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
