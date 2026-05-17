@@ -97,21 +97,50 @@ def _read_log_tail(n_bytes: int = 65536) -> str:
         return ""
 
 
+_csv_cache: dict = {"mtime": -1.0, "df": None}
+
+
 def _today_df() -> pd.DataFrame:
+    global _csv_cache
     if not TRADES_CSV.exists():
         return pd.DataFrame()
-    df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
-    today = datetime.now(timezone.utc).date()
-    return df[df["timestamp"].dt.date == today]
+    try:
+        mtime = TRADES_CSV.stat().st_mtime
+        if mtime == _csv_cache["mtime"] and _csv_cache["df"] is not None:
+            return _csv_cache["df"]
+        df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
+        today = datetime.now(timezone.utc).date()
+        filtered = df[df["timestamp"].dt.date == today].copy()
+        _csv_cache = {"mtime": mtime, "df": filtered}
+        return filtered
+    except Exception:
+        return pd.DataFrame()
+
+
+_env_cache: dict = {"mtime": -1.0, "data": {}}
+
+
+def _load_env() -> dict[str, str]:
+    global _env_cache
+    if not ENV_FILE.exists():
+        return {}
+    try:
+        mtime = ENV_FILE.stat().st_mtime
+        if mtime == _env_cache["mtime"]:
+            return _env_cache["data"]
+        data: dict[str, str] = {}
+        for line in ENV_FILE.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                data[k.strip()] = v.strip()
+        _env_cache = {"mtime": mtime, "data": data}
+        return data
+    except Exception:
+        return {}
 
 
 def _get_env(key: str) -> str | None:
-    if not ENV_FILE.exists():
-        return None
-    for line in ENV_FILE.read_text().splitlines():
-        if line.startswith(key + "="):
-            return line.split("=", 1)[1].strip()
-    return None
+    return _load_env().get(key)
 
 
 def _set_env(key: str, value: str) -> None:
@@ -128,6 +157,7 @@ def _set_env(key: str, value: str) -> None:
     if not found:
         new_lines.append(f"{key}={value}")
     ENV_FILE.write_text("\n".join(new_lines) + "\n")
+    _env_cache["mtime"] = -1.0  # invalidate cache
 
 
 def _restart_bot() -> None:
@@ -146,7 +176,7 @@ def api_status(response: Response):
     wins = int((df["result"] == "WIN").sum()) if not df.empty else 0
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
     total = wins + losses
-    pnl = round(float(df["profit"].sum()), 4) if not df.empty else 0.0
+    pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
     return {
         "running": _bot_running(),
