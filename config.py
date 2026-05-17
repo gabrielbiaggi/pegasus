@@ -58,6 +58,7 @@ class BotConfig:
     currency: str
     stake: float
     blocked_utc_hours: tuple[int, ...]
+    block_weekends: bool
     max_loss_per_day: float
     max_profit_per_day: float
     max_trades_per_day: int
@@ -174,6 +175,7 @@ def load_config() -> BotConfig:
         currency=os.getenv("CURRENCY", "USD").strip().upper(),
         stake=_float_env("STAKE", 1.0),
         blocked_utc_hours=_hours_env("BLOCKED_UTC_HOURS"),
+        block_weekends=_bool_env("BLOCK_WEEKENDS", True),
         max_loss_per_day=_float_env("MAX_LOSS_PER_DAY", 20.0),
         max_profit_per_day=_float_env("MAX_PROFIT_PER_DAY", 0.0),
         max_trades_per_day=_int_env("MAX_TRADES_PER_DAY", 50),

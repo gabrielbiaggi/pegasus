@@ -182,10 +182,23 @@ class DerivBot:
             logger.warning("RiskManager ainda nao inicializado.")
             return
 
-        tick_hour = datetime.fromtimestamp(tick_epoch, UTC).hour
+        tick_dt = datetime.fromtimestamp(tick_epoch, UTC)
+        tick_hour = tick_dt.hour
         if tick_hour in self.config.blocked_utc_hours:
             logger.info("Hora UTC bloqueada para novas entradas: %s", tick_hour)
             return
+
+        # Block weekends: Friday 21:00 UTC → Sunday 21:00 UTC
+        if self.config.block_weekends:
+            dow = tick_dt.weekday()  # 0=Mon … 4=Fri, 5=Sat, 6=Sun
+            is_blocked_period = (
+                dow == 6  # all Sunday
+                or dow == 5  # all Saturday
+                or (dow == 4 and tick_hour >= 21)  # Friday from 21:00 UTC
+            )
+            if is_blocked_period:
+                logger.info("Fim de semana bloqueado (BLOCK_WEEKENDS=true): dow=%s hour=%s", dow, tick_hour)
+                return
 
         if self.last_accumulator_entry_epoch is not None:
             ticks_since_entry = tick_epoch - self.last_accumulator_entry_epoch
