@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -89,7 +89,8 @@ def _restart_bot() -> None:
 
 
 @app.get("/api/status")
-def api_status():
+def api_status(response: Response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     df = _today_df()
     wins = int((df["result"] == "WIN").sum()) if not df.empty else 0
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
@@ -171,4 +172,11 @@ def api_logs():
 @app.get("/", response_class=HTMLResponse)
 @app.head("/")
 def root():
-    return (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    content = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
