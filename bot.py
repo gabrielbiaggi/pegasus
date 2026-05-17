@@ -58,6 +58,7 @@ class DerivBot:
             except Exception as exc:
                 logger.warning("EnsembleScorer nao carregado: %s", exc)
         self._tick_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=500)
+        self._waiting_since: float = 0.0
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
         await ws.send(json.dumps(payload))
@@ -139,6 +140,7 @@ class DerivBot:
             return
 
         self.waiting_for_result = True
+        self._waiting_since = time.monotonic()
         logger.info("Comprando ACCU | proposal_id=%s | price=%s", proposal_id, ask_price)
         await self.send(ws, {"buy": proposal_id, "price": ask_price})
 
@@ -181,8 +183,19 @@ class DerivBot:
 
     async def evaluate_tick(self, ws: websockets.WebSocketClientProtocol, tick_epoch: int) -> None:
         if self.waiting_for_result:
-            logger.info("Aguardando resultado da operacao ACCU anterior.")
-            return
+            stuck_sec = time.monotonic() - self._waiting_since
+            if stuck_sec > 120:
+                logger.warning(
+                    "waiting_for_result timeout (%.0fs sem resposta) — resetando estado e retomando operacoes.",
+                    stuck_sec,
+                )
+                self.waiting_for_result = False
+                self.pending_order = None
+                self.current_contract_id = None
+                self.accumulator_sell_requested = False
+            else:
+                logger.info("Aguardando resultado da operacao ACCU anterior.")
+                return
 
         if self.pending_order:
             logger.info("Aguardando proposta/compra ACCU pendente.")
@@ -486,6 +499,16 @@ class DerivBot:
         open_contracts = [c for c in contracts if not c.get("is_sold") and not c.get("is_expired")]
         if not open_contracts:
             logger.info("Portfolio: nenhum contrato ACCU aberto encontrado.")
+            if self.waiting_for_result or self.pending_order:
+                logger.warning(
+                    "Portfolio vazio mas waiting_for_result=%s pending_order=%s — resetando estado.",
+                    self.waiting_for_result,
+                    self.pending_order is not None,
+                )
+                self.waiting_for_result = False
+                self.pending_order = None
+                self.current_contract_id = None
+                self.accumulator_sell_requested = False
             return
         for contract in open_contracts:
             cid = int(contract.get("contract_id", 0))
@@ -502,6 +525,12 @@ class DerivBot:
 
     async def run_forever(self) -> None:
         while True:
+            # Reset transient per-connection state so every reconnect starts clean.
+            # _reconcile_open_positions will re-establish any genuinely open contract.
+            self.pending_order = None
+            self.waiting_for_result = False
+            self.current_contract_id = None
+            self.accumulator_sell_requested = False
             try:
                 logger.info(
                     "Iniciando %s | Accumulators 1s | ativo=%s | endpoint=%s",
