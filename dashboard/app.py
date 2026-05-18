@@ -210,6 +210,44 @@ def _compute_risk_blocked(risk_state: dict) -> bool:
     return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(risk_state)
 
 
+def _get_payout_rate() -> float:
+    """Payout rate for Martingale formula. Uses MARTINGALE_PAYOUT_RATE or TP%/100."""
+    v = _get_env("MARTINGALE_PAYOUT_RATE")
+    if v:
+        return max(0.001, float(v))
+    tp = _get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT")
+    if tp:
+        return max(0.001, float(tp) / 100.0)
+    return 0.15
+
+
+def _compute_next_gale_stake(risk_state: dict) -> float:
+    """Recovery stake for the next gale trade based on current accumulated loss."""
+    base = float(risk_state.get("martingale_base_stake", 0.0))
+    accum = float(risk_state.get("martingale_accumulated_loss", 0.0))
+    step = int(risk_state.get("martingale_step", 0))
+    if step == 0 or base == 0:
+        return 0.0
+    payout = _get_payout_rate()
+    return round(accum / payout + base, 2)
+
+
+def _compute_gale_effective_multiplier(risk_state: dict) -> float:
+    """Effective stake multiplier = next_gale_stake / base_stake."""
+    base = float(risk_state.get("martingale_base_stake", 0.0))
+    step = int(risk_state.get("martingale_step", 0))
+    if step == 0:
+        # Show theoretical first-gale multiplier
+        payout = _get_payout_rate()
+        return round(1.0 / payout + 1.0, 2)
+    if base == 0.0:
+        return 1.0
+    next_stake = _compute_next_gale_stake(risk_state)
+    if next_stake == 0.0:
+        return 1.0
+    return round(next_stake / base, 2)
+
+
 @app.get("/api/status")
 def api_status(response: Response):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
@@ -252,7 +290,11 @@ def api_status(response: Response):
         "consecutive_losses": int(risk_state.get("consecutive_losses", 0)),
         "use_martingale": _get_env("USE_MARTINGALE") == "true",
         "martingale_max_gales": int(_get_env("MARTINGALE_MAX_GALES") or "3"),
-        "martingale_multiplier": float(_get_env("MARTINGALE_MULTIPLIER") or "2.0"),
+        "martingale_payout_rate": _get_payout_rate(),
+        "martingale_accumulated_loss": round(float(risk_state.get("martingale_accumulated_loss", 0.0)), 2),
+        "martingale_base_stake": round(float(risk_state.get("martingale_base_stake", 0.0)), 2),
+        "martingale_effective_multiplier": _compute_gale_effective_multiplier(risk_state),
+        "next_gale_stake": _compute_next_gale_stake(risk_state),
     }
 
 
@@ -375,6 +417,8 @@ def api_reset(scope: str = "day", response: Response = None):
         "soros_step": 0,
         "soros_profit": 0.0,
         "martingale_step": 0,
+        "martingale_accumulated_loss": 0.0,
+        "martingale_base_stake": 0.0,
     }
     risk_path.write_text(json.dumps(risk_state, indent=2))
 
@@ -403,7 +447,7 @@ ALLOWED_KEYS = {
     "DYNAMIC_STAKE", "DYNAMIC_STAKE_BASE_PCT",
     "MAX_STAKE", "MAX_STAKE_PERCENT",
     "ACCUMULATOR_TAKE_PROFIT_PERCENT", "ACCUMULATOR_MAX_HOLD_TICKS",
-    "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_MULTIPLIER",
+    "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_MULTIPLIER", "MARTINGALE_PAYOUT_RATE",
 }
 
 @app.post("/api/env")
@@ -655,7 +699,7 @@ def api_trades():
     df = _today_df()
     if df.empty:
         return []
-    cols = ["timestamp", "result", "profit", "score", "stake", "held_ticks"]
+    cols = ["timestamp", "result", "soros_step", "gale_step", "profit", "score", "stake", "held_ticks"]
     available = [c for c in cols if c in df.columns]
     return df[available].tail(50).iloc[::-1].fillna("").to_dict(orient="records")
 

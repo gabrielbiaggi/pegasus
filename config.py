@@ -75,6 +75,7 @@ class BotConfig:
     use_martingale: bool
     martingale_max_gales: int
     martingale_multiplier: float
+    martingale_payout_rate: float
     use_dynamic_stake: bool
     dynamic_stake_base_pct: float
     journal_dir: str
@@ -203,6 +204,7 @@ def load_config() -> BotConfig:
         use_martingale=_bool_env("USE_MARTINGALE", False),
         martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 3),
         martingale_multiplier=_float_env("MARTINGALE_MULTIPLIER", 2.0),
+        martingale_payout_rate=_float_env("MARTINGALE_PAYOUT_RATE", 0.15),
         use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
