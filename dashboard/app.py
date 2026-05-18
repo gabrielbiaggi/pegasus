@@ -245,6 +245,7 @@ def api_status(response: Response):
         "risk_blocked": _compute_risk_blocked(risk_state),
         "max_loss_per_day": _compute_max_loss_day(risk_state),
         "daily_loss": round(risk_state.get("daily_loss", 0.0), 2),
+        "daily_net_profit": round(float(risk_state.get("daily_net_profit", 0.0)), 2),
         "soros_step": int(risk_state.get("soros_step", 0)),
         "soros_profit": round(float(risk_state.get("soros_profit", 0.0)), 2),
         "martingale_step": int(risk_state.get("martingale_step", 0)),

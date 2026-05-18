@@ -468,23 +468,35 @@ class DerivBot:
         order = self.pending_order
         profit = float(contract.get("profit", 0.0))
         buy_price = float(contract.get("buy_price", 0.0))
-        if order:
-            exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
-            held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
-            self.journal.log_trade(
-                symbol=self.config.symbol,
-                contract_mode=self.config.contract_mode,
-                contract_id=contract_id,
-                entry_epoch=order.entry_epoch,
-                direction="ACCU",
-                score=order.score,
-                stake=order.stake,
-                buy_price=buy_price,
-                profit=profit,
-                exit_epoch=exit_epoch,
-                held_ticks=held_ticks,
-                metrics=order.metrics,
+        if not order:
+            # No pending order from this session — stale settlement from a previous
+            # run. Skip journal AND risk update to avoid ghost P&L discrepancy.
+            logger.warning(
+                "Liquidacao sem ordem pendente (contract_id=%s profit=%.2f) — ignorado.",
+                contract_id,
+                profit,
             )
+            self.waiting_for_result = False
+            self.current_contract_id = None
+            self.accumulator_open_epoch = None
+            self.accumulator_sell_requested = False
+            return
+        exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
+        held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
+        self.journal.log_trade(
+            symbol=self.config.symbol,
+            contract_mode=self.config.contract_mode,
+            contract_id=contract_id,
+            entry_epoch=order.entry_epoch,
+            direction="ACCU",
+            score=order.score,
+            stake=order.stake,
+            buy_price=buy_price,
+            profit=profit,
+            exit_epoch=exit_epoch,
+            held_ticks=held_ticks,
+            metrics=order.metrics,
+        )
         _prev_m_step = self.risk.martingale_step
         self.risk.update(profit=profit, buy_price=buy_price)
         # Log gale state transitions
