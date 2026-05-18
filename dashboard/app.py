@@ -535,7 +535,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
                             "trade": n,
                             "hours": round(h, 2),
                             "balance": round(bal, 2),
-                            "days_at_300": round(n / 300, 1),
+                            "days_at_300": round(h / 24, 1),
                         }
 
         return {
@@ -551,9 +551,8 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
             "targets": targets,
         }
 
-    # Full simulation (no cap, with cooldown)
-    full = _simulate(collect_targets=True)
-    targets = full["targets"]
+    # Full simulation (no cap, with cooldown) — used only for global stats (winrate, max_dd)
+    full = _simulate(collect_targets=False)
 
     # Cap 300 trades/day, time-limited, with cooldown and daily loss budget
     # Use 1-5 full days — 0.5/4.5 removed to avoid identical rows when signal rate fills cap in <12h
@@ -565,6 +564,11 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
             "balance": r["balance"], "roi": r["roi"],
             "total_won": r["total_won"], "total_lost": r["total_lost"],
         }
+
+    # Bounded full simulation (300/day cap, entire dataset) — source for targets table,
+    # consistent with cap_by_day above so metas align with the numbers the user sees there
+    bounded = _simulate(collect_targets=True, day_cap=300)
+    targets = bounded["targets"]
 
     # Sessions (no day cap, time-limited, with cooldown)
     sessions: dict[str, dict] = {}
