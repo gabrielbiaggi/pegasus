@@ -220,6 +220,18 @@ class RiskManager:
 
         return round(stake, 2)
 
+    def get_gale_raw_stake(self) -> float:
+        """Returns the uncapped martingale recovery stake (may exceed max_stake API limit).
+
+        Use this to detect when the gale needs to be split into multiple simultaneous
+        contracts to work around Deriv's per-contract stake ceiling.
+        Returns 0.0 when not in a martingale gale.
+        """
+        if not (self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0):
+            return 0.0
+        raw = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+        return round(min(raw, self.balance), 2)
+
     def can_trade(self) -> bool:
         self._reset_if_new_day()
 

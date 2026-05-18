@@ -28,6 +28,21 @@ class FatalBotError(RuntimeError):
     pass
 
 
+def _split_gale_stakes(total: float, max_per: float, min_stake: float) -> list[float]:
+    """Split a gale stake exceeding the API limit into a list of individual stakes.
+
+    Example: total=3620, max_per=1000, min_stake=1 → [1000, 1000, 1000, 620]
+    """
+    if total <= 0 or max_per <= 0:
+        return [min_stake]
+    n_full = int(total // max_per)
+    remainder = round(total - n_full * max_per, 2)
+    stakes: list[float] = [max_per] * n_full
+    if remainder >= min_stake:
+        stakes.append(remainder)
+    return stakes if stakes else [min(total, max_per)]
+
+
 @dataclass
 class PendingOrder:
     stake: float
@@ -59,6 +74,16 @@ class DerivBot:
                 logger.warning("EnsembleScorer nao carregado: %s", exc)
         self._tick_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=500)
         self._waiting_since: float = 0.0
+        # Multi-contract gale: split gale stake across N simultaneous contracts
+        # when required stake exceeds Deriv API's per-contract limit ($1,000).
+        self._gale_queue: list[float] = []           # remaining stakes to buy
+        self._gale_ids: set[int] = set()             # all contract IDs in group
+        self._gale_id_stakes: dict[int, float] = {}  # {cid: buy_price} for TP tracking
+        self._gale_expected: int = 0                 # total contracts in group
+        self._gale_total_stake: float = 0.0          # nominal total (pre-split)
+        self._gale_settled: dict[int, float] = {}    # {cid: profit} settled so far
+        self._gale_order: Optional[PendingOrder] = None  # first order (for logging)
+        self._gale_sell_requested: set[int] = set()  # contracts already sell-requested
 
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
         await ws.send(json.dumps(payload))
@@ -193,6 +218,7 @@ class DerivBot:
                     "waiting_for_result timeout (%.0fs sem resposta) — resetando estado e retomando operacoes.",
                     stuck_sec,
                 )
+                self._reset_gale_state()
                 self.waiting_for_result = False
                 self.pending_order = None
                 self.current_contract_id = None
@@ -253,6 +279,27 @@ class DerivBot:
             return
 
         stake = self.risk.get_stake(p_loss=p_loss)
+        # Multi-gale: when the required gale stake exceeds the per-contract API limit,
+        # split it into N simultaneous contracts of at most max_stake each.
+        _max_stake_api = self.config.max_stake if self.config.max_stake > 0 else 1000.0
+        _is_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+        if _is_gale:
+            raw_gale = self.risk.get_gale_raw_stake()
+            if raw_gale > _max_stake_api:
+                _stakes = _split_gale_stakes(raw_gale, _max_stake_api, self.config.min_stake)
+                self._gale_queue = _stakes[1:]
+                self._gale_expected = len(_stakes)
+                self._gale_total_stake = raw_gale
+                self._gale_ids = set()
+                self._gale_id_stakes = {}
+                self._gale_settled = {}
+                self._gale_order = None
+                self._gale_sell_requested = set()
+                stake = _stakes[0]
+                logger.info(
+                    "GALE multi: stake_total=%.2f → %d contratos (max %.2f cada)",
+                    raw_gale, len(_stakes), _max_stake_api,
+                )
         metrics = self._last_accumulator_metrics(df)
         _mode = (
             f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
@@ -299,6 +346,38 @@ class DerivBot:
             if value == value:
                 metrics[name] = value
         return metrics
+
+    def _reset_gale_state(self) -> None:
+        """Clear all multi-contract gale tracking state."""
+        self._gale_queue = []
+        self._gale_ids = set()
+        self._gale_id_stakes = {}
+        self._gale_expected = 0
+        self._gale_total_stake = 0.0
+        self._gale_settled = {}
+        self._gale_order = None
+        self._gale_sell_requested = set()
+
+    async def _request_gale_proposal(self, ws: websockets.WebSocketClientProtocol, stake: float) -> None:
+        """Send a proposal for the next contract in a multi-gale split sequence."""
+        payload: dict[str, Any] = {
+            "proposal": 1,
+            "amount": stake,
+            "basis": "stake",
+            "contract_type": "ACCU",
+            "currency": self.config.currency,
+            "symbol": self.config.symbol,
+            "growth_rate": self.config.accumulator_growth_rate,
+        }
+        if self.config.accumulator_use_limit_order:
+            payload["limit_order"] = {
+                "take_profit": round(stake * self.config.accumulator_take_profit_percent / 100, 2)
+            }
+        logger.info(
+            "GALE multi: proposta adicional stake=%.2f (%d restantes na fila)",
+            stake, len(self._gale_queue),
+        )
+        await self.send(ws, payload)
 
     async def handle_authorize(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         auth = data["authorize"]
@@ -393,13 +472,47 @@ class DerivBot:
     async def handle_buy(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         buy = data["buy"]
         contract_id = int(buy["contract_id"])
-        self.current_contract_id = contract_id
-        if self.pending_order:
-            self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
-            self.accumulator_open_epoch = self.pending_order.entry_epoch
-            self.accumulator_sell_requested = False
-        logger.info("Contrato ACCU aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
-        await self.subscribe_contract(ws, contract_id)
+        buy_price_actual = float(buy.get("buy_price") or (self.pending_order.stake if self.pending_order else 0.0))
+
+        if self._gale_expected > 0:
+            # Multi-contract gale mode: track each contract in the group.
+            self._gale_ids.add(contract_id)
+            self._gale_id_stakes[contract_id] = buy_price_actual if buy_price_actual > 0 else (self.pending_order.stake if self.pending_order else 0.0)
+            if self._gale_order is None:
+                # First contract: record entry epoch and the canonical order for logging.
+                self._gale_order = self.pending_order
+                if self.pending_order:
+                    self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
+                    self.accumulator_open_epoch = self.pending_order.entry_epoch
+            logger.info(
+                "GALE multi: contrato %d/%d aberto id=%s buy_price=%s",
+                len(self._gale_ids), self._gale_expected, contract_id, buy.get("buy_price"),
+            )
+            await self.subscribe_contract(ws, contract_id)
+            if self._gale_queue:
+                # Fire the next proposal in the sequence.
+                next_stake = self._gale_queue.pop(0)
+                po = self.pending_order
+                self.pending_order = PendingOrder(
+                    stake=next_stake,
+                    score=po.score if po else 0,
+                    entry_epoch=po.entry_epoch if po else 0,
+                    metrics=po.metrics if po else None,
+                )
+                await self._request_gale_proposal(ws, next_stake)
+            else:
+                # All contracts have been bought; clear pending_order so evaluate_tick
+                # does not stall on "pending proposal" check. waiting_for_result stays True.
+                self.pending_order = None
+        else:
+            # Normal single-contract mode (unchanged).
+            self.current_contract_id = contract_id
+            if self.pending_order:
+                self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
+                self.accumulator_open_epoch = self.pending_order.entry_epoch
+                self.accumulator_sell_requested = False
+            logger.info("Contrato ACCU aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
+            await self.subscribe_contract(ws, contract_id)
 
     async def handle_contract_update(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
         if not self.risk:
@@ -419,6 +532,47 @@ class DerivBot:
             or bool(contract.get("is_expired"))
         )
         if not is_sold:
+            # Multi-gale: per-contract open-position monitoring.
+            if self._gale_expected > 0 and contract_id in self._gale_ids:
+                if contract_id not in self._gale_sell_requested:
+                    # Barrier proximity check (same defensive logic as single-contract).
+                    high_barrier = contract.get("high_barrier")
+                    low_barrier = contract.get("low_barrier")
+                    current_spot = float(contract.get("current_spot") or 0)
+                    if high_barrier and low_barrier and current_spot > 0:
+                        hb = float(high_barrier)
+                        lb = float(low_barrier)
+                        dist_low = (current_spot - lb) / current_spot * 100
+                        dist_high = (hb - current_spot) / current_spot * 100
+                        min_dist = min(dist_low, dist_high)
+                        threshold = self.config.accumulator_min_barrier_distance_pct
+                        if threshold > 0 and min_dist <= threshold:
+                            logger.warning(
+                                "⚠️ GALE multi BARREIRA PROXIMA id=%s dist=%.5f%% — saida defensiva",
+                                contract_id, min_dist,
+                            )
+                            sell_price = float(contract.get("bid_price", 0.0) or 0.0)
+                            self._gale_sell_requested.add(contract_id)
+                            await self.send(ws, {"sell": contract_id, "price": round(float(sell_price), 2)})
+                            return
+                    # Per-contract TP / max-hold check.
+                    stake_i = self._gale_id_stakes.get(contract_id, 0.0)
+                    if stake_i > 0:
+                        profit_i = float(contract.get("profit", 0.0))
+                        target_i = stake_i * self.config.accumulator_take_profit_percent / 100
+                        current_spot_time = int(contract.get("current_spot_time") or contract.get("date_start") or 0)
+                        held_ticks = max(0, current_spot_time - (self.accumulator_open_epoch or current_spot_time))
+                        if profit_i >= target_i or held_ticks >= self.config.accumulator_max_hold_ticks:
+                            sell_price = float(contract.get("bid_price", 0.0) or 0.0)
+                            reason = "take_profit" if profit_i >= target_i else "max_hold_ticks"
+                            logger.info(
+                                "GALE multi fechando id=%s por %s | profit=%.2f alvo=%.2f",
+                                contract_id, reason, profit_i, target_i,
+                            )
+                            self._gale_sell_requested.add(contract_id)
+                            await self.send(ws, {"sell": contract_id, "price": round(float(sell_price), 2)})
+                return
+
             order = self.pending_order
             if order and not self.accumulator_sell_requested:
                 # --- Barreira real: saida defensiva se spot muito proximo da barreira ---
@@ -466,9 +620,70 @@ class DerivBot:
             return
 
         self.settled_contract_ids.add(contract_id)
-        order = self.pending_order
+
         profit = float(contract.get("profit", 0.0))
         buy_price = float(contract.get("buy_price", 0.0))
+
+        # Multi-gale settlement: collect each contract's result; aggregate when all done.
+        if self._gale_expected > 0 and contract_id in self._gale_ids:
+            self._gale_settled[contract_id] = profit
+            logger.info(
+                "GALE multi: contrato %d/%d liquidado id=%s profit=%.2f",
+                len(self._gale_settled), self._gale_expected, contract_id, profit,
+            )
+            if len(self._gale_settled) < self._gale_expected:
+                return  # Wait for remaining contracts to settle.
+
+            # All contracts settled — aggregate and process as a single trade.
+            total_profit = sum(self._gale_settled.values())
+            total_buy_price = sum(self._gale_id_stakes.values())
+            order = self._gale_order
+            exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
+            held_ticks = max(0, exit_epoch - order.entry_epoch) if (exit_epoch and order) else None
+            _pre_soros_step = self.risk.soros_step
+            _pre_gale_step = self.risk.martingale_step
+            logger.info(
+                "GALE multi: todos %d contratos liquidados | total_profit=%.2f total_buy=%.2f",
+                self._gale_expected, total_profit, total_buy_price,
+            )
+            if order:
+                self.journal.log_trade(
+                    symbol=self.config.symbol,
+                    contract_mode=self.config.contract_mode,
+                    contract_id=contract_id,
+                    entry_epoch=order.entry_epoch,
+                    direction="ACCU",
+                    score=order.score,
+                    stake=self._gale_total_stake,
+                    buy_price=total_buy_price,
+                    profit=total_profit,
+                    exit_epoch=exit_epoch,
+                    held_ticks=held_ticks,
+                    metrics=order.metrics,
+                    soros_step=_pre_soros_step,
+                    gale_step=_pre_gale_step,
+                )
+            _prev_m_step = _pre_gale_step
+            self.risk.update(profit=total_profit, buy_price=total_buy_price)
+            if getattr(self.risk, "use_martingale", False):
+                if total_profit < 0 and self.risk.martingale_step > _prev_m_step:
+                    logger.warning(
+                        "\u26a0 GALE %d/%d ativado (multi) | pr\u00f3xima stake ser\u00e1 maior",
+                        self.risk.martingale_step,
+                        self.risk.martingale_max_gales,
+                    )
+                elif total_profit > 0 and _prev_m_step > 0:
+                    logger.info("\u2705 GALE %d (multi) recuperado \u2014 stake volta ao normal", _prev_m_step)
+            logger.info(self.risk.stats())
+            self._reset_gale_state()
+            self.waiting_for_result = False
+            self.current_contract_id = None
+            self.pending_order = None
+            self.accumulator_open_epoch = None
+            self.accumulator_sell_requested = False
+            return
+
+        order = self.pending_order
         if not order:
             # No pending order from this session — stale settlement from a previous
             # run. Skip journal AND risk update to avoid ghost P&L discrepancy.
@@ -532,6 +747,7 @@ class DerivBot:
             if data.get("msg_type") == "authorize":
                 raise FatalBotError(f"Falha na autorizacao: {error.get('message')}")
             if data.get("msg_type") in {"proposal", "buy"}:
+                self._reset_gale_state()
                 self.pending_order = None
                 self.waiting_for_result = False
             if data.get("msg_type") == "sell":
@@ -603,6 +819,7 @@ class DerivBot:
                     self.waiting_for_result,
                     self.pending_order is not None,
                 )
+                self._reset_gale_state()
                 self.waiting_for_result = False
                 self.pending_order = None
                 self.current_contract_id = None
@@ -625,6 +842,7 @@ class DerivBot:
         while True:
             # Reset transient per-connection state so every reconnect starts clean.
             # _reconcile_open_positions will re-establish any genuinely open contract.
+            self._reset_gale_state()
             self.pending_order = None
             self.waiting_for_result = False
             self.current_contract_id = None
