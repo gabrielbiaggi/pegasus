@@ -352,6 +352,12 @@ def api_reset(scope: str = "day", response: Response = None):
     }
     risk_path.write_text(json.dumps(risk_state, indent=2))
 
+    # --- archive & truncate trades.log ---
+    if TRADES_LOG.exists() and TRADES_LOG.stat().st_size > 0:
+        log_bak = TRADES_LOG.with_suffix(f".log.bak-reset-{now.strftime('%Y%m%d_%H%M%S')}")
+        shutil.copy2(TRADES_LOG, log_bak)
+        TRADES_LOG.write_bytes(b"")
+
     # --- restart bot so it picks up fresh state ---
     _restart_bot()
 
