@@ -146,6 +146,30 @@ def simulate_accumulator_trade(
     }
 
 
+# ---------------------------------------------------------------------------
+# Dynamic stake helpers (mirrors risk_manager.py logic for backtest)
+# ---------------------------------------------------------------------------
+
+# Proxy: convert signal score → estimated P(LOSS) for stake multiplier.
+# These approximate what the EnsembleScorer would predict for each quality level.
+_SCORE_TO_PLOSS: dict[int, float] = {10: 0.08, 9: 0.12, 8: 0.18, 7: 0.22}
+
+
+def _stake_multiplier(p_loss: float) -> float:
+    """Return stake multiplier based on estimated P(LOSS), matching risk_manager."""
+    if p_loss < 0.05:
+        return 4.0
+    if p_loss < 0.10:
+        return 3.0
+    if p_loss < 0.15:
+        return 2.0
+    if p_loss < 0.20:
+        return 1.5
+    if p_loss < 0.25:
+        return 1.25
+    return 1.0
+
+
 def run_accumulator_backtest(
     ticks: list[dict[str, Any]],
     initial_balance: float,
@@ -159,6 +183,16 @@ def run_accumulator_backtest(
     blocked_utc_hours: tuple[int, ...] = (),
     indicator_frame: pd.DataFrame | None = None,
     slippage_ticks: int = 0,
+    # --- Opção B: dynamic stake based on balance × pct × multiplier ---
+    dynamic_stake: bool = False,
+    base_pct: float = 0.02,
+    max_stake_abs: float = 500.0,
+    max_stake_pct_cap: float = 0.10,
+    # --- Opção C: Soros compounding (adds prior WIN profit to next stake) ---
+    use_soros_compound: bool = False,
+    soros_max_steps: int = 3,
+    # --- Skip advanced quant filters (useful for datasets with different distributions) ---
+    skip_quant_filters: bool = False,
 ) -> dict[str, Any]:
     strategy_config = strategy_config or AccumulatorStrategyConfig()
     normalized_ticks = normalize_ticks(ticks)
@@ -187,6 +221,8 @@ def run_accumulator_backtest(
     trades: list[dict[str, Any]] = []
     loss_streak = 0
     max_loss_streak = 0
+    soros_step = 0
+    soros_profit = 0.0
     i = strategy_config.minimum_ticks - 1
 
     while i < len(normalized_ticks) - 1:
@@ -205,7 +241,7 @@ def run_accumulator_backtest(
         row = df.iloc[i]
         score = score_accumulator_row(row, strategy_config)
         quant_pass, _ = accumulator_quant_filters_pass(row, strategy_config)
-        if score < strategy_config.min_score or not quant_pass:
+        if score < strategy_config.min_score or (not skip_quant_filters and not quant_pass):
             i += 1
             continue
 
@@ -214,11 +250,21 @@ def run_accumulator_backtest(
         if execution_index >= len(normalized_ticks) - 1:
             i += 1
             continue
+        if dynamic_stake:
+            base = max(balance * base_pct, stake)
+            p_loss_est = _SCORE_TO_PLOSS.get(score, 0.22)
+            trade_stake = base * _stake_multiplier(p_loss_est)
+            if use_soros_compound and soros_step > 0 and soros_profit > 0:
+                trade_stake = trade_stake + soros_profit
+            pct_cap = balance * max_stake_pct_cap
+            trade_stake = round(min(max(trade_stake, stake), pct_cap, max_stake_abs), 2)
+        else:
+            trade_stake = stake
 
         simulated = simulate_accumulator_trade(
             ticks=normalized_ticks,
             entry_index=execution_index,
-            stake=stake,
+            stake=trade_stake,
             growth_rate=growth_rate,
             take_profit_percent=take_profit_percent,
             barrier_percent=barrier_percent,
@@ -230,9 +276,15 @@ def run_accumulator_backtest(
 
         if profit > 0:
             loss_streak = 0
+            if dynamic_stake and use_soros_compound:
+                soros_profit += profit
+                soros_step = min(soros_step + 1, soros_max_steps)
         else:
             loss_streak += 1
             max_loss_streak = max(max_loss_streak, loss_streak)
+            if dynamic_stake and use_soros_compound:
+                soros_step = 0
+                soros_profit = 0.0
 
         trades.append(
             {
@@ -240,7 +292,7 @@ def run_accumulator_backtest(
                 "exit_epoch": simulated["exit_epoch"],
                 "direction": "ACCU",
                 "score": score,
-                "stake": stake,
+                "stake": trade_stake,
                 "growth_rate": growth_rate,
                 "take_profit_percent": take_profit_percent,
                 "barrier_percent": barrier_percent,
@@ -313,6 +365,24 @@ def main() -> None:
     parser.add_argument("--recent-window", type=int, default=5)
     parser.add_argument("--max-recent-move-percent", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=None, help="CSV opcional com cada trade simulado.")
+    # Dynamic stake (Opção B / C)
+    parser.add_argument("--dynamic-stake", action="store_true", help="Usar stake dinâmico baseado em banca×pct×multiplicador.")
+    parser.add_argument("--base-pct", type=float, default=0.02, help="Percentual da banca como base do stake (padrão 0.02=2%%).")
+    parser.add_argument("--max-stake-abs", type=float, default=500.0, help="Cap absoluto de stake por trade.")
+    parser.add_argument("--max-stake-pct-cap", type=float, default=0.10, help="Cap de stake como %% da banca (padrão 0.10=10%%).")
+    parser.add_argument("--use-soros", action="store_true", help="Ativar Soros compounding (adiciona lucro acumulado ao próximo stake).")
+    parser.add_argument("--soros-max-steps", type=int, default=3, help="Máximo de passos Soros antes de resetar.")
+    # Comparison mode: runs Baseline vs B vs B+C automatically
+    parser.add_argument(
+        "--run-all-scenarios",
+        action="store_true",
+        help="Executa e compara 3 cenários: Baseline, Opção B (dynamic), Opção B+C (dynamic+Soros).",
+    )
+    parser.add_argument(
+        "--skip-quant-filters",
+        action="store_true",
+        help="Desativa os filtros quantitativos avançados (Hurst, Hawkes, etc.). Útil para datasets com distribuições diferentes.",
+    )
     args = parser.parse_args()
 
     logger.setLevel(logging.WARNING)
@@ -327,18 +397,82 @@ def main() -> None:
         recent_window=args.recent_window,
         max_recent_move_percent=args.max_recent_move_percent,
     )
-    result = run_accumulator_backtest(
+
+    common: dict[str, Any] = dict(
         ticks=ticks,
         initial_balance=args.initial_balance,
-        stake=args.stake,
         growth_rate=args.growth_rate,
-        take_profit_percent=args.take_profit_percent,
         barrier_percent=args.barrier_percent,
-        max_hold_ticks=args.max_hold_ticks,
         cooldown_ticks=args.cooldown_ticks,
         strategy_config=strategy_config,
         blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
         slippage_ticks=args.slippage_ticks,
+        base_pct=args.base_pct,
+        max_stake_abs=args.max_stake_abs,
+        max_stake_pct_cap=args.max_stake_pct_cap,
+        soros_max_steps=args.soros_max_steps,
+        skip_quant_filters=args.skip_quant_filters,
+    )
+
+    if args.run_all_scenarios:
+        # Pre-compute indicators once and reuse across all 3 scenarios
+        normalized = normalize_ticks(ticks)
+        indicator_df = calculate_tick_indicators(normalized, config=strategy_config)
+        common["indicator_frame"] = indicator_df
+
+        scenarios = [
+            # Baseline: fixed $10, TP 3% (reference — conservative)
+            dict(label="Baseline (fixo $10, TP 3%)", stake=args.stake, take_profit_percent=3.0, max_hold_ticks=8, dynamic_stake=False, use_soros_compound=False),
+            # Opção B: dynamic stake, configurable TP, no Soros
+            dict(label=f"Opção B  (dynamic, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=False),
+            # Opção C: dynamic stake + Soros
+            dict(label=f"Opção C  (dynamic+Soros, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=True),
+        ]
+
+        rows = []
+        for sc in scenarios:
+            sc_label = sc.pop("label")
+            r = run_accumulator_backtest(**common, **sc)
+            rows.append({
+                "Cenário": sc_label,
+                "Trades": r["total_trades"],
+                "Wins": r["wins"],
+                "Losses": r["losses"],
+                "Winrate%": f"{r['winrate']:.1f}",
+                "PnL": f"{r['net_profit']:+.2f}",
+                "Banca Final": f"{r['ending_balance']:.2f}",
+                "ROI%": f"{r['net_profit'] / args.initial_balance * 100:+.2f}",
+                "Max DD%": f"{r['max_drawdown_pct']:.2f}",
+                "Max Loss Streak": r["max_loss_streak"],
+            })
+
+        # Print comparison table
+        if rows:
+            keys = list(rows[0].keys())
+            widths = [max(len(k), max(len(str(row[k])) for row in rows)) for k in keys]
+            header = "  ".join(k.ljust(w) for k, w in zip(keys, widths))
+            sep = "  ".join("-" * w for w in widths)
+            print(header)
+            print(sep)
+            for row in rows:
+                print("  ".join(str(row[k]).ljust(w) for k, w in zip(keys, widths)))
+
+        if args.output and rows:
+            import csv as _csv
+            with args.output.open("w", newline="", encoding="utf-8") as f:
+                w = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                w.writeheader()
+                w.writerows(rows)
+            print(f"\nTabela salva em: {args.output}")
+        return
+
+    result = run_accumulator_backtest(
+        **common,
+        stake=args.stake,
+        take_profit_percent=args.take_profit_percent,
+        max_hold_ticks=args.max_hold_ticks,
+        dynamic_stake=args.dynamic_stake,
+        use_soros_compound=args.use_soros,
     )
 
     if args.output:

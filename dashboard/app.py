@@ -207,6 +207,14 @@ def api_status(response: Response):
         "use_ensemble": _get_env("USE_ENSEMBLE") == "true",
         "ensemble_min_prob": _get_env("ENSEMBLE_MIN_PROB") or "0.294",
         "stake": _get_env("STAKE") or "1.00",
+        "use_soros": _get_env("USE_SOROS") == "true",
+        "soros_max_steps": _get_env("SOROS_MAX_STEPS") or "3",
+        "soros_profit_factor": _get_env("SOROS_PROFIT_FACTOR") or "1.0",
+        "use_dynamic_stake": _get_env("DYNAMIC_STAKE") != "false",
+        "dynamic_stake_base_pct": _get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02",
+        "max_stake": _get_env("MAX_STAKE") or "500.00",
+        "max_stake_pct": _get_env("MAX_STAKE_PERCENT") or "0.10",
+        "take_profit_pct": _get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT") or "9.0",
     }
 
 
@@ -239,6 +247,10 @@ ALLOWED_KEYS = {
     "BLOCK_WEEKENDS", "USE_ENSEMBLE", "ENSEMBLE_MIN_PROB",
     "MAX_LOSS_PER_DAY", "MAX_PROFIT_PER_DAY", "STAKE",
     "MAX_TICK_LATENCY_MS", "LOG_LEVEL",
+    "USE_SOROS", "SOROS_MAX_STEPS", "SOROS_PROFIT_FACTOR",
+    "DYNAMIC_STAKE", "DYNAMIC_STAKE_BASE_PCT",
+    "MAX_STAKE", "MAX_STAKE_PERCENT",
+    "ACCUMULATOR_TAKE_PROFIT_PERCENT", "ACCUMULATOR_MAX_HOLD_TICKS",
 }
 
 @app.post("/api/env")
