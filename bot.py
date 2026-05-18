@@ -721,11 +721,14 @@ class DerivBot:
         # Log gale state transitions
         if getattr(self.risk, 'use_martingale', False):
             if profit < 0 and self.risk.martingale_step > _prev_m_step:
+                _raw = self.risk.get_gale_raw_stake()
+                _acum = self.risk.martingale_accumulated_loss
                 logger.warning(
-                    "\u26a0 GALE %d/%d ativado | pr\u00f3xima stake x%.1f",
+                    "\u26a0 GALE %d/%d ativado | acum_loss=%.2f | pr\u00f3xima stake bruta=%.2f",
                     self.risk.martingale_step,
                     self.risk.martingale_max_gales,
-                    self.risk.martingale_multiplier ** self.risk.martingale_step,
+                    _acum,
+                    _raw,
                 )
             elif profit > 0 and _prev_m_step > 0:
                 logger.info("\u2705 GALE %d recuperado \u2014 stake volta ao normal", _prev_m_step)
