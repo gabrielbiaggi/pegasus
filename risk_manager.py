@@ -172,7 +172,11 @@ class RiskManager:
 
         # Cap to remaining daily loss budget so the trade is capped, not blocked
         remaining_budget = max(0.0, self.max_loss_day - self.daily_loss)
-        stake = min(raw_stake, pct_cap, self.max_stake, remaining_budget)
+        # max_stake=0 means no absolute cap — use only pct_cap (100% dynamic)
+        caps = [raw_stake, pct_cap, remaining_budget]
+        if self.max_stake > 0:
+            caps.append(self.max_stake)
+        stake = min(caps)
 
         if stake < self.min_stake:
             return 0.0

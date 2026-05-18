@@ -267,8 +267,10 @@ def load_config() -> BotConfig:
         raise ValueError("DAILY_TRAILING_LOCK nao pode ser maior que DAILY_TRAILING_START.")
     if not 0 < config.max_stake_percent <= 1:
         raise ValueError("MAX_STAKE_PERCENT deve estar entre 0 e 1.")
-    if config.min_stake <= 0 or config.max_stake < config.min_stake:
-        raise ValueError("MIN_STAKE/MAX_STAKE invalidos.")
+    if config.min_stake <= 0:
+        raise ValueError("MIN_STAKE deve ser maior que zero.")
+    if config.max_stake > 0 and config.max_stake < config.min_stake:
+        raise ValueError("MAX_STAKE nao pode ser menor que MIN_STAKE (use 0 para desativar o cap absoluto).")
     if config.soros_max_steps < 0:
         raise ValueError("SOROS_MAX_STEPS nao pode ser negativo.")
     if not 0 <= config.soros_profit_factor <= 1:

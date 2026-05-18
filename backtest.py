@@ -258,7 +258,10 @@ def run_accumulator_backtest(
             if use_soros_compound and soros_step > 0 and soros_profit > 0:
                 trade_stake = trade_stake + soros_profit
             pct_cap = balance * max_stake_pct_cap
-            trade_stake = round(min(max(trade_stake, stake), pct_cap, max_stake_abs), 2)
+            _caps = [max(trade_stake, stake), pct_cap]
+            if max_stake_abs > 0:
+                _caps.append(max_stake_abs)
+            trade_stake = round(min(_caps), 2)
         else:
             trade_stake = stake
 

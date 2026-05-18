@@ -420,7 +420,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
     STAKE_FIXED = float(_get_env("STAKE") or "10.00")
     BASE_PCT = float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02")
     MAX_PCT_CAP = float(_get_env("MAX_STAKE_PERCENT") or "0.10")
-    MAX_STAKE_ABS = float(_get_env("MAX_STAKE") or "500.00")
+    MAX_STAKE_ABS = float(_get_env("MAX_STAKE") or "0")   # 0 = no fixed cap, use pct only
     MIN_STAKE_ABS = float(_get_env("MIN_STAKE") or "0.35")
     SOROS_MAX = int(_get_env("SOROS_MAX_STEPS") or "3")
     SOROS_FACTOR = float(_get_env("SOROS_PROFIT_FACTOR") or "1.0")
@@ -488,7 +488,10 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
 
             base = max(bal * BASE_PCT, STAKE_FIXED)
             soros_add = sp if 0 < ss <= SOROS_MAX else 0.0
-            stk = round(min(base * _mult(score) + soros_add, bal * MAX_PCT_CAP, MAX_STAKE_ABS, remaining_budget), 2)
+            _caps = [base * _mult(score) + soros_add, bal * MAX_PCT_CAP, remaining_budget]
+            if MAX_STAKE_ABS > 0:
+                _caps.append(MAX_STAKE_ABS)
+            stk = round(min(_caps), 2)
             if stk < MIN_STAKE_ABS:
                 continue
 
