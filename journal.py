@@ -40,6 +40,8 @@ class TradeJournal:
         "held_ticks",
         "direction",
         "score",
+        "soros_step",
+        "gale_step",
         "stake",
         "buy_price",
         "profit",
@@ -144,6 +146,8 @@ class TradeJournal:
         exit_epoch: int | None = None,
         held_ticks: int | None = None,
         metrics: dict[str, Any] | None = None,
+        soros_step: int = 0,
+        gale_step: int = 0,
     ) -> None:
         result = "WIN" if profit > 0 else "LOSS"
         self._append(
@@ -159,6 +163,8 @@ class TradeJournal:
                 "held_ticks": held_ticks if held_ticks is not None else "",
                 "direction": direction,
                 "score": score,
+                "soros_step": soros_step,
+                "gale_step": gale_step if gale_step > 0 else "",
                 "stake": f"{stake:.2f}",
                 "buy_price": f"{buy_price:.2f}",
                 "profit": f"{profit:.2f}",

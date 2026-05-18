@@ -249,7 +249,7 @@ class DerivBot:
         )
 
         if signal != "ACCU":
-            logger.info("Sem setup ACCU no tick %s.", tick_epoch)
+            logger.debug("Sem setup ACCU no tick %s.", tick_epoch)
             return
 
         stake = self.risk.get_stake(p_loss=p_loss)
@@ -483,6 +483,8 @@ class DerivBot:
             return
         exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
         held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
+        _pre_soros_step = self.risk.soros_step
+        _pre_gale_step = self.risk.martingale_step
         self.journal.log_trade(
             symbol=self.config.symbol,
             contract_mode=self.config.contract_mode,
@@ -496,8 +498,10 @@ class DerivBot:
             exit_epoch=exit_epoch,
             held_ticks=held_ticks,
             metrics=order.metrics,
+            soros_step=_pre_soros_step,
+            gale_step=_pre_gale_step,
         )
-        _prev_m_step = self.risk.martingale_step
+        _prev_m_step = _pre_gale_step
         self.risk.update(profit=profit, buy_price=buy_price)
         # Log gale state transitions
         if getattr(self.risk, 'use_martingale', False):

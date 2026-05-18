@@ -172,7 +172,7 @@ def generate_accumulator_signal(
     # Log quant filter reasons for diagnostics (no longer a hard gate — score handles it)
     _, reason = accumulator_quant_filters_pass(last, config)
 
-    logger.info(
+    logger.debug(
         (
             "ACCU score=%s | BBWidth%%=%.4f | TickATR%%=%.4f | RecentMove%%=%.4f | "
             "H=%.4f | imbalance=%s | hawkes=%.4f | vel_z=%.4f | accel_z=%.4f | "
