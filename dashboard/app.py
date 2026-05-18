@@ -263,17 +263,26 @@ def update_env(body: EnvUpdate):
 
 
 _backtest_cache: dict = {"ts": 0.0, "result": None}
-_BACKTEST_TTL = 300  # re-run at most every 5 min
+_BACKTEST_TTL = 60  # re-run at most every 60s
 
 
 def _run_backtest_simulation(rows: list) -> dict:
-    """Simulate accumulator trading on signal rows from shadow_ticks."""
+    """Simulate accumulator trading on signal rows from shadow_ticks.
+
+    Fixes vs previous version:
+    - Cooldown: after each trade exits, skip rows within exit_epoch + COOLDOWN_TICKS
+      (mirrors the real bot's cooldown between trades)
+    - Soros: replaces profit each step (not accumulates), resets after SOROS_MAX_STEPS
+      wins (mirrors risk_manager.py update() logic exactly)
+    """
     INITIAL = 10000.0
     STAKE_FIXED = float(_get_env("STAKE") or "10.00")
     BASE_PCT = float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02")
     MAX_PCT_CAP = float(_get_env("MAX_STAKE_PERCENT") or "0.10")
     MAX_STAKE_ABS = float(_get_env("MAX_STAKE") or "500.00")
     SOROS_MAX = int(_get_env("SOROS_MAX_STEPS") or "3")
+    SOROS_FACTOR = float(_get_env("SOROS_PROFIT_FACTOR") or "1.0")
+    COOLDOWN = int(_get_env("ACCUMULATOR_COOLDOWN_TICKS") or "3")
 
     def _mult(score: float) -> float:
         s = float(score or 0)
@@ -293,106 +302,118 @@ def _run_backtest_simulation(rows: list) -> dict:
     first_epoch = rows[0][0]
     last_epoch = rows[-1][0]
     total = len(rows)
-    wins = sum(1 for r in rows if r[3] == "WIN")
+    wins_raw = sum(1 for r in rows if r[3] == "WIN")
 
-    # --- full sim (no daily cap) ---
-    bal = INITIAL
-    ss = 0
-    sp = 0.0
-    peak = INITIAL
-    max_dd = 0.0
-    targets: dict[int, dict | None] = {p: None for p in [10, 20, 25, 30, 50, 100, 200]}
-
-    for i, (epoch, _quote, score, result, _exit, held) in enumerate(rows):
-        base = max(bal * BASE_PCT, STAKE_FIXED)
-        stk = round(min(base * _mult(score) + (sp if ss > 0 else 0), bal * MAX_PCT_CAP, MAX_STAKE_ABS), 2)
-        if result == "WIN":
-            p = _profit(stk, held)
-            sp += p
-            ss = min(ss + 1, SOROS_MAX)
-            bal = round(bal + p, 2)
-        else:
-            ss = 0
-            sp = 0.0
-            bal = round(bal - stk, 2)
-        if bal > peak:
-            peak = bal
-        dd = (peak - bal) / peak * 100
-        if dd > max_dd:
-            max_dd = dd
-        h = (epoch - first_epoch) / 3600
-        for pct, tgt in targets.items():
-            if tgt is None and bal >= INITIAL * (1 + pct / 100):
-                targets[pct] = {
-                    "trade": i + 1,
-                    "hours": round(h, 2),
-                    "balance": round(bal, 2),
-                    "days_at_300": round((i + 1) / 300, 1),
-                }
-
-    # --- sim with cap 300/day ---
-    cap_by_day: dict[str, dict] = {}
-    for target_day in [0.5, 1, 2, 3, 4, 4.5]:
-        b = INITIAL
-        s2 = 0
-        p2 = 0.0
-        dy: dict[int, int] = {}
+    def _simulate(*, max_epoch: int = 0, day_cap: int = 0, collect_targets: bool = False) -> dict:
+        """Run a full simulation pass with cooldown, correct Soros, and optional caps."""
+        bal = INITIAL
+        ss = 0      # soros step (1..SOROS_MAX)
+        sp = 0.0    # soros profit — last win's profit only (mirrors risk_manager.py)
+        peak = INITIAL
+        max_dd = 0.0
         n = 0
-        for epoch, _q, score, result, _ex, held in rows:
-            if epoch - first_epoch > target_day * 86400:
+        wins = 0
+        losses = 0
+        next_valid = 0  # skip rows with entry_epoch < next_valid (cooldown window)
+        day_counts: dict[int, int] = {}
+        targets: dict = {p: None for p in [10, 20, 25, 30, 50, 100, 200]} if collect_targets else {}
+
+        for (epoch, _q, score, result, exit_epoch, held) in rows:
+            # Time-window limit
+            if max_epoch and epoch - first_epoch > max_epoch:
                 break
-            dk = epoch // 86400
-            if dy.get(dk, 0) >= 300:
+            # Cooldown: skip if still in cooldown after last trade's exit
+            if epoch < next_valid:
                 continue
-            dy[dk] = dy.get(dk, 0) + 1
-            base = max(b * BASE_PCT, STAKE_FIXED)
-            stk = round(min(base * _mult(score) + (p2 if s2 > 0 else 0), b * MAX_PCT_CAP, MAX_STAKE_ABS), 2)
+            # Per-calendar-day trade cap (relative to dataset start, not wall clock)
+            if day_cap:
+                dk = (epoch - first_epoch) // 86400
+                if day_counts.get(dk, 0) >= day_cap:
+                    continue
+                day_counts[dk] = day_counts.get(dk, 0) + 1
+
+            base = max(bal * BASE_PCT, STAKE_FIXED)
+            soros_add = sp if 0 < ss <= SOROS_MAX else 0.0
+            stk = round(min(base * _mult(score) + soros_add, bal * MAX_PCT_CAP, MAX_STAKE_ABS), 2)
+
             if result == "WIN":
-                pp = _profit(stk, held)
-                p2 += pp
-                s2 = min(s2 + 1, SOROS_MAX)
-                b = round(b + pp, 2)
+                p = _profit(stk, held)
+                bal = round(bal + p, 2)
+                # Soros: replace profit each step, reset after SOROS_MAX consecutive wins
+                if ss < SOROS_MAX:
+                    ss += 1
+                    sp = round(p * SOROS_FACTOR, 2)
+                else:
+                    ss = 0
+                    sp = 0.0
+                wins += 1
             else:
-                s2 = 0
-                p2 = 0.0
-                b = round(b - stk, 2)
+                bal = round(bal - stk, 2)
+                ss = 0
+                sp = 0.0
+                losses += 1
+
             n += 1
-        cap_by_day[str(target_day)] = {
+            if bal > peak:
+                peak = bal
+            dd = (peak - bal) / peak * 100
+            if dd > max_dd:
+                max_dd = dd
+
+            # Advance cooldown: next valid entry after trade exits + COOLDOWN ticks
+            eff_exit = exit_epoch if exit_epoch else (epoch + (held or 0))
+            next_valid = eff_exit + COOLDOWN
+
+            if collect_targets:
+                h = (epoch - first_epoch) / 3600
+                for pct in list(targets.keys()):
+                    if targets[pct] is None and bal >= INITIAL * (1 + pct / 100):
+                        targets[pct] = {
+                            "trade": n,
+                            "hours": round(h, 2),
+                            "balance": round(bal, 2),
+                            "days_at_300": round(n / 300, 1),
+                        }
+
+        return {
             "trades": n,
-            "balance": round(b, 2),
-            "roi": round((b - INITIAL) / INITIAL * 100, 1),
+            "wins": wins,
+            "losses": losses,
+            "balance": round(bal, 2),
+            "max_dd": round(max_dd, 1),
+            "roi": round((bal - INITIAL) / INITIAL * 100, 1),
+            "targets": targets,
         }
 
-    # --- sessions without cap ---
+    # Full simulation (no cap, with cooldown)
+    full = _simulate(collect_targets=True)
+    targets = full["targets"]
+
+    # Cap 300 trades/day, time-limited, with cooldown
+    cap_by_day: dict[str, dict] = {}
+    for target_day in [0.5, 1, 2, 3, 4, 4.5]:
+        r = _simulate(max_epoch=int(target_day * 86400), day_cap=300)
+        cap_by_day[str(target_day)] = {
+            "trades": r["trades"],
+            "balance": r["balance"],
+            "roi": r["roi"],
+        }
+
+    # Sessions (no day cap, time-limited, with cooldown)
     sessions: dict[str, dict] = {}
     for label, seg in [("30min", 1800), ("1h", 3600), ("2h", 7200), ("4h", 14400)]:
-        b = INITIAL
-        s2 = 0
-        p2 = 0.0
-        n = 0
-        for epoch, _q, score, result, _ex, held in rows:
-            if epoch - first_epoch > seg:
-                break
-            base = max(b * BASE_PCT, STAKE_FIXED)
-            stk = round(min(base * _mult(score) + (p2 if s2 > 0 else 0), b * MAX_PCT_CAP, MAX_STAKE_ABS), 2)
-            if result == "WIN":
-                pp = _profit(stk, held)
-                p2 += pp
-                s2 = min(s2 + 1, SOROS_MAX)
-                b = round(b + pp, 2)
-            else:
-                s2 = 0
-                p2 = 0.0
-                b = round(b - stk, 2)
-            n += 1
-        sessions[label] = {"trades": n, "balance": round(b, 2), "roi": round((b - INITIAL) / INITIAL * 100, 1)}
+        r = _simulate(max_epoch=seg)
+        sessions[label] = {"trades": r["trades"], "balance": r["balance"], "roi": r["roi"]}
 
     avg_s = (last_epoch - first_epoch) / total if total > 1 else 8.0
     return {
         "total_signals": total,
-        "winrate": round(wins / total * 100, 2),
+        "effective_trades": full["trades"],
+        "winrate": round(wins_raw / total * 100, 2),
+        "effective_winrate": round(full["wins"] / full["trades"] * 100, 2) if full["trades"] else 0.0,
+        "cooldown_ticks": COOLDOWN,
         "dataset_hours": round((last_epoch - first_epoch) / 3600, 1),
-        "max_drawdown": round(max_dd, 1),
+        "max_drawdown": full["max_dd"],
         "signal_rate_per_hour": round(3600 / avg_s),
         "avg_signal_interval_s": round(avg_s, 1),
         "cap_hours_per_day": round(300 * avg_s / 3600, 1),

@@ -191,6 +191,7 @@ def run_accumulator_backtest(
     # --- Opção C: Soros compounding (adds prior WIN profit to next stake) ---
     use_soros_compound: bool = False,
     soros_max_steps: int = 3,
+    soros_profit_factor: float = 1.0,
     # --- Skip advanced quant filters (useful for datasets with different distributions) ---
     skip_quant_filters: bool = False,
 ) -> dict[str, Any]:
@@ -277,8 +278,13 @@ def run_accumulator_backtest(
         if profit > 0:
             loss_streak = 0
             if dynamic_stake and use_soros_compound:
-                soros_profit += profit
-                soros_step = min(soros_step + 1, soros_max_steps)
+                # Mirrors risk_manager.py: replace profit (not accumulate), reset after max_steps wins
+                if soros_step < soros_max_steps:
+                    soros_step += 1
+                    soros_profit = round(profit * soros_profit_factor, 2)
+                else:
+                    soros_step = 0
+                    soros_profit = 0.0
         else:
             loss_streak += 1
             max_loss_streak = max(max_loss_streak, loss_streak)

@@ -158,16 +158,17 @@
 </section>
 <section>
   <div class="section-header">
-    <h2>Projeção (shadow_ticks)</h2>
+    <h2>Projeção <span style="font-size:.75rem;color:var(--muted);font-weight:400">(shadow_ticks — c/ cooldown)</span></h2>
     <div class="tools">
+      <span id="bt-last-refresh" style="font-size:.7rem;color:var(--muted);margin-right:6px">—</span>
       <button class="btn btn-blue" id="btn-bt" onclick="fetchBacktest(true)" style="padding:3px 10px;font-size:.75rem">↻ Atualizar</button>
     </div>
   </div>
   <div id="bt-loading" style="color:var(--muted);font-size:.8rem;padding:8px 0">Carregando projeção...</div>
   <div id="bt-body" style="display:none">
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
-      <div class="card" style="min-width:130px;flex:1"><div class="label">Sinais reais</div><div class="value blue" id="bt-signals">—</div><div class="sub" id="bt-dataset">—</div></div>
-      <div class="card" style="min-width:130px;flex:1"><div class="label">Win Rate</div><div class="value green" id="bt-wr">—</div><div class="sub" id="bt-dd">max DD —</div></div>
+      <div class="card" style="min-width:130px;flex:1"><div class="label">Sinais (raw)</div><div class="value blue" id="bt-signals">—</div><div class="sub" id="bt-dataset">—</div></div>
+      <div class="card" style="min-width:130px;flex:1"><div class="label">Win Rate (c/ cooldown)</div><div class="value green" id="bt-wr">—</div><div class="sub" id="bt-dd">—</div></div>
       <div class="card" style="min-width:130px;flex:1"><div class="label">Ritmo sinais</div><div class="value" id="bt-rate">—</div><div class="sub" id="bt-cap-h">— h/dia com 300 cap</div></div>
     </div>
     <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px;font-weight:600">COM CAP 300 TRADES/DIA</div>
@@ -227,9 +228,10 @@ async function fetchBacktest(force){
     document.getElementById('bt-loading').style.display='none';
     document.getElementById('bt-body').style.display='block';
     document.getElementById('bt-signals').textContent=(d.total_signals||0).toLocaleString('pt-BR');
-    document.getElementById('bt-dataset').textContent=(d.dataset_hours||0)+'h de dados';
-    document.getElementById('bt-wr').textContent=(d.winrate||0)+'%';
-    document.getElementById('bt-dd').textContent='max DD '+d.max_drawdown+'%';
+    document.getElementById('bt-dataset').textContent=(d.effective_trades||0).toLocaleString('pt-BR')+' trades (cooldown='+d.cooldown_ticks+'t)';
+    document.getElementById('bt-wr').textContent=(d.effective_winrate||d.winrate||0)+'%';
+    document.getElementById('bt-dd').textContent='bruto '+(d.winrate||0)+'% | DD '+d.max_drawdown+'%';
+    document.getElementById('bt-last-refresh').textContent='atualizado '+new Date().toLocaleTimeString('pt-BR');
     document.getElementById('bt-rate').textContent='~'+(d.signal_rate_per_hour||0)+'/h';
     document.getElementById('bt-cap-h').textContent='~'+d.cap_hours_per_day+'h/dia com 300 cap';
     // cap by day table
@@ -246,6 +248,7 @@ async function fetchBacktest(force){
 function refresh(){fetchStatus();fetchTrades();fetchLogs()}
 refresh();
 fetchBacktest(false);
+setInterval(function(){fetchBacktest(false)},60000);
 setInterval(fetchStatus,3000);
 setInterval(function(){fetchTrades();fetchLogs()},5000);
 </script>
