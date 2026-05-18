@@ -238,7 +238,7 @@ class DerivBot:
             return
 
         df = calculate_tick_indicators(list(self.tick_buffer), config=self.config.accumulator_strategy_config)
-        signal, score = generate_accumulator_signal(
+        signal, score, p_loss = generate_accumulator_signal(
             df,
             config=self.config.accumulator_strategy_config,
             ensemble_scorer=self._ensemble_scorer,
@@ -248,9 +248,14 @@ class DerivBot:
             logger.info("Sem setup ACCU no tick %s.", tick_epoch)
             return
 
-        stake = self.risk.get_stake()
+        stake = self.risk.get_stake(p_loss=p_loss)
         metrics = self._last_accumulator_metrics(df)
-        logger.info("Setup ACCU detectado: score=%s stake=%.2f", score, stake)
+        logger.info(
+            "Setup ACCU detectado: score=%s stake=%.2f p_loss=%s",
+            score,
+            stake,
+            f"{p_loss:.4f}" if p_loss is not None else "N/A",
+        )
         await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
 
     @staticmethod
@@ -321,6 +326,7 @@ class DerivBot:
             use_soros=self.config.use_soros,
             soros_max_steps=self.config.soros_max_steps,
             soros_profit_factor=self.config.soros_profit_factor,
+            use_dynamic_stake=self.config.use_dynamic_stake,
         )
         # Zombie-trade protection: reconcile open positions before subscribing ticks
         await self._reconcile_open_positions(ws)

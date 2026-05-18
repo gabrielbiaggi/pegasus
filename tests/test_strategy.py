@@ -25,7 +25,7 @@ class StrategyTest(unittest.TestCase):
         ticks = [{"epoch": 1_700_000_000 + i, "quote": 100 + (i % 2) * 0.001} for i in range(80)]
         df = calculate_tick_indicators(ticks, config=config)
 
-        self.assertEqual(generate_accumulator_signal(df, config=config), ("ACCU", 10))
+        self.assertEqual(generate_accumulator_signal(df, config=config), ("ACCU", 10, None))
 
     def test_accumulator_signal_blocks_wide_ticks(self) -> None:
         config = AccumulatorStrategyConfig(
@@ -37,7 +37,7 @@ class StrategyTest(unittest.TestCase):
         ticks = [{"epoch": 1_700_000_000 + i, "quote": 100 + i * 0.1} for i in range(80)]
         df = calculate_tick_indicators(ticks, config=config)
 
-        self.assertEqual(generate_accumulator_signal(df, config=config), (None, 0))
+        self.assertEqual(generate_accumulator_signal(df, config=config), (None, 0, None))
 
     def test_calculate_tick_indicators_requires_tick_schema(self) -> None:
         with self.assertRaises(ValueError):

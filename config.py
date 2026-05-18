@@ -71,6 +71,7 @@ class BotConfig:
     use_soros: bool
     soros_max_steps: int
     soros_profit_factor: float
+    use_dynamic_stake: bool
     journal_dir: str
     dry_run: bool
     allow_real_trading: bool
@@ -192,6 +193,7 @@ def load_config() -> BotConfig:
         use_soros=_bool_env("USE_SOROS", False),
         soros_max_steps=_int_env("SOROS_MAX_STEPS", 1),
         soros_profit_factor=_float_env("SOROS_PROFIT_FACTOR", 1.0),
+        use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
         dry_run=_bool_env("DRY_RUN", True),
         allow_real_trading=_bool_env("ALLOW_REAL_TRADING", False),

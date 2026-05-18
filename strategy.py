@@ -152,22 +152,22 @@ def generate_accumulator_signal(
     df: pd.DataFrame,
     config: AccumulatorStrategyConfig | None = None,
     ensemble_scorer: EnsembleScorer | None = None,
-) -> tuple[Optional[str], int]:
+) -> tuple[Optional[str], int, Optional[float]]:
     config = config or AccumulatorStrategyConfig()
     if len(df) < config.minimum_ticks:
-        return None, 0
+        return None, 0, None
 
     last = df.iloc[-1]
     score = score_accumulator_row(last, config)
 
     if score == 0 and last[["bb_width_percent", "tick_atr_percent", "recent_move_percent"]].isna().any():
-        return None, 0
+        return None, 0, None
 
     # --- HMM regime gate: block trades during high-variance regime ---
     if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
         if hmm_regime_is_high_variance(df["close"], n_states=config.hmm_n_states, window=config.hmm_window):
             logger.info("HMM: regime de alta variancia detectado. Trade bloqueado.")
-            return None, 0
+            return None, 0, None
 
     quant_pass, reason = accumulator_quant_filters_pass(last, config)
 
@@ -195,18 +195,19 @@ def generate_accumulator_signal(
 
     if score >= config.min_score and quant_pass:
         # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
+        p_loss: Optional[float] = None
         if config.use_ensemble and ensemble_scorer is not None:
             p_loss = ensemble_scorer.predict_loss_probability(last)
             logger.info("EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob)
             if p_loss >= config.ensemble_min_prob:
                 logger.warning("⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f", p_loss, config.ensemble_min_prob)
-                return None, 0
-        return "ACCU", score
+                return None, 0, None
+        return "ACCU", score, p_loss
 
     if score >= config.min_score:
         logger.info("Setup ACCU bloqueado pelo filtro quantitativo: %s", reason)
 
-    return None, 0
+    return None, 0, None
 
 
 def score_accumulator_row(row: pd.Series, config: AccumulatorStrategyConfig | None = None) -> int:

@@ -24,6 +24,7 @@ class RiskManager:
         use_soros: bool,
         soros_max_steps: int,
         soros_profit_factor: float,
+        use_dynamic_stake: bool = True,
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -42,6 +43,7 @@ class RiskManager:
         self.use_soros = bool(use_soros)
         self.soros_max_steps = int(soros_max_steps)
         self.soros_profit_factor = float(soros_profit_factor)
+        self.use_dynamic_stake = bool(use_dynamic_stake)
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -135,13 +137,26 @@ class RiskManager:
         self.soros_profit = 0.0
         self._save_state()
 
-    def get_stake(self) -> float:
+    def get_stake(self, p_loss: float | None = None) -> float:
         self._reset_if_new_day()
         pct_cap = self.balance * self.max_stake_pct
         raw_stake = self.fixed_stake
 
+        # Opção B: dynamic sizing by P(LOSS) confidence
+        if self.use_dynamic_stake and p_loss is not None:
+            if p_loss < 0.10:
+                raw_stake = self.fixed_stake * 5.0
+            elif p_loss < 0.15:
+                raw_stake = self.fixed_stake * 3.0
+            elif p_loss < 0.20:
+                raw_stake = self.fixed_stake * 2.0
+            elif p_loss < 0.25:
+                raw_stake = self.fixed_stake * 1.5
+            # else p_loss < limiar: 1× (raw_stake = fixed_stake)
+
+        # Opção C: Soros on top (USE_SOROS=true ativa)
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
-            raw_stake = self.fixed_stake + self.soros_profit
+            raw_stake = raw_stake + self.soros_profit
 
         stake = min(raw_stake, pct_cap, self.max_stake)
 
