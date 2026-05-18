@@ -16,6 +16,7 @@
   .badge.offline{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
   .badge.pending{background:#2a2a1a;color:var(--yellow);border:1px solid var(--yellow)}
   .badge.warn{background:#2a2310;color:#d99b00;border:1px solid #d99b00;animation:warn-pulse 1.5s ease-in-out infinite}
+  .badge.blocked{background:#3a1a3a;color:#c678dd;border:1px solid #c678dd;animation:warn-pulse 1.5s ease-in-out infinite}
   @keyframes warn-pulse{0%,100%{opacity:1}50%{opacity:.6}}
   .last-trade{font-size:.72rem;color:var(--muted)}
   @keyframes pulse-err{0%,100%{opacity:1}50%{opacity:.4}}.conn-err{font-size:.72rem;color:var(--red);display:none;animation:pulse-err 1.5s ease-in-out infinite}
@@ -158,7 +159,23 @@
 </section>
 <section>
   <div class="section-header">
-    <h2>Projeção <span style="font-size:.75rem;color:var(--muted);font-weight:400">(shadow_ticks — c/ cooldown)</span></h2>
+    <h2>Sessões diárias</h2>
+    <div class="tools">
+      <span id="sessions-month" style="font-size:.7rem;color:var(--blue);margin-right:6px">—</span>
+      <button class="btn btn-blue" onclick="fetchSessions()" style="padding:3px 10px;font-size:.75rem">↻</button>
+    </div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+    <div class="card" style="min-width:120px;flex:1"><div class="label">Trades no mês</div><div class="value blue" id="m-trades">—</div><div class="sub" id="m-days">—</div></div>
+    <div class="card" style="min-width:120px;flex:1"><div class="label">Win Rate mês</div><div class="value green" id="m-wr">—</div><div class="sub" id="m-wl">—</div></div>
+    <div class="card" style="min-width:120px;flex:1"><div class="label">P&amp;L mês</div><div class="value" id="m-pnl">—</div><div class="sub" id="m-best">—</div></div>
+    <div class="card" style="min-width:120px;flex:1"><div class="label">Pior dia</div><div class="value red" id="m-worst-pnl">—</div><div class="sub" id="m-worst-date">—</div></div>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>Trades</th><th>W</th><th>L</th><th>Win Rate</th><th>P&amp;L</th></tr></thead>
+    <tbody id="sessions-body"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:12px">Carregando...</td></tr></tbody>
+  </table>
+</section>
     <div class="tools">
       <span id="bt-last-refresh" style="font-size:.7rem;color:var(--muted);margin-right:6px">—</span>
       <button class="btn btn-blue" id="btn-bt" onclick="fetchBacktest(true)" style="padding:3px 10px;font-size:.75rem">↻ Atualizar</button>
@@ -216,9 +233,35 @@ async function setStake(){var raw=parseFloat(document.getElementById('inp-stake'
 function setLogFilter(f,btn){_logFilter=f;document.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');renderLog()}
 function toggleScrollLock(){_scrollLocked=!_scrollLocked;var btn=document.getElementById('scroll-lock-btn');btn.textContent=_scrollLocked?'\u21e9 Lock':'\u21e9 Auto';btn.classList.toggle('locked',_scrollLocked)}
 function renderLog(){var box=document.getElementById('log-box'),filtered=_logFilter==='all'?_logLines:_logLines.filter(function(l){if(_logFilter==='warn')return l.includes('[WARNING]')||l.includes('cancelado');if(_logFilter==='err')return l.includes('[ERROR]')||l.includes('[CRITICAL]');if(_logFilter==='ai')return l.includes('P(LOSS)')||l.includes('EnsembleScorer')||l.includes('Comprando');return true});box.innerHTML=filtered.map(function(l){var cls='info';if(l.includes('[WARNING]')||l.includes('cancelado'))cls='warn';else if(l.includes('[ERROR]')||l.includes('[CRITICAL]'))cls='err';else if(l.includes('P(LOSS)')||l.includes('EnsembleScorer')||l.includes('Comprando'))cls='ai';return'<div class="'+cls+'">'+l.replace(/</g,'&lt;')+'</div>'}).join('');if(!_scrollLocked)box.scrollTop=box.scrollHeight}
-async function fetchStatus(){try{var d=await fetch('/api/status').then(function(r){return r.json()});_connFailed=0;document.getElementById('conn-err').style.display='none';_botRunning=!!d.running;applyButtonStates(_botRunning);var badge=document.getElementById('status-badge');if(d.running){var _idleSec=d.last_trade_ts?(Date.now()-new Date(d.last_trade_ts))/1000:0;if(_idleSec>3600){badge.textContent='Inativo';badge.className='badge warn'}else{badge.textContent='Online';badge.className='badge online'}}else{badge.textContent='Offline';badge.className='badge offline'};document.getElementById('balance').textContent=(d.balance&&d.balance!=='\u2014')?'$'+d.balance:'\u2014';var pnl=d.pnl!=null?d.pnl:0,pnlEl=document.getElementById('pnl');pnlEl.textContent=(pnl>=0?'+':'')+pnl.toFixed(2);pnlEl.className='value '+(pnl>=0?'green':'red');document.getElementById('pnl-sub').textContent=(d.total||0)+' opera\u00e7\u00f5es hoje';document.getElementById('wl').textContent=(d.wins||0)+' / '+(d.losses||0);document.getElementById('wr').textContent='Winrate: '+(d.winrate||0)+'%';if(!_actionLock){document.getElementById('tog-weekends').checked=!!d.block_weekends;document.getElementById('tog-ensemble').checked=!!d.use_ensemble;document.getElementById('tog-soros').checked=!!d.use_soros}if(d.ensemble_min_prob){_threshold=parseFloat(d.ensemble_min_prob);var _thEl=document.getElementById('inp-threshold');if(document.activeElement!==_thEl)_thEl.value=_threshold;document.getElementById('ploss-sub').textContent='limiar '+_threshold.toFixed(3);var _tl=document.getElementById('ploss-thresh');if(_tl)_tl.style.left=(_threshold*100).toFixed(1)+'%'}var _skEl=document.getElementById('inp-stake');if(d.stake&&document.activeElement!==_skEl)_skEl.value=parseFloat(d.stake).toFixed(2);var pl=d.p_loss,plEl=document.getElementById('ploss');if(pl!=null){plEl.textContent=(pl*100).toFixed(1)+'%';var bar=document.getElementById('ploss-bar');bar.style.width=Math.min(pl*100,100)+'%';if(pl>=_threshold){plEl.className='value red';bar.style.background='#f85149'}else{plEl.className='value green';bar.style.background='#3fb950'}}else{plEl.textContent='\u2014'}document.getElementById('last-update').textContent='Atualizado: '+new Date().toLocaleTimeString('pt-BR');if(d.last_trade_ts)document.getElementById('last-trade-time').textContent=timeSince(d.last_trade_ts);document.title=d.running?(_idleSec>3600?'⚠️ Inativo | Pegasus':'🦅 '+(d.wins||0)+'W/'+(d.losses||0)+'L '+(pnl>=0?'+':'')+pnl.toFixed(2)+' | Pegasus'):'🦅 Pegasus [Offline]'}catch(e){_connFailed++;if(_connFailed>=2)document.getElementById('conn-err').style.display='inline'}}
+async function fetchStatus(){try{var d=await fetch('/api/status').then(function(r){return r.json()});_connFailed=0;document.getElementById('conn-err').style.display='none';_botRunning=!!d.running;applyButtonStates(_botRunning);var badge=document.getElementById('status-badge');if(d.running){var _idleSec=d.last_trade_ts?(Date.now()-new Date(d.last_trade_ts))/1000:0;if(d.risk_blocked){badge.textContent='Bloqueado';badge.className='badge blocked'}else if(_idleSec>3600){badge.textContent='Inativo';badge.className='badge warn'}else{badge.textContent='Online';badge.className='badge online'}}else{badge.textContent='Offline';badge.className='badge offline'};document.getElementById('balance').textContent=(d.balance&&d.balance!=='\u2014')?'$'+d.balance:'\u2014';var pnl=d.pnl!=null?d.pnl:0,pnlEl=document.getElementById('pnl');pnlEl.textContent=(pnl>=0?'+':'')+pnl.toFixed(2);pnlEl.className='value '+(pnl>=0?'green':'red');document.getElementById('pnl-sub').textContent=(d.total||0)+' opera\u00e7\u00f5es hoje';document.getElementById('wl').textContent=(d.wins||0)+' / '+(d.losses||0);document.getElementById('wr').textContent='Winrate: '+(d.winrate||0)+'%';if(!_actionLock){document.getElementById('tog-weekends').checked=!!d.block_weekends;document.getElementById('tog-ensemble').checked=!!d.use_ensemble;document.getElementById('tog-soros').checked=!!d.use_soros}if(d.ensemble_min_prob){_threshold=parseFloat(d.ensemble_min_prob);var _thEl=document.getElementById('inp-threshold');if(document.activeElement!==_thEl)_thEl.value=_threshold;document.getElementById('ploss-sub').textContent='limiar '+_threshold.toFixed(3);var _tl=document.getElementById('ploss-thresh');if(_tl)_tl.style.left=(_threshold*100).toFixed(1)+'%'}var _skEl=document.getElementById('inp-stake');if(d.stake&&document.activeElement!==_skEl)_skEl.value=parseFloat(d.stake).toFixed(2);var pl=d.p_loss,plEl=document.getElementById('ploss');if(pl!=null){plEl.textContent=(pl*100).toFixed(1)+'%';var bar=document.getElementById('ploss-bar');bar.style.width=Math.min(pl*100,100)+'%';if(pl>=_threshold){plEl.className='value red';bar.style.background='#f85149'}else{plEl.className='value green';bar.style.background='#3fb950'}}else{plEl.textContent='\u2014'}document.getElementById('last-update').textContent='Atualizado: '+new Date().toLocaleTimeString('pt-BR');if(d.last_trade_ts)document.getElementById('last-trade-time').textContent=timeSince(d.last_trade_ts);document.title=d.running?(d.risk_blocked?'🔴 Bloqueado | Pegasus':_idleSec>3600?'⚠️ Inativo | Pegasus':'🦅 '+(d.wins||0)+'W/'+(d.losses||0)+'L '+(pnl>=0?'+':'')+pnl.toFixed(2)+' | Pegasus'):'🦅 Pegasus [Offline]'}catch(e){_connFailed++;if(_connFailed>=2)document.getElementById('conn-err').style.display='inline'}}
 async function fetchTrades(){try{var data=await fetch('/api/trades').then(function(r){return r.json()}),tbody=document.getElementById('trades-body');if(!data.length){tbody.innerHTML='<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Sem opera\u00e7\u00f5es hoje</td></tr>';_prevTradeCount=0;var _tce=document.getElementById('trade-count');if(_tce)_tce.textContent='—';document.getElementById('pnl-avg').textContent='';document.getElementById('streak').textContent='\u2014';document.getElementById('streak-sub').textContent='\u2014';drawSparkline([]);return}var streak=calcStreak(data);document.getElementById('streak').textContent=streak.val===0?'\u2014':(streak.val>0?'+':'')+Math.abs(streak.val);document.getElementById('streak-sub').textContent=streak.label;var profits=data.map(function(t){return parseFloat(t.profit||0)}).filter(function(p){return!isNaN(p)}),avg=profits.length?profits.reduce(function(a,b){return a+b},0)/profits.length:0;document.getElementById('pnl-avg').textContent='m\u00e9d. '+(avg>=0?'+':'')+avg.toFixed(2)+'/op';drawSparkline(profits.slice().reverse());if(data[0]&&data[0].timestamp)document.getElementById('last-trade-time').textContent=timeSince(data[0].timestamp);var isNew=data.length>_prevTradeCount&&_prevTradeCount>0;_prevTradeCount=data.length;var _tc=document.getElementById("trade-count");if(_tc)_tc.textContent=data.length+" op"+(data.length===1?"":"s")+" hoje";tbody.innerHTML=data.map(function(t,i){var ts=t.timestamp?t.timestamp.replace('T',' ').slice(0,19):'\u2014',res=t.result||'\u2014',cls=res==='WIN'?'win':res==='LOSS'?'loss':'',profit=(t.profit!==''&&t.profit!=null)?((parseFloat(t.profit)>=0?'+':'')+parseFloat(t.profit).toFixed(2)):'\u2014',flashCls=(i===0&&isNew)?(res==='WIN'?' flash-win':' flash-loss'):'';return'<tr class="'+flashCls+'"><td>'+ts+'</td><td class="'+cls+'">'+res+'</td><td class="'+cls+'">'+profit+'</td><td>'+(t.score!=null?t.score:'\u2014')+'</td><td>'+(t.stake!=null?t.stake:'\u2014')+'</td><td>'+(t.held_ticks!=null?t.held_ticks:'\u2014')+'</td></tr>'}).join('')}catch(e){}}
 async function fetchLogs(){try{var d=await fetch('/api/logs').then(function(r){return r.json()});_logLines=d.lines||[];renderLog()}catch(e){}}
+async function fetchSessions(){
+  try{
+    var d=await fetch('/api/sessions').then(function(r){return r.json()});
+    var m=d.monthly||{};
+    document.getElementById('sessions-month').textContent=(m.month||'');
+    document.getElementById('m-trades').textContent=(m.trades||0).toLocaleString('pt-BR');
+    document.getElementById('m-days').textContent=(m.active_days||0)+' dias ativos';
+    var mwr=m.winrate||0;document.getElementById('m-wr').textContent=mwr+'%';document.getElementById('m-wr').className='value '+(mwr>=80?'green':mwr>=60?'yellow':'red');
+    document.getElementById('m-wl').textContent=(m.wins||0)+'W / '+(m.losses||0)+'L';
+    var mpnl=m.pnl||0;var mpnlEl=document.getElementById('m-pnl');mpnlEl.textContent=(mpnl>=0?'+':'')+mpnl.toFixed(2);mpnlEl.className='value '+(mpnl>=0?'green':'red');
+    var bd=m.best_day||{};document.getElementById('m-best').textContent=bd.date?'melhor: '+bd.date+' (+'+bd.pnl.toFixed(2)+')':'—';
+    var wd=m.worst_day||{};var wpnl=wd.pnl||0;document.getElementById('m-worst-pnl').textContent=wd.date?(wpnl>=0?'+':'')+wpnl.toFixed(2):'—';document.getElementById('m-worst-date').textContent=wd.date||'—';
+    var rows='';(d.days||[]).forEach(function(s){
+      var pnlCls=s.pnl>=0?'win':'loss';
+      var today=new Date().toISOString().slice(0,10);
+      var isToday=s.date===today;
+      rows+='<tr'+(isToday?' style="background:#1c2129"':'')+'>';
+      rows+='<td>'+(isToday?'<b>'+s.date+' ▶</b>':s.date)+'</td>';
+      rows+='<td>'+s.trades+'</td><td class="win">'+s.wins+'</td><td class="loss">'+s.losses+'</td>';
+      rows+='<td>'+(s.winrate)+'%</td>';
+      rows+='<td class="'+pnlCls+'">'+(s.pnl>=0?'+':'')+s.pnl.toFixed(2)+'</td></tr>';
+    });
+    document.getElementById('sessions-body').innerHTML=rows||'<tr><td colspan="6" style="color:var(--muted);text-align:center">Sem dados</td></tr>';
+  }catch(e){document.getElementById('sessions-body').innerHTML='<tr><td colspan="6" style="color:var(--red)">Erro ao carregar sessões</td></tr>';}
+}
+
 async function fetchBacktest(force){
   var url='/api/backtest'+(force?'?refresh=true':'');
   document.getElementById('btn-bt').disabled=true;
@@ -248,6 +291,8 @@ async function fetchBacktest(force){
 function refresh(){fetchStatus();fetchTrades();fetchLogs()}
 refresh();
 fetchBacktest(false);
+fetchSessions();
+setInterval(function(){fetchSessions()},30000);
 setInterval(function(){fetchBacktest(false)},60000);
 setInterval(fetchStatus,3000);
 setInterval(function(){fetchTrades();fetchLogs()},5000);

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -86,6 +87,14 @@ def _last_balance() -> str:
     if val != "—":
         _balance_cache = (now, val)
     return val
+
+
+def _read_risk_state() -> dict:
+    path = BASE / "logs" / "risk_state.json"
+    try:
+        return json.loads(path.read_text()) if path.exists() else {}
+    except Exception:
+        return {}
 
 
 def _last_p_loss() -> float | None:
@@ -216,7 +225,62 @@ def api_status(response: Response):
         "max_stake": _get_env("MAX_STAKE") or "500.00",
         "max_stake_pct": _get_env("MAX_STAKE_PERCENT") or "0.10",
         "take_profit_pct": _get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT") or "9.0",
+        "risk_blocked": _read_risk_state().get("daily_loss", 0.0) >= float(_get_env("MAX_LOSS_PER_DAY") or 200),
+        "max_loss_per_day": float(_get_env("MAX_LOSS_PER_DAY") or 200),
+        "daily_loss": round(_read_risk_state().get("daily_loss", 0.0), 2),
     }
+
+
+@app.get("/api/sessions")
+def api_sessions(response: Response):
+    """Return per-day stats + monthly summary from trades.csv."""
+    response.headers["Cache-Control"] = "no-store"
+    if not TRADES_CSV.exists():
+        return {"days": [], "monthly": {}}
+    try:
+        df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
+    except Exception:
+        return {"days": [], "monthly": {}}
+    if df.empty:
+        return {"days": [], "monthly": {}}
+    df["date"] = df["timestamp"].dt.date.astype(str)
+    df["profit"] = pd.to_numeric(df["profit"], errors="coerce").fillna(0.0)
+    days = []
+    for date, grp in sorted(df.groupby("date"), reverse=True):
+        wins = int((grp["result"] == "WIN").sum())
+        losses = int((grp["result"] == "LOSS").sum())
+        total = wins + losses
+        pnl = round(float(grp["profit"].sum()), 2)
+        days.append({
+            "date": date,
+            "trades": total,
+            "wins": wins,
+            "losses": losses,
+            "winrate": round(wins / total * 100, 1) if total else 0.0,
+            "pnl": pnl,
+        })
+    # Monthly summary (current month)
+    now = datetime.now(timezone.utc)
+    month_str = now.strftime("%Y-%m")
+    mdf = df[df["date"].str.startswith(month_str)]
+    m_wins = int((mdf["result"] == "WIN").sum())
+    m_losses = int((mdf["result"] == "LOSS").sum())
+    m_total = m_wins + m_losses
+    m_pnl = round(float(mdf["profit"].sum()), 2)
+    best_day = max(days, key=lambda d: d["pnl"]) if days else {}
+    worst_day = min(days, key=lambda d: d["pnl"]) if days else {}
+    monthly = {
+        "month": month_str,
+        "trades": m_total,
+        "wins": m_wins,
+        "losses": m_losses,
+        "winrate": round(m_wins / m_total * 100, 1) if m_total else 0.0,
+        "pnl": m_pnl,
+        "active_days": len([d for d in days if d["date"].startswith(month_str)]),
+        "best_day": best_day,
+        "worst_day": worst_day,
+    }
+    return {"days": days, "monthly": monthly}
 
 
 @app.post("/api/bot/start")
