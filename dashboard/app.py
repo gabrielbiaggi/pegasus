@@ -385,7 +385,7 @@ _backtest_cache: dict = {"ts": 0.0, "result": None}
 _BACKTEST_TTL = 60  # re-run at most every 60s
 
 
-def _run_backtest_simulation(rows: list) -> dict:
+def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> dict:
     """Simulate accumulator trading on signal rows from shadow_ticks.
 
     Fixes vs previous version:
@@ -394,7 +394,7 @@ def _run_backtest_simulation(rows: list) -> dict:
     - Soros: replaces profit each step (not accumulates), resets after SOROS_MAX_STEPS
       wins (mirrors risk_manager.py update() logic exactly)
     """
-    INITIAL = 10000.0
+    INITIAL = initial_balance
     STAKE_FIXED = float(_get_env("STAKE") or "10.00")
     BASE_PCT = float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02")
     MAX_PCT_CAP = float(_get_env("MAX_STAKE_PERCENT") or "0.10")
@@ -544,11 +544,13 @@ def _run_backtest_simulation(rows: list) -> dict:
 
 
 @app.get("/api/backtest")
-def api_backtest(refresh: bool = False):
+def api_backtest(refresh: bool = False, balance: float = 10000.0):
     global _backtest_cache
     now = _time.monotonic()
-    if not refresh and _backtest_cache["result"] and now - _backtest_cache["ts"] < _BACKTEST_TTL:
-        return _backtest_cache["result"]
+    cached = _backtest_cache.get("result")
+    if (not refresh and cached and now - _backtest_cache["ts"] < _BACKTEST_TTL
+            and cached.get("initial_balance", 10000.0) == balance):
+        return cached
     pg_dsn = _get_env("PG_DSN") or "postgresql://pegasus:pegasus@localhost/pegasus_db"
     try:
         conn = psycopg2.connect(pg_dsn)
@@ -562,7 +564,7 @@ def api_backtest(refresh: bool = False):
         conn.close()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"DB error: {exc}")
-    result = _run_backtest_simulation(rows)
+    result = _run_backtest_simulation(rows, initial_balance=balance)
     result["cached_at"] = datetime.now(timezone.utc).isoformat()
     _backtest_cache = {"ts": now, "result": result}
     return result
