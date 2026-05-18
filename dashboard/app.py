@@ -439,6 +439,9 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
         n = 0
         wins = 0
         losses = 0
+        total_won = 0.0       # sum of all WIN profits
+        total_lost = 0.0      # sum of all LOSS stakes
+        max_single_loss = 0.0 # worst single losing trade
         next_valid = 0  # skip rows with entry_epoch < next_valid (cooldown window)
         day_counts: dict[int, int] = {}
         targets: dict = {p: None for p in [10, 20, 25, 30, 50, 100, 200]} if collect_targets else {}
@@ -464,6 +467,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
             if result == "WIN":
                 p = _profit(stk, held)
                 bal = round(bal + p, 2)
+                total_won += p
                 # Soros: replace profit each step, reset after SOROS_MAX consecutive wins
                 if ss < SOROS_MAX:
                     ss += 1
@@ -474,6 +478,8 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
                 wins += 1
             else:
                 bal = round(bal - stk, 2)
+                total_lost += stk
+                max_single_loss = max(max_single_loss, stk)
                 ss = 0
                 sp = 0.0
                 losses += 1
@@ -504,6 +510,9 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
             "trades": n,
             "wins": wins,
             "losses": losses,
+            "total_won": round(total_won, 2),
+            "total_lost": round(total_lost, 2),
+            "max_single_loss": round(max_single_loss, 2),
             "balance": round(bal, 2),
             "max_dd": round(max_dd, 1),
             "roi": round((bal - INITIAL) / INITIAL * 100, 1),
@@ -519,16 +528,21 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
     for target_day in [0.5, 1, 2, 3, 4, 4.5]:
         r = _simulate(max_epoch=int(target_day * 86400), day_cap=300)
         cap_by_day[str(target_day)] = {
-            "trades": r["trades"],
-            "balance": r["balance"],
-            "roi": r["roi"],
+            "trades": r["trades"], "wins": r["wins"], "losses": r["losses"],
+            "balance": r["balance"], "roi": r["roi"],
+            "total_won": r["total_won"], "total_lost": r["total_lost"],
         }
 
     # Sessions (no day cap, time-limited, with cooldown)
     sessions: dict[str, dict] = {}
     for label, seg in [("30min", 1800), ("1h", 3600), ("2h", 7200), ("4h", 14400)]:
         r = _simulate(max_epoch=seg)
-        sessions[label] = {"trades": r["trades"], "balance": r["balance"], "roi": r["roi"]}
+        sessions[label] = {
+            "trades": r["trades"], "wins": r["wins"], "losses": r["losses"],
+            "balance": r["balance"], "roi": r["roi"],
+            "total_won": r["total_won"], "total_lost": r["total_lost"],
+            "max_single_loss": r["max_single_loss"],
+        }
 
     avg_s = (last_epoch - first_epoch) / total if total > 1 else 8.0
     return {
@@ -546,6 +560,15 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
         "cap_by_day": cap_by_day,
         "sessions": sessions,
         "initial_balance": INITIAL,
+        "full_stats": {
+            "wins": full["wins"],
+            "losses": full["losses"],
+            "total_won": full["total_won"],
+            "total_lost": full["total_lost"],
+            "max_single_loss": full["max_single_loss"],
+            "avg_win": round(full["total_won"] / full["wins"], 2) if full["wins"] else 0.0,
+            "avg_loss": round(full["total_lost"] / full["losses"], 2) if full["losses"] else 0.0,
+        },
     }
 
 

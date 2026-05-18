@@ -218,6 +218,16 @@ class RiskManager:
         # NOTE: daily_loss + stake never exceeds max_loss_day because get_stake()
         # already caps stake by (max_loss_day - daily_loss). No need to re-check here.
 
+        # Protect trailing lock: don't enter a trade that would risk dropping below the locked profit
+        if self.daily_trailing_active and self.daily_net_profit - stake < self.daily_trailing_lock:
+            logger.warning(
+                "Proxima stake %.2f arriscaria lucro protegido %.2f (lock=%.2f)",
+                stake,
+                self.daily_net_profit,
+                self.daily_trailing_lock,
+            )
+            return False
+
         # Frequency-based drawdown: stop if too many losses in sliding time window
         now = time.monotonic()
         cutoff = now - self.loss_window_seconds
