@@ -279,26 +279,12 @@ class DerivBot:
             return
 
         stake = self.risk.get_stake(p_loss=p_loss)
-        # Multi-gale: when the required gale stake exceeds the per-contract API limit,
-        # split it into N simultaneous contracts of at most max_stake each.
-        _max_stake_api = self.config.max_stake if self.config.max_stake > 0 else 1000.0
-        _is_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
-        if _is_gale:
+        if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
             raw_gale = self.risk.get_gale_raw_stake()
-            if raw_gale > _max_stake_api:
-                _stakes = _split_gale_stakes(raw_gale, _max_stake_api, self.config.min_stake)
-                self._gale_queue = _stakes[1:]
-                self._gale_expected = len(_stakes)
-                self._gale_total_stake = raw_gale
-                self._gale_ids = set()
-                self._gale_id_stakes = {}
-                self._gale_settled = {}
-                self._gale_order = None
-                self._gale_sell_requested = set()
-                stake = _stakes[0]
+            if raw_gale > stake:
                 logger.info(
-                    "GALE multi: stake_total=%.2f → %d contratos (max %.2f cada)",
-                    raw_gale, len(_stakes), _max_stake_api,
+                    "GALE cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f) — recuperacao parcial",
+                    raw_gale, stake, self.config.max_stake,
                 )
         metrics = self._last_accumulator_metrics(df)
         _mode = (
@@ -374,7 +360,7 @@ class DerivBot:
                 "take_profit": round(stake * self.config.accumulator_take_profit_percent / 100, 2)
             }
         logger.info(
-            "GALE multi: proposta adicional stake=%.2f (%d restantes na fila)",
+            "GALE seq: proposta stake=%.2f (%d restantes na fila apos este)",
             stake, len(self._gale_queue),
         )
         await self.send(ws, payload)
@@ -475,7 +461,9 @@ class DerivBot:
         buy_price_actual = float(buy.get("buy_price") or (self.pending_order.stake if self.pending_order else 0.0))
 
         if self._gale_expected > 0:
-            # Multi-contract gale mode: track each contract in the group.
+            # Sequential multi-contract gale: contracts are fired one at a time.
+            # Next contract is only dispatched after current one settles as WIN.
+            # Deriv only allows 1 open ACCU contract at a time (OpenPositionLimitExceeded).
             self._gale_ids.add(contract_id)
             self._gale_id_stakes[contract_id] = buy_price_actual if buy_price_actual > 0 else (self.pending_order.stake if self.pending_order else 0.0)
             if self._gale_order is None:
@@ -485,25 +473,13 @@ class DerivBot:
                     self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
                     self.accumulator_open_epoch = self.pending_order.entry_epoch
             logger.info(
-                "GALE multi: contrato %d/%d aberto id=%s buy_price=%s",
+                "GALE seq: contrato %d/%d aberto id=%s buy_price=%s — aguardando liquidacao",
                 len(self._gale_ids), self._gale_expected, contract_id, buy.get("buy_price"),
             )
             await self.subscribe_contract(ws, contract_id)
-            if self._gale_queue:
-                # Fire the next proposal in the sequence.
-                next_stake = self._gale_queue.pop(0)
-                po = self.pending_order
-                self.pending_order = PendingOrder(
-                    stake=next_stake,
-                    score=po.score if po else 0,
-                    entry_epoch=po.entry_epoch if po else 0,
-                    metrics=po.metrics if po else None,
-                )
-                await self._request_gale_proposal(ws, next_stake)
-            else:
-                # All contracts have been bought; clear pending_order so evaluate_tick
-                # does not stall on "pending proposal" check. waiting_for_result stays True.
-                self.pending_order = None
+            # Clear pending_order so evaluate_tick does not stall on proposal check.
+            # waiting_for_result stays True — next contract is dispatched on WIN settlement.
+            self.pending_order = None
         else:
             # Normal single-contract mode (unchanged).
             self.current_contract_id = contract_id
@@ -627,14 +603,37 @@ class DerivBot:
         # Multi-gale settlement: collect each contract's result; aggregate when all done.
         if self._gale_expected > 0 and contract_id in self._gale_ids:
             self._gale_settled[contract_id] = profit
+            is_win = profit >= 0
             logger.info(
-                "GALE multi: contrato %d/%d liquidado id=%s profit=%.2f",
+                "GALE seq: contrato %d/%d liquidado id=%s profit=%.2f %s",
                 len(self._gale_settled), self._gale_expected, contract_id, profit,
+                "WIN" if is_win else "LOSS",
             )
-            if len(self._gale_settled) < self._gale_expected:
-                return  # Wait for remaining contracts to settle.
+            if is_win and self._gale_queue:
+                # Sequential WIN — dispatch next contract now.
+                next_stake = self._gale_queue.pop(0)
+                po = self._gale_order
+                self.pending_order = PendingOrder(
+                    stake=next_stake,
+                    score=po.score if po else 0,
+                    entry_epoch=po.entry_epoch if po else 0,
+                    metrics=po.metrics if po else None,
+                )
+                logger.info(
+                    "GALE seq: WIN %d/%d — disparando proximo stake=%.2f (%d restantes na fila)",
+                    len(self._gale_settled), self._gale_expected, next_stake, len(self._gale_queue),
+                )
+                await self._request_gale_proposal(ws, next_stake)
+                return  # waiting_for_result stays True
 
-            # All contracts settled — aggregate and process as a single trade.
+            if not is_win and self._gale_queue:
+                logger.warning(
+                    "GALE seq: LOSS em %d/%d — abortando sequencia (%d contratos nao executados)",
+                    len(self._gale_settled), self._gale_expected, len(self._gale_queue),
+                )
+                self._gale_queue = []  # discard remaining — loss already triggered
+
+            # All done: either all WIN or first LOSS — aggregate and process as single trade.
             total_profit = sum(self._gale_settled.values())
             total_buy_price = sum(self._gale_id_stakes.values())
             order = self._gale_order
@@ -643,8 +642,8 @@ class DerivBot:
             _pre_soros_step = self.risk.soros_step
             _pre_gale_step = self.risk.martingale_step
             logger.info(
-                "GALE multi: todos %d contratos liquidados | total_profit=%.2f total_buy=%.2f",
-                self._gale_expected, total_profit, total_buy_price,
+                "GALE seq: todos %d/%d contratos liquidados | total_profit=%.2f total_buy=%.2f",
+                len(self._gale_settled), self._gale_expected, total_profit, total_buy_price,
             )
             if order:
                 self.journal.log_trade(

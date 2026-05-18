@@ -221,6 +221,12 @@ def _get_payout_rate() -> float:
     return 0.15
 
 
+def _initial_balance() -> float:
+    """Starting capital for P&L-total calculation. Reads INITIAL_BALANCE env (default 10000)."""
+    v = _get_env("INITIAL_BALANCE")
+    return float(v) if v else 10000.0
+
+
 def _compute_next_gale_stake(risk_state: dict) -> float:
     """Recovery stake for the next gale trade based on current accumulated loss."""
     base = float(risk_state.get("martingale_base_stake", 0.0))
@@ -258,6 +264,14 @@ def api_status(response: Response):
     pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
     risk_state = _read_risk_state()
+    # P&L total: current balance vs initial capital
+    bal_str = _last_balance()
+    try:
+        bal_float = float(bal_str)
+    except (ValueError, TypeError):
+        bal_float = 0.0
+    ini_bal = _initial_balance()
+    pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     return {
         "running": _bot_running(),
         "balance": _last_balance(),
@@ -295,6 +309,8 @@ def api_status(response: Response):
         "martingale_base_stake": round(float(risk_state.get("martingale_base_stake", 0.0)), 2),
         "martingale_effective_multiplier": _compute_gale_effective_multiplier(risk_state),
         "next_gale_stake": _compute_next_gale_stake(risk_state),
+        "pnl_total": pnl_total,
+        "initial_balance": ini_bal,
     }
 
 
@@ -448,6 +464,7 @@ ALLOWED_KEYS = {
     "MAX_STAKE", "MAX_STAKE_PERCENT",
     "ACCUMULATOR_TAKE_PROFIT_PERCENT", "ACCUMULATOR_MAX_HOLD_TICKS",
     "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_MULTIPLIER", "MARTINGALE_PAYOUT_RATE",
+    "INITIAL_BALANCE",
 }
 
 @app.post("/api/env")

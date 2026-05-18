@@ -206,12 +206,25 @@ class RiskManagerTest(unittest.TestCase):
             s1 = risk.get_stake()
             risk.update(profit=-s1, buy_price=s1)   # gale 2
             self.assertEqual(risk.martingale_step, 2)
+            accum_before = risk.martingale_accumulated_loss  # s0 + s1
 
-            risk.update(profit=s1 * 0.15, buy_price=s1)  # win at gale 2
+            # Partial win: profit = s1*0.15 < accumulated_loss → stay in recovery
+            partial_profit = round(s1 * 0.15, 2)
+            risk.update(profit=partial_profit, buy_price=s1)
+            self.assertEqual(risk.martingale_step, 2)  # still recovering
+            self.assertAlmostEqual(
+                risk.martingale_accumulated_loss,
+                round(max(0.0, accum_before - partial_profit), 2),
+                places=2,
+            )
+
+            # Full win: profit covers remaining accumulated_loss → reset
+            big_profit = risk.martingale_accumulated_loss + 1.0  # more than enough
+            risk.update(profit=big_profit, buy_price=s1)
             self.assertEqual(risk.martingale_step, 0)
             self.assertEqual(risk.martingale_accumulated_loss, 0.0)
             self.assertEqual(risk.martingale_base_stake, 0.0)
-            self.assertAlmostEqual(risk.get_stake(), s0, places=2)  # volta ao base
+            self.assertAlmostEqual(risk.get_stake(), s0, places=2)  # back to base
 
     def test_martingale_stops_after_max_gales(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -321,9 +321,41 @@ class RiskManager:
         if profit > 0:
             self.wins += 1
             self.consecutive_losses = 0
-            self.martingale_step = 0
-            self.martingale_accumulated_loss = 0.0
-            self.martingale_base_stake = 0.0
+            if self.use_martingale and self.martingale_step > 0:
+                # Partial recovery: reduce accumulated_loss by this WIN's profit.
+                # The gale stake may have been capped by MAX_STAKE so a single WIN
+                # might not cover all previous losses. Keep gale active until fully covered.
+                self.martingale_accumulated_loss = round(
+                    max(0.0, self.martingale_accumulated_loss - profit), 2
+                )
+                if self.martingale_accumulated_loss <= 0.0:
+                    logger.info(
+                        "\u2705 Martingale recuperado | step=%d \u2192 0 | todas perdas cobertas",
+                        self.martingale_step,
+                    )
+                    self.martingale_step = 0
+                    self.martingale_accumulated_loss = 0.0
+                    self.martingale_base_stake = 0.0
+                elif self.martingale_step >= self.martingale_max_gales:
+                    # Circuit breaker: reached max_gales — absorb residual and reset.
+                    logger.warning(
+                        "\u26a0 Martingale max_gales=%d atingido com residuo=%.2f — absorvido como perda aceita",
+                        self.martingale_max_gales, self.martingale_accumulated_loss,
+                    )
+                    self.martingale_step = 0
+                    self.martingale_accumulated_loss = 0.0
+                    self.martingale_base_stake = 0.0
+                else:
+                    logger.info(
+                        "\u26a1 Martingale parcial: +%.2f recuperado | residual=%.2f | stake_prox=%.2f",
+                        profit,
+                        self.martingale_accumulated_loss,
+                        round(self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake, 2),
+                    )
+            else:
+                self.martingale_step = 0
+                self.martingale_accumulated_loss = 0.0
+                self.martingale_base_stake = 0.0
             if self.use_soros and self.soros_max_steps > 0:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
