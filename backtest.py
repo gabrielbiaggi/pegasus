@@ -192,6 +192,10 @@ def run_accumulator_backtest(
     use_soros_compound: bool = False,
     soros_max_steps: int = 3,
     soros_profit_factor: float = 1.0,
+    # --- Opção D: Martingale (recupera perdas anteriores + lucro base pelo payout real) ---
+    use_martingale: bool = False,
+    martingale_max_gales: int = 3,
+    martingale_payout_rate: float = 0.15,
     # --- Skip advanced quant filters (useful for datasets with different distributions) ---
     skip_quant_filters: bool = False,
 ) -> dict[str, Any]:
@@ -224,6 +228,9 @@ def run_accumulator_backtest(
     max_loss_streak = 0
     soros_step = 0
     soros_profit = 0.0
+    martingale_step = 0
+    martingale_accumulated_loss = 0.0
+    martingale_base_stake = 0.0
     i = strategy_config.minimum_ticks - 1
 
     while i < len(normalized_ticks) - 1:
@@ -251,19 +258,31 @@ def run_accumulator_backtest(
         if execution_index >= len(normalized_ticks) - 1:
             i += 1
             continue
+        _pre_soros_step = soros_step
+        _pre_gale_step = martingale_step
+
         if dynamic_stake:
             base = max(balance * base_pct, stake)
             p_loss_est = _SCORE_TO_PLOSS.get(score, 0.22)
             trade_stake = base * _stake_multiplier(p_loss_est)
             if use_soros_compound and soros_step > 0 and soros_profit > 0:
                 trade_stake = trade_stake + soros_profit
+        else:
+            trade_stake = stake
+
+        if use_martingale and martingale_step > 0 and martingale_base_stake > 0:
+            # Fórmula correta: recupera todas as perdas anteriores + lucro original
+            # Cap na banca inteira (sem pct_cap)
+            trade_stake = round(
+                min(martingale_accumulated_loss / martingale_payout_rate + martingale_base_stake, balance),
+                2,
+            )
+        elif dynamic_stake:
             pct_cap = balance * max_stake_pct_cap
             _caps = [max(trade_stake, stake), pct_cap]
             if max_stake_abs > 0:
                 _caps.append(max_stake_abs)
             trade_stake = round(min(_caps), 2)
-        else:
-            trade_stake = stake
 
         simulated = simulate_accumulator_trade(
             ticks=normalized_ticks,
@@ -280,6 +299,10 @@ def run_accumulator_backtest(
 
         if profit > 0:
             loss_streak = 0
+            if use_martingale:
+                martingale_step = 0
+                martingale_accumulated_loss = 0.0
+                martingale_base_stake = 0.0
             if dynamic_stake and use_soros_compound:
                 # Mirrors risk_manager.py: replace profit (not accumulate), reset after max_steps wins
                 if soros_step < soros_max_steps:
@@ -291,6 +314,11 @@ def run_accumulator_backtest(
         else:
             loss_streak += 1
             max_loss_streak = max(max_loss_streak, loss_streak)
+            if use_martingale:
+                if martingale_step == 0:
+                    martingale_base_stake = trade_stake
+                martingale_accumulated_loss += trade_stake  # LOSS = stake inteiro
+                martingale_step = min(martingale_step + 1, martingale_max_gales)
             if dynamic_stake and use_soros_compound:
                 soros_step = 0
                 soros_profit = 0.0
@@ -301,6 +329,8 @@ def run_accumulator_backtest(
                 "exit_epoch": simulated["exit_epoch"],
                 "direction": "ACCU",
                 "score": score,
+                "soros_step": _pre_soros_step,
+                "gale_step": _pre_gale_step,
                 "stake": trade_stake,
                 "growth_rate": growth_rate,
                 "take_profit_percent": take_profit_percent,
@@ -381,6 +411,9 @@ def main() -> None:
     parser.add_argument("--max-stake-pct-cap", type=float, default=0.10, help="Cap de stake como %% da banca (padrão 0.10=10%%).")
     parser.add_argument("--use-soros", action="store_true", help="Ativar Soros compounding (adiciona lucro acumulado ao próximo stake).")
     parser.add_argument("--soros-max-steps", type=int, default=3, help="Máximo de passos Soros antes de resetar.")
+    parser.add_argument("--use-martingale", action="store_true", help="Ativar Martingale (recupera perdas + lucro pelo payout real).")
+    parser.add_argument("--martingale-max-gales", type=int, default=3, help="Máximo de gales no Martingale.")
+    parser.add_argument("--martingale-payout-rate", type=float, default=0.15, help="Taxa de payout do Accumulator (0.15 = 15%%).")
     # Comparison mode: runs Baseline vs B vs B+C automatically
     parser.add_argument(
         "--run-all-scenarios",
@@ -420,6 +453,8 @@ def main() -> None:
         max_stake_abs=args.max_stake_abs,
         max_stake_pct_cap=args.max_stake_pct_cap,
         soros_max_steps=args.soros_max_steps,
+        martingale_max_gales=args.martingale_max_gales,
+        martingale_payout_rate=args.martingale_payout_rate,
         skip_quant_filters=args.skip_quant_filters,
     )
 
@@ -430,12 +465,14 @@ def main() -> None:
         common["indicator_frame"] = indicator_df
 
         scenarios = [
-            # Baseline: fixed $10, TP 3% (reference — conservative)
-            dict(label="Baseline (fixo $10, TP 3%)", stake=args.stake, take_profit_percent=3.0, max_hold_ticks=8, dynamic_stake=False, use_soros_compound=False),
+            # Baseline: fixed stake, TP 3% (reference — conservative)
+            dict(label="Baseline (fixo, TP 3%)", stake=args.stake, take_profit_percent=3.0, max_hold_ticks=8, dynamic_stake=False, use_soros_compound=False, use_martingale=False),
             # Opção B: dynamic stake, configurable TP, no Soros
-            dict(label=f"Opção B  (dynamic, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=False),
+            dict(label=f"Opção B  (dynamic, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=False, use_martingale=False),
             # Opção C: dynamic stake + Soros
-            dict(label=f"Opção C  (dynamic+Soros, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=True),
+            dict(label=f"Opção C  (dynamic+Soros, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=True, use_martingale=False),
+            # Opção D: dynamic + Soros + Martingale
+            dict(label=f"Opção D  (dynamic+Soros+Martingale, TP {args.take_profit_percent:.0f}%)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, dynamic_stake=True, use_soros_compound=True, use_martingale=True),
         ]
 
         rows = []
@@ -482,6 +519,7 @@ def main() -> None:
         max_hold_ticks=args.max_hold_ticks,
         dynamic_stake=args.dynamic_stake,
         use_soros_compound=args.use_soros,
+        use_martingale=args.use_martingale,
     )
 
     if args.output:
