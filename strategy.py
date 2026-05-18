@@ -38,7 +38,7 @@ except ImportError:  # pragma: no cover
 
 @dataclass(frozen=True)
 class AccumulatorStrategyConfig:
-    min_score: int = 7
+    min_score: int = 17
     bb_window: int = 20
     bb_std_dev: float = 2.0
     max_bb_width_percent: float = 0.08
@@ -169,7 +169,8 @@ def generate_accumulator_signal(
             logger.info("HMM: regime de alta variancia detectado. Trade bloqueado.")
             return None, 0, None
 
-    quant_pass, reason = accumulator_quant_filters_pass(last, config)
+    # Log quant filter reasons for diagnostics (no longer a hard gate — score handles it)
+    _, reason = accumulator_quant_filters_pass(last, config)
 
     logger.info(
         (
@@ -193,21 +194,21 @@ def generate_accumulator_signal(
         last.get("kalman_residual_zscore", float("nan")),
     )
 
-    if score >= config.min_score and quant_pass:
-        # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
-        p_loss: Optional[float] = None
-        if config.use_ensemble and ensemble_scorer is not None:
-            p_loss = ensemble_scorer.predict_loss_probability(last)
-            logger.info("EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob)
-            if p_loss >= config.ensemble_min_prob:
-                logger.warning("⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f", p_loss, config.ensemble_min_prob)
-                return None, 0, None
-        return "ACCU", score, p_loss
+    if score < config.min_score:
+        return None, 0, None
 
-    if score >= config.min_score:
-        logger.info("Setup ACCU bloqueado pelo filtro quantitativo: %s", reason)
+    if reason != "ok":
+        logger.info("Score %d >= %d com quant parcial: %s", score, config.min_score, reason)
 
-    return None, 0, None
+    # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
+    p_loss: Optional[float] = None
+    if config.use_ensemble and ensemble_scorer is not None:
+        p_loss = ensemble_scorer.predict_loss_probability(last)
+        logger.info("EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob)
+        if p_loss >= config.ensemble_min_prob:
+            logger.warning("⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f", p_loss, config.ensemble_min_prob)
+            return None, 0, None
+    return "ACCU", score, p_loss
 
 
 def score_accumulator_row(row: pd.Series, config: AccumulatorStrategyConfig | None = None) -> int:
@@ -217,12 +218,44 @@ def score_accumulator_row(row: pd.Series, config: AccumulatorStrategyConfig | No
         return 0
 
     score = 0
+    # Primary 3 indicators (max 10 pts: squeeze=4, atr=4, stability=2)
     if row["bb_width_percent"] <= config.max_bb_width_percent:
         score += config.squeeze_weight
     if row["tick_atr_percent"] <= config.max_tick_atr_percent:
         score += config.atr_weight
     if row["recent_move_percent"] <= config.max_recent_move_percent:
         score += config.stability_weight
+    # Quant indicators: 1 pt each (max 10 pts) — todos os 10 contribuem ao score
+    h = row.get("hurst_exponent")
+    if not pd.isna(h) and float(h) < config.max_hurst_exponent:
+        score += 1
+    ti = row.get("tick_imbalance")
+    if not pd.isna(ti) and abs(int(ti)) < config.max_abs_tick_imbalance:
+        score += 1
+    hi = row.get("hawkes_intensity")
+    if not pd.isna(hi) and float(hi) <= config.max_hawkes_intensity:
+        score += 1
+    vz = row.get("velocity_zscore")
+    if not pd.isna(vz) and abs(float(vz)) <= config.max_velocity_zscore:
+        score += 1
+    az = row.get("acceleration_zscore")
+    if not pd.isna(az) and abs(float(az)) <= config.max_acceleration_zscore:
+        score += 1
+    pd_ = row.get("pmi_distance_percent")
+    if not pd.isna(pd_) and float(pd_) <= config.max_pmi_distance_percent:
+        score += 1
+    muu = row.get("markov_p_up_given_up")
+    if not pd.isna(muu) and float(muu) < config.max_markov_continuation_prob:
+        score += 1
+    mdd = row.get("markov_p_down_given_down")
+    if not pd.isna(mdd) and float(mdd) < config.max_markov_continuation_prob:
+        score += 1
+    se = row.get("shannon_entropy")
+    if not pd.isna(se) and float(se) >= config.min_shannon_entropy:
+        score += 1
+    kz = row.get("kalman_residual_zscore")
+    if not pd.isna(kz) and abs(float(kz)) <= config.max_kalman_residual_zscore:
+        score += 1
     return score
 
 

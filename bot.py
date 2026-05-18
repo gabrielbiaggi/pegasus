@@ -409,6 +409,30 @@ class DerivBot:
         if not is_sold:
             order = self.pending_order
             if order and not self.accumulator_sell_requested:
+                # --- Barreira real: saida defensiva se spot muito proximo da barreira ---
+                high_barrier = contract.get("high_barrier")
+                low_barrier = contract.get("low_barrier")
+                current_spot = float(contract.get("current_spot") or 0)
+                if high_barrier and low_barrier and current_spot > 0:
+                    hb = float(high_barrier)
+                    lb = float(low_barrier)
+                    dist_low = (current_spot - lb) / current_spot * 100
+                    dist_high = (hb - current_spot) / current_spot * 100
+                    min_dist = min(dist_low, dist_high)
+                    logger.debug(
+                        "Barreira: spot=%.5f low=%.5f high=%.5f dist_min=%.5f%%",
+                        current_spot, lb, hb, min_dist,
+                    )
+                    threshold = self.config.accumulator_min_barrier_distance_pct
+                    if threshold > 0 and min_dist <= threshold:
+                        logger.warning(
+                            "⚠️ BARREIRA PROXIMA! dist=%.5f%% <= %.5f%% — saida defensiva",
+                            min_dist, threshold,
+                        )
+                        sell_price = float(contract.get("bid_price", 0.0) or 0.0)
+                        await self.sell_contract(ws, contract_id, sell_price)
+                        return
+                # --- Lucro / tempo maximo ---
                 profit = float(contract.get("profit", 0.0))
                 target_profit = order.stake * self.config.accumulator_take_profit_percent / 100
                 current_spot_time = int(contract.get("current_spot_time") or contract.get("date_start") or 0)

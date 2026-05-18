@@ -120,6 +120,7 @@ class BotConfig:
     accumulator_max_kalman_residual_zscore: float
     accumulator_use_ensemble: bool
     accumulator_ensemble_min_prob: float
+    accumulator_min_barrier_distance_pct: float  # 0.0 = desativado; >0 = % minima da barreira (saida defensiva)
 
     @property
     def ws_url(self) -> str:
@@ -244,6 +245,7 @@ def load_config() -> BotConfig:
         accumulator_max_kalman_residual_zscore=_float_env("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE", 2.0),
         accumulator_use_ensemble=_bool_env("USE_ENSEMBLE", False),
         accumulator_ensemble_min_prob=_float_env("ENSEMBLE_MIN_PROB", 0.294),
+        accumulator_min_barrier_distance_pct=_float_env("ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0),
     )
 
     if config.stake <= 0:

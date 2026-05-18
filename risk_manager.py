@@ -91,6 +91,7 @@ class RiskManager:
         self.max_loss_streak_today = int(data.get("max_loss_streak_today", 0))
         self.soros_step = int(data.get("soros_step", 0))
         self.soros_profit = float(data.get("soros_profit", 0.0))
+        self.max_loss_day = float(data.get("max_loss_day", self.max_loss_day))
         logger.info(
             "Estado de risco restaurado: perda_dia=%.2f, lucro_liquido_dia=%.2f, "
             "trailing=%s, trades=%s, streak_loss=%s",

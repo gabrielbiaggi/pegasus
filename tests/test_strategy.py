@@ -25,7 +25,11 @@ class StrategyTest(unittest.TestCase):
         ticks = [{"epoch": 1_700_000_000 + i, "quote": 100 + (i % 2) * 0.001} for i in range(80)]
         df = calculate_tick_indicators(ticks, config=config)
 
-        self.assertEqual(generate_accumulator_signal(df, config=config), ("ACCU", 10, None))
+        signal, score, p_loss = generate_accumulator_signal(df, config=config)
+        self.assertEqual(signal, "ACCU")
+        self.assertIsNone(p_loss)
+        # Score now includes all 13 indicators (max 20); quant contributions push above old max of 10
+        self.assertGreater(score, 10)
 
     def test_accumulator_signal_blocks_wide_ticks(self) -> None:
         config = AccumulatorStrategyConfig(
