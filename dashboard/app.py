@@ -304,6 +304,61 @@ def bot_restart():
     return {"ok": True, "msg": "Bot reiniciado."}
 
 
+@app.post("/api/reset")
+def api_reset(scope: str = "day", response: Response = None):
+    """Reset trade history and risk state.
+    scope='day'   → remove today's rows from trades.csv + reset risk_state
+    scope='month' → remove current month's rows from trades.csv + reset risk_state
+    """
+    from datetime import date as _date
+    import shutil
+
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
+
+    # --- backup & filter trades.csv ---
+    if TRADES_CSV.exists():
+        bak = TRADES_CSV.with_suffix(f".csv.bak-reset-{now.strftime('%Y%m%d_%H%M%S')}")
+        shutil.copy2(TRADES_CSV, bak)
+        try:
+            df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
+            df["_date"] = df["timestamp"].dt.strftime("%Y-%m-%d")
+            if scope == "day":
+                df = df[df["_date"] != today]
+            elif scope == "month":
+                df = df[~df["_date"].str.startswith(month)]
+            df.drop(columns=["_date"]).to_csv(TRADES_CSV, index=False)
+        except Exception:
+            # fallback: just keep header
+            header = TRADES_CSV.read_text().split("\n")[0]
+            TRADES_CSV.write_text(header + "\n")
+
+    # --- reset risk_state ---
+    risk_path = BASE / "logs" / "risk_state.json"
+    risk_state = {
+        "day": today,
+        "daily_loss": 0.0,
+        "daily_net_profit": 0.0,
+        "daily_peak_profit": 0.0,
+        "daily_trailing_active": False,
+        "trades_today": 0,
+        "wins": 0,
+        "losses": 0,
+        "consecutive_losses": 0,
+        "max_loss_streak_today": 0,
+        "soros_step": 0,
+        "soros_profit": 0.0,
+    }
+    risk_path.write_text(json.dumps(risk_state, indent=2))
+
+    # --- restart bot so it picks up fresh state ---
+    _restart_bot()
+
+    return {"ok": True, "scope": scope, "msg": f"Histórico '{scope}' resetado. Bot reiniciado."}
+
+
+
 class EnvUpdate(BaseModel):
     key: str
     value: str

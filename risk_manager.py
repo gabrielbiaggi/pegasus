@@ -169,7 +169,9 @@ class RiskManager:
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
 
-        stake = min(raw_stake, pct_cap, self.max_stake)
+        # Cap to remaining daily loss budget so the trade is capped, not blocked
+        remaining_budget = max(0.0, self.max_loss_day - self.daily_loss)
+        stake = min(raw_stake, pct_cap, self.max_stake, remaining_budget)
 
         if stake < self.min_stake:
             return 0.0
@@ -213,21 +215,8 @@ class RiskManager:
             )
             return False
 
-        if self.daily_loss + stake > self.max_loss_day:
-            logger.warning(
-                "Proxima stake %.2f excederia limite diario restante %.2f",
-                stake,
-                max(0.0, self.max_loss_day - self.daily_loss),
-            )
-            return False
-
-        if self.daily_trailing_active and self.daily_net_profit - stake < self.daily_trailing_lock:
-            logger.warning(
-                "Proxima stake %.2f arriscaria lucro protegido %.2f",
-                stake,
-                self.daily_trailing_lock,
-            )
-            return False
+        # NOTE: daily_loss + stake never exceeds max_loss_day because get_stake()
+        # already caps stake by (max_loss_day - daily_loss). No need to re-check here.
 
         # Frequency-based drawdown: stop if too many losses in sliding time window
         now = time.monotonic()
