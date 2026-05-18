@@ -206,12 +206,11 @@ class RiskManager:
         remaining_budget = max(0.0, self.max_loss_day + self.daily_net_profit)
 
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
-            # Martingale recovery: sem pct_cap nem remaining_budget.
-            # O limite é a banca inteira — proteção real feita pelo can_trade().
+            # Martingale recovery: o limite é a banca inteira.
             caps = [raw_stake, self.balance]
         else:
-            # max_stake=0 means no absolute cap — use only pct_cap (100% dynamic)
-            caps = [raw_stake, pct_cap, remaining_budget]
+            # Cap = banca inteira (sem pct_cap). Proteção real via can_trade() e remaining_budget.
+            caps = [raw_stake, remaining_budget, self.balance]
         if self.max_stake > 0:
             caps.append(self.max_stake)
         stake = min(caps)
