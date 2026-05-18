@@ -400,7 +400,12 @@ class DerivBot:
             logger.warning("Atualizacao de contrato sem contract_id.")
             return
 
-        is_sold = contract.get("status") == "sold" or bool(contract.get("is_sold")) or bool(contract.get("is_expired"))
+        # "lost"/"cancelled" = barrier breach or knocked-out (accumulator loses its stake)
+        is_sold = (
+            contract.get("status") in {"sold", "lost", "cancelled"}
+            or bool(contract.get("is_sold"))
+            or bool(contract.get("is_expired"))
+        )
         if not is_sold:
             order = self.pending_order
             if order and not self.accumulator_sell_requested:
@@ -488,7 +493,7 @@ class DerivBot:
             if new_bal is not None and self.risk is not None:
                 new_bal = float(new_bal)
                 if abs(new_bal - self.risk.balance) > 0.01:
-                    logger.info("Saldo atualizado pela API: %.2f → %.2f | saldo_estimado=%.2f", self.risk.balance, new_bal, new_bal)
+                    logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
                     self.risk.balance = new_bal
         elif msg_type == "sell":
             logger.info("Sell confirmado: %s", data.get("sell"))
