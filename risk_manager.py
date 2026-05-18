@@ -261,7 +261,10 @@ class RiskManager:
         profit = float(profit)
         buy_price = float(buy_price)
         self.trades_today += 1
-        self.balance += profit
+        # NOTE: self.balance is updated exclusively by the Deriv balance stream
+        # (bot.py balance message handler). Do NOT add profit here — Deriv already
+        # sends the confirmed post-trade balance via the balance subscription,
+        # so incrementing here would double-count every win/loss.
         self.daily_net_profit += profit
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
 
