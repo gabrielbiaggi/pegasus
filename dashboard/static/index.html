@@ -180,22 +180,22 @@
 </section>
 <section>
   <div class="section-header">
-    <h2>Previsão</h2>
+    <h2>Projeção de desempenho</h2>
     <div class="tools">
-      <span style="font-size:.7rem;color:var(--muted)">Banca ($):</span>
+      <span style="font-size:.7rem;color:var(--muted)">Simular com banca de $</span>
       <input type="number" id="inp-forecast-balance" min="100" step="100" value="10000" style="width:90px;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:2px 6px;font-size:.75rem" onchange="onForecastBalanceChange()"/>
-      <button class="btn btn-blue" onclick="onForecastBalanceChange()" style="padding:3px 10px;font-size:.75rem">↻ Calcular</button>
+      <button class="btn btn-blue" onclick="onForecastBalanceChange()" style="padding:3px 10px;font-size:.75rem">↻ Recalcular</button>
     </div>
   </div>
   <div style="display:flex;gap:12px;flex-wrap:wrap;padding:0 0 12px">
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Gain/hora (est.)</div><div class="value green" id="fc-gain-hour">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Perda/hora (est.)</div><div class="value red" id="fc-loss-hour">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Net/hora (est.)</div><div class="value" id="fc-net-hour">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Ops/hora (1h sim.)</div><div class="value blue" id="fc-ops-hour">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Perda/trade (avg)</div><div class="value red" id="fc-avg-loss">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Tempo p/ +10%</div><div class="value" id="fc-t10">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Tempo p/ +20%</div><div class="value" id="fc-t20">—</div></div>
-    <div class="card" style="min-width:110px;flex:1"><div class="label">Tempo p/ +50%</div><div class="value" id="fc-t50">—</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Quanto a banca cresceria em 1 hora de operação"><div class="label">Lucro em 1 hora</div><div class="value green" id="fc-gain-hour">—</div><div class="sub">simulação histórica</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Total apostado e perdido em 1 hora"><div class="label">Perda em 1 hora</div><div class="value red" id="fc-loss-hour">—</div><div class="sub">soma das perdas</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Lucros menos perdas em 1 hora"><div class="label">Resultado líquido / hora</div><div class="value" id="fc-net-hour">—</div><div class="sub">ganhos − perdas</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Quantas entradas o bot executa em 1 hora"><div class="label">Entradas em 1 hora</div><div class="value blue" id="fc-ops-hour">—</div><div class="sub">operações executadas</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Valor médio perdido por trade perdedor"><div class="label">Perda média / entrada</div><div class="value red" id="fc-avg-loss">—</div><div class="sub">quando perde</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Tempo estimado para crescer 10% da banca"><div class="label">+10% da banca em</div><div class="value" id="fc-t10">—</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Tempo estimado para crescer 20% da banca"><div class="label">+20% da banca em</div><div class="value" id="fc-t20">—</div></div>
+    <div class="card" style="min-width:110px;flex:1" title="Tempo estimado para crescer 50% da banca"><div class="label">+50% da banca em</div><div class="value" id="fc-t50">—</div></div>
   </div>
 </section>
     <div class="tools">
@@ -206,18 +206,20 @@
   <div id="bt-loading" style="color:var(--muted);font-size:.8rem;padding:8px 0">Carregando projeção...</div>
   <div id="bt-body" style="display:none">
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
-      <div class="card" style="min-width:130px;flex:1"><div class="label">Sinais (raw)</div><div class="value blue" id="bt-signals">—</div><div class="sub" id="bt-dataset">—</div></div>
-      <div class="card" style="min-width:130px;flex:1"><div class="label">Win Rate (c/ cooldown)</div><div class="value green" id="bt-wr">—</div><div class="sub" id="bt-dd">—</div></div>
-      <div class="card" style="min-width:130px;flex:1"><div class="label">Ritmo sinais</div><div class="value" id="bt-rate">—</div><div class="sub" id="bt-cap-h">— h/dia com 300 cap</div></div>
+      <div class="card" style="min-width:130px;flex:1" title="Total de sinais no histórico coletado"><div class="label">Sinais históricos</div><div class="value blue" id="bt-signals">—</div><div class="sub" id="bt-dataset">—</div></div>
+      <div class="card" style="min-width:130px;flex:1" title="Taxa de acerto considerando a pausa obrigatória entre trades"><div class="label">Taxa de acerto real</div><div class="value green" id="bt-wr">—</div><div class="sub" id="bt-dd">—</div></div>
+      <div class="card" style="min-width:130px;flex:1" title="Quantos sinais por hora o mercado gera"><div class="label">Frequência do mercado</div><div class="value" id="bt-rate">—</div><div class="sub" id="bt-cap-h">— h de mercado ativo/dia</div></div>
     </div>
-    <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px;font-weight:600">COM CAP 300 TRADES/DIA</div>
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px;font-weight:600">SE VOCÊ OPERAR X DIAS</div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:8px">Simulação com máx. 300 entradas/dia + stop de perda diário — quanto a banca renderia</div>
     <table id="bt-cap-table" style="margin-bottom:14px">
-      <thead><tr><th>Dias</th><th>Trades</th><th>W</th><th>L</th><th>Ganhou</th><th>Perdeu</th><th>Saldo</th><th>ROI</th></tr></thead>
+      <thead><tr><th title="Quantos dias de operação">Período</th><th title="Total de operações executadas">Entradas</th><th title="Operações ganhas" class="win">Ganhos</th><th title="Operações perdidas" class="loss">Perdas</th><th title="Soma de todos os lucros">Total ganho</th><th title="Soma de todas as apostas perdidas">Total perdido</th><th title="Saldo final estimado">Saldo final</th><th title="Retorno sobre o capital inicial">Retorno</th></tr></thead>
       <tbody id="bt-cap-body"></tbody>
     </table>
-    <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px;font-weight:600">TEMPO PARA METAS (sem cap)</div>
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px;font-weight:600">METAS DE CRESCIMENTO</div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:8px">Em quanto tempo a banca atingiria cada meta — simulação livre (sem limite diário)</div>
     <table id="bt-target-table">
-      <thead><tr><th>Meta</th><th>Trade #</th><th>Mercado</th><th>Com 300/dia</th><th>Saldo</th></tr></thead>
+      <thead><tr><th title="Percentual de crescimento da banca">Objetivo</th><th title="Em qual operação a meta foi atingida">Entrada nº</th><th title="Tempo real de mercado até atingir a meta">Tempo de mercado</th><th title="Estimativa operando 300 trades/dia">Operando 300/dia</th><th title="Saldo da banca ao atingir a meta">Saldo ao atingir</th></tr></thead>
       <tbody id="bt-target-body"></tbody>
     </table>
   </div>
@@ -305,19 +307,19 @@ async function fetchBacktest(force){
     document.getElementById('bt-loading').style.display='none';
     document.getElementById('bt-body').style.display='block';
     document.getElementById('bt-signals').textContent=(d.total_signals||0).toLocaleString('pt-BR');
-    document.getElementById('bt-dataset').textContent=(d.effective_trades||0).toLocaleString('pt-BR')+' trades (cooldown='+d.cooldown_ticks+'t)';
+    document.getElementById('bt-dataset').textContent=(d.effective_trades||0).toLocaleString('pt-BR')+' entradas (pausa de '+d.cooldown_ticks+' ticks)';
     document.getElementById('bt-wr').textContent=(d.effective_winrate||d.winrate||0)+'%';
-    document.getElementById('bt-dd').textContent='bruto '+(d.winrate||0)+'% | DD '+d.max_drawdown+'%';
+    document.getElementById('bt-dd').textContent='win bruto: '+(d.winrate||0)+'% | drawdown máx: '+d.max_drawdown+'%';
     document.getElementById('bt-last-refresh').textContent='atualizado '+new Date().toLocaleTimeString('pt-BR');
-    document.getElementById('bt-rate').textContent='~'+(d.signal_rate_per_hour||0)+'/h';
-    document.getElementById('bt-cap-h').textContent='~'+d.cap_hours_per_day+'h/dia com 300 cap';
+    document.getElementById('bt-rate').textContent='~'+(d.signal_rate_per_hour||0)+' sinais/h';
+    document.getElementById('bt-cap-h').textContent='ativo ~'+d.cap_hours_per_day+'h reais por dia';
     // cap by day table
     var capRows='',capData=d.cap_by_day||{};
-    ['1','2','3','4','5'].forEach(function(k){var r=capData[k];if(!r)return;var roi=r.roi>=0?'<span style="color:var(--green)">+'+r.roi+'%</span>':'<span style="color:var(--red)">'+r.roi+'%</span>';capRows+='<tr><td>'+k+' dia(s)</td><td>'+r.trades+'</td><td class="win">'+(r.wins||0)+'</td><td class="loss">'+(r.losses||0)+'</td><td style="color:var(--green)">+$'+(r.total_won||0).toFixed(2)+'</td><td style="color:var(--red)">-$'+(r.total_lost||0).toFixed(2)+'</td><td>$'+r.balance.toFixed(2)+'</td><td>'+roi+'</td></tr>'});
+    ['1','2','3','4','5'].forEach(function(k){var r=capData[k];if(!r)return;var roi=r.roi>=0?'<span style="color:var(--green)">+'+r.roi+'%</span>':'<span style="color:var(--red)">'+r.roi+'%</span>';var periodLabel=k==='1'?'1 dia':k+' dias';capRows+='<tr><td>'+periodLabel+'</td><td>'+r.trades+'</td><td class="win">'+(r.wins||0)+'</td><td class="loss">'+(r.losses||0)+'</td><td style="color:var(--green)">+$'+(r.total_won||0).toFixed(2)+'</td><td style="color:var(--red)">-$'+(r.total_lost||0).toFixed(2)+'</td><td>$'+r.balance.toFixed(2)+'</td><td>'+roi+'</td></tr>'});
     document.getElementById('bt-cap-body').innerHTML=capRows||'<tr><td colspan="8" style="color:var(--muted)">sem dados</td></tr>';
     // targets table
     var tgtRows='',tgtData=d.targets||{};
-    [10,20,25,30,50,100,200].forEach(function(pct){var t=tgtData[String(pct)];if(!t){tgtRows+='<tr><td style="color:var(--muted)">+'+pct+'%</td><td colspan="4" style="color:var(--muted)">não atingido</td></tr>';return}var h=t.hours<1?(Math.round(t.hours*60)+'min'):(t.hours.toFixed(1)+'h');tgtRows+='<tr><td><b style="color:var(--green)">+'+pct+'%</b></td><td>#'+t.trade+'</td><td>'+h+'</td><td>~'+t.days_at_300+' dias</td><td>$'+t.balance.toFixed(2)+'</td></tr>'});
+    [10,20,25,30,50,100,200].forEach(function(pct){var t=tgtData[String(pct)];if(!t){tgtRows+='<tr><td style="color:var(--muted)">+'+pct+'%</td><td colspan="4" style="color:var(--muted)">ainda não atingido no histórico</td></tr>';return}var h=t.hours<1?(Math.round(t.hours*60)+'min'):(t.hours.toFixed(1)+'h');tgtRows+='<tr><td><b style="color:var(--green)">+'+pct+'%</b></td><td>Entrada #'+t.trade+'</td><td>'+h+'</td><td>~'+t.days_at_300+' dias</td><td>$'+t.balance.toFixed(2)+'</td></tr>'});
     document.getElementById('bt-target-body').innerHTML=tgtRows;
     if(d.sessions){var s1h=d.sessions['1h'],ini=d.initial_balance||10000;if(s1h){var g1h=s1h.balance-ini;var fcGH=document.getElementById('fc-gain-hour');if(fcGH){fcGH.textContent=(g1h>=0?'+':'')+g1h.toFixed(2);fcGH.className='value '+(g1h>=0?'green':'red');}var fcOH=document.getElementById('fc-ops-hour');if(fcOH)fcOH.textContent=s1h.trades||'\u2014';var fcLH=document.getElementById('fc-loss-hour');if(fcLH)fcLH.textContent='-$'+(s1h.total_lost||0).toFixed(2);var fcNH=document.getElementById('fc-net-hour');if(fcNH){var net1h=g1h;fcNH.textContent=(net1h>=0?'+':'')+net1h.toFixed(2);fcNH.className='value '+(net1h>=0?'green':'red');};}if(d.full_stats){var fcAL=document.getElementById('fc-avg-loss');if(fcAL)fcAL.textContent='$'+(d.full_stats.avg_loss||0).toFixed(2)+'/op';}['10','20','50'].forEach(function(pct){var t=d.targets&&d.targets[pct],el=document.getElementById('fc-t'+pct);if(el)el.textContent=t?(t.hours<1?Math.round(t.hours*60)+'min':t.hours.toFixed(1)+'h'):'\u221e';});}
   }catch(e){document.getElementById('bt-loading').textContent='Erro ao carregar projeção'}
