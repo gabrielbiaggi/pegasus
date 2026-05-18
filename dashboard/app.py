@@ -219,6 +219,7 @@ def api_status(response: Response):
     total = wins + losses
     pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
+    risk_state = _read_risk_state()
     return {
         "running": _bot_running(),
         "balance": _last_balance(),
@@ -241,9 +242,16 @@ def api_status(response: Response):
         "max_stake": _get_env("MAX_STAKE") or "500.00",
         "max_stake_pct": _get_env("MAX_STAKE_PERCENT") or "0.10",
         "take_profit_pct": _get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT") or "9.0",
-        "risk_blocked": _compute_risk_blocked(_read_risk_state()),
-        "max_loss_per_day": _compute_max_loss_day(_read_risk_state()),
-        "daily_loss": round(_read_risk_state().get("daily_loss", 0.0), 2),
+        "risk_blocked": _compute_risk_blocked(risk_state),
+        "max_loss_per_day": _compute_max_loss_day(risk_state),
+        "daily_loss": round(risk_state.get("daily_loss", 0.0), 2),
+        "soros_step": int(risk_state.get("soros_step", 0)),
+        "soros_profit": round(float(risk_state.get("soros_profit", 0.0)), 2),
+        "martingale_step": int(risk_state.get("martingale_step", 0)),
+        "consecutive_losses": int(risk_state.get("consecutive_losses", 0)),
+        "use_martingale": _get_env("USE_MARTINGALE") == "true",
+        "martingale_max_gales": int(_get_env("MARTINGALE_MAX_GALES") or "3"),
+        "martingale_multiplier": float(_get_env("MARTINGALE_MULTIPLIER") or "2.0"),
     }
 
 
@@ -365,6 +373,7 @@ def api_reset(scope: str = "day", response: Response = None):
         "max_loss_streak_today": 0,
         "soros_step": 0,
         "soros_profit": 0.0,
+        "martingale_step": 0,
     }
     risk_path.write_text(json.dumps(risk_state, indent=2))
 
@@ -393,6 +402,7 @@ ALLOWED_KEYS = {
     "DYNAMIC_STAKE", "DYNAMIC_STAKE_BASE_PCT",
     "MAX_STAKE", "MAX_STAKE_PERCENT",
     "ACCUMULATOR_TAKE_PROFIT_PERCENT", "ACCUMULATOR_MAX_HOLD_TICKS",
+    "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_MULTIPLIER",
 }
 
 @app.post("/api/env")

@@ -254,11 +254,19 @@ class DerivBot:
 
         stake = self.risk.get_stake(p_loss=p_loss)
         metrics = self._last_accumulator_metrics(df)
+        _mode = (
+            f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
+            if getattr(self.risk, 'use_martingale', False) and self.risk.martingale_step > 0
+            else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
+            if getattr(self.risk, 'use_soros', False) and self.risk.soros_step > 0
+            else "NORMAL"
+        )
         logger.info(
-            "Setup ACCU detectado: score=%s stake=%.2f p_loss=%s",
+            "Setup ACCU detectado: score=%s stake=%.2f p_loss=%s modo=%s",
             score,
             stake,
             f"{p_loss:.4f}" if p_loss is not None else "N/A",
+            _mode,
         )
         await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
 
@@ -477,7 +485,19 @@ class DerivBot:
                 held_ticks=held_ticks,
                 metrics=order.metrics,
             )
+        _prev_m_step = self.risk.martingale_step
         self.risk.update(profit=profit, buy_price=buy_price)
+        # Log gale state transitions
+        if getattr(self.risk, 'use_martingale', False):
+            if profit < 0 and self.risk.martingale_step > _prev_m_step:
+                logger.warning(
+                    "\u26a0 GALE %d/%d ativado | pr\u00f3xima stake x%.1f",
+                    self.risk.martingale_step,
+                    self.risk.martingale_max_gales,
+                    self.risk.martingale_multiplier ** self.risk.martingale_step,
+                )
+            elif profit > 0 and _prev_m_step > 0:
+                logger.info("\u2705 GALE %d recuperado \u2014 stake volta ao normal", _prev_m_step)
         logger.info(self.risk.stats())
 
         self.waiting_for_result = False
