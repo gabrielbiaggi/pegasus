@@ -105,6 +105,7 @@ class RiskManager:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "day": self.day,
+            "max_loss_day": self.max_loss_day,
             "daily_loss": self.daily_loss,
             "daily_net_profit": self.daily_net_profit,
             "daily_peak_profit": self.daily_peak_profit,

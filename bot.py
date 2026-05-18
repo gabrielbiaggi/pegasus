@@ -313,11 +313,19 @@ class DerivBot:
 
         mode = "DRY_RUN" if self.config.dry_run else "LIVE"
         account_type = "demo" if is_demo else "real/indefinida"
-        logger.info("Autorizado | loginid=%s | tipo=%s | saldo=%.2f | modo=%s", loginid, account_type, balance, mode)
+        # max_loss_day: use percentage of current balance if MAX_LOSS_DAY_PCT is set
+        if self.config.max_loss_day_pct > 0:
+            max_loss_day = round(balance * self.config.max_loss_day_pct, 2)
+        else:
+            max_loss_day = self.config.max_loss_per_day
+        logger.info(
+            "Autorizado | loginid=%s | tipo=%s | saldo=%.2f | modo=%s | max_loss_dia=%.2f",
+            loginid, account_type, balance, mode, max_loss_day,
+        )
 
         self.risk = RiskManager(
             balance=balance,
-            max_loss_day=self.config.max_loss_per_day,
+            max_loss_day=max_loss_day,
             max_profit_day=self.config.max_profit_per_day,
             max_trades_day=self.config.max_trades_per_day,
             daily_trailing_start=self.config.daily_trailing_start,

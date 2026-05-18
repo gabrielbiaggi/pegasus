@@ -60,6 +60,7 @@ class BotConfig:
     blocked_utc_hours: tuple[int, ...]
     block_weekends: bool
     max_loss_per_day: float
+    max_loss_day_pct: float  # 0.0 = use max_loss_per_day; >0 = % of balance (overrides fixed)
     max_profit_per_day: float
     max_trades_per_day: int
     daily_trailing_start: float
@@ -183,6 +184,7 @@ def load_config() -> BotConfig:
         blocked_utc_hours=_hours_env("BLOCKED_UTC_HOURS"),
         block_weekends=_bool_env("BLOCK_WEEKENDS", True),
         max_loss_per_day=_float_env("MAX_LOSS_PER_DAY", 20.0),
+        max_loss_day_pct=_float_env("MAX_LOSS_DAY_PCT", 0.0),
         max_profit_per_day=_float_env("MAX_PROFIT_PER_DAY", 0.0),
         max_trades_per_day=_int_env("MAX_TRADES_PER_DAY", 50),
         daily_trailing_start=_float_env("DAILY_TRAILING_START", 0.0),
@@ -250,8 +252,11 @@ def load_config() -> BotConfig:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
     if config.contract_mode != "accumulator":
         raise ValueError("CONTRACT_MODE deve ser accumulator. Pegasus agora opera somente Accumulators por ticks.")
-    if config.max_loss_per_day <= 0:
-        raise ValueError("MAX_LOSS_PER_DAY precisa ser maior que zero.")
+    if config.max_loss_day_pct > 0:
+        if not 0 < config.max_loss_day_pct <= 1:
+            raise ValueError("MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%).")
+    elif config.max_loss_per_day <= 0:
+        raise ValueError("MAX_LOSS_PER_DAY precisa ser maior que zero (ou defina MAX_LOSS_DAY_PCT).")
     if config.max_profit_per_day < 0:
         raise ValueError("MAX_PROFIT_PER_DAY nao pode ser negativo.")
     if config.max_trades_per_day <= 0:

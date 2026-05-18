@@ -313,7 +313,7 @@ async function fetchBacktest(force){
     document.getElementById('bt-cap-h').textContent='~'+d.cap_hours_per_day+'h/dia com 300 cap';
     // cap by day table
     var capRows='',capData=d.cap_by_day||{};
-    ['0.5','1','2','3','4','4.5'].forEach(function(k){var r=capData[k];if(!r)return;var roi=r.roi>=0?'<span style="color:var(--green)">+'+r.roi+'%</span>':'<span style="color:var(--red)">'+r.roi+'%</span>';capRows+='<tr><td>'+k+' dia(s)</td><td>'+r.trades+'</td><td class="win">'+(r.wins||0)+'</td><td class="loss">'+(r.losses||0)+'</td><td style="color:var(--green)">+$'+(r.total_won||0).toFixed(2)+'</td><td style="color:var(--red)">-$'+(r.total_lost||0).toFixed(2)+'</td><td>$'+r.balance.toFixed(2)+'</td><td>'+roi+'</td></tr>'});
+    ['1','2','3','4','5'].forEach(function(k){var r=capData[k];if(!r)return;var roi=r.roi>=0?'<span style="color:var(--green)">+'+r.roi+'%</span>':'<span style="color:var(--red)">'+r.roi+'%</span>';capRows+='<tr><td>'+k+' dia(s)</td><td>'+r.trades+'</td><td class="win">'+(r.wins||0)+'</td><td class="loss">'+(r.losses||0)+'</td><td style="color:var(--green)">+$'+(r.total_won||0).toFixed(2)+'</td><td style="color:var(--red)">-$'+(r.total_lost||0).toFixed(2)+'</td><td>$'+r.balance.toFixed(2)+'</td><td>'+roi+'</td></tr>'});
     document.getElementById('bt-cap-body').innerHTML=capRows||'<tr><td colspan="8" style="color:var(--muted)">sem dados</td></tr>';
     // targets table
     var tgtRows='',tgtData=d.targets||{};

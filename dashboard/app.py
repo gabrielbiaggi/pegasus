@@ -194,6 +194,22 @@ def _restart_bot() -> None:
     subprocess.run(["screen", "-dmS", SCREEN_BOT, "bash", "-c", cmd])
 
 
+def _compute_max_loss_day(risk_state: dict) -> float:
+    """Return max daily loss threshold — prefer the value saved by the bot in risk_state.json,
+    fall back to env-based computation (pct × balance or fixed)."""
+    if "max_loss_day" in risk_state:
+        return float(risk_state["max_loss_day"])
+    loss_pct = float(_get_env("MAX_LOSS_DAY_PCT") or "0.0")
+    if loss_pct > 0:
+        # Use the last known balance to estimate; risk_state may not have it
+        return round(float(_get_env("BALANCE_HINT") or "10000") * loss_pct, 2)
+    return float(_get_env("MAX_LOSS_PER_DAY") or "200")
+
+
+def _compute_risk_blocked(risk_state: dict) -> bool:
+    return risk_state.get("daily_loss", 0.0) >= _compute_max_loss_day(risk_state)
+
+
 @app.get("/api/status")
 def api_status(response: Response):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
@@ -225,8 +241,8 @@ def api_status(response: Response):
         "max_stake": _get_env("MAX_STAKE") or "500.00",
         "max_stake_pct": _get_env("MAX_STAKE_PERCENT") or "0.10",
         "take_profit_pct": _get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT") or "9.0",
-        "risk_blocked": _read_risk_state().get("daily_loss", 0.0) >= float(_get_env("MAX_LOSS_PER_DAY") or 200),
-        "max_loss_per_day": float(_get_env("MAX_LOSS_PER_DAY") or 200),
+        "risk_blocked": _compute_risk_blocked(_read_risk_state()),
+        "max_loss_per_day": _compute_max_loss_day(_read_risk_state()),
         "daily_loss": round(_read_risk_state().get("daily_loss", 0.0), 2),
     }
 
@@ -405,9 +421,12 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
     BASE_PCT = float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02")
     MAX_PCT_CAP = float(_get_env("MAX_STAKE_PERCENT") or "0.10")
     MAX_STAKE_ABS = float(_get_env("MAX_STAKE") or "500.00")
+    MIN_STAKE_ABS = float(_get_env("MIN_STAKE") or "0.35")
     SOROS_MAX = int(_get_env("SOROS_MAX_STEPS") or "3")
     SOROS_FACTOR = float(_get_env("SOROS_PROFIT_FACTOR") or "1.0")
     COOLDOWN = int(_get_env("ACCUMULATOR_COOLDOWN_TICKS") or "3")
+    _loss_pct = float(_get_env("MAX_LOSS_DAY_PCT") or "0.0")
+    MAX_LOSS_DAY = round(INITIAL * _loss_pct, 2) if _loss_pct > 0 else float(_get_env("MAX_LOSS_PER_DAY") or "200.0")
 
     def _mult(score: float) -> float:
         s = float(score or 0)
@@ -444,6 +463,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
         max_single_loss = 0.0 # worst single losing trade
         next_valid = 0  # skip rows with entry_epoch < next_valid (cooldown window)
         day_counts: dict[int, int] = {}
+        day_losses: dict[int, float] = {}  # cumulative loss per calendar-day bucket
         targets: dict = {p: None for p in [10, 20, 25, 30, 50, 100, 200]} if collect_targets else {}
 
         for (epoch, _q, score, result, exit_epoch, held) in rows:
@@ -454,15 +474,23 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
             if epoch < next_valid:
                 continue
             # Per-calendar-day trade cap (relative to dataset start, not wall clock)
+            dk = (epoch - first_epoch) // 86400
             if day_cap:
-                dk = (epoch - first_epoch) // 86400
                 if day_counts.get(dk, 0) >= day_cap:
                     continue
                 day_counts[dk] = day_counts.get(dk, 0) + 1
 
+            # Daily loss budget cap: stake can't exceed remaining budget for the day
+            day_loss_so_far = day_losses.get(dk, 0.0)
+            remaining_budget = max(0.0, MAX_LOSS_DAY - day_loss_so_far)
+            if remaining_budget < MIN_STAKE_ABS:
+                continue  # daily loss budget exhausted for this day bucket
+
             base = max(bal * BASE_PCT, STAKE_FIXED)
             soros_add = sp if 0 < ss <= SOROS_MAX else 0.0
-            stk = round(min(base * _mult(score) + soros_add, bal * MAX_PCT_CAP, MAX_STAKE_ABS), 2)
+            stk = round(min(base * _mult(score) + soros_add, bal * MAX_PCT_CAP, MAX_STAKE_ABS, remaining_budget), 2)
+            if stk < MIN_STAKE_ABS:
+                continue
 
             if result == "WIN":
                 p = _profit(stk, held)
@@ -480,6 +508,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
                 bal = round(bal - stk, 2)
                 total_lost += stk
                 max_single_loss = max(max_single_loss, stk)
+                day_losses[dk] = day_losses.get(dk, 0.0) + stk
                 ss = 0
                 sp = 0.0
                 losses += 1
@@ -523,9 +552,10 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
     full = _simulate(collect_targets=True)
     targets = full["targets"]
 
-    # Cap 300 trades/day, time-limited, with cooldown
+    # Cap 300 trades/day, time-limited, with cooldown and daily loss budget
+    # Use 1-5 full days — 0.5/4.5 removed to avoid identical rows when signal rate fills cap in <12h
     cap_by_day: dict[str, dict] = {}
-    for target_day in [0.5, 1, 2, 3, 4, 4.5]:
+    for target_day in [1, 2, 3, 4, 5]:
         r = _simulate(max_epoch=int(target_day * 86400), day_cap=300)
         cap_by_day[str(target_day)] = {
             "trades": r["trades"], "wins": r["wins"], "losses": r["losses"],
