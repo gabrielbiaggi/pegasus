@@ -133,72 +133,85 @@ class RiskManagerTest(unittest.TestCase):
 
             self.assertEqual(risk.get_stake(), 1.85)
 
-    def test_martingale_doubles_stake_on_loss(self) -> None:
+    def test_martingale_recovery_stake_formula(self) -> None:
+        """Gale stake deve recuperar todas as perdas + lucro original no payout configurado."""
         with tempfile.TemporaryDirectory() as tmp:
             risk = RiskManager(
-                balance=1000,
-                max_loss_day=200,
+                balance=100_000,
+                max_loss_day=50_000,
                 max_profit_day=0,
                 max_trades_day=50,
                 daily_trailing_start=0,
                 daily_trailing_lock=0,
                 max_stake_pct=0.5,
-                fixed_stake=1,
+                fixed_stake=10,
                 min_stake=0.35,
-                max_stake=100,
-                max_consecutive_losses=4,
+                max_stake=0,  # sem cap absoluto para testar a formula pura
+                max_consecutive_losses=10,
                 use_soros=False,
                 soros_max_steps=1,
                 soros_profit_factor=1.0,
                 use_martingale=True,
                 martingale_max_gales=3,
-                martingale_multiplier=2.0,
+                martingale_payout_rate=0.15,
                 state_path=str(Path(tmp) / "risk.json"),
             )
+            # Gale 0: aposta base
             self.assertEqual(risk.martingale_step, 0)
-            self.assertEqual(risk.get_stake(), 1.0)  # gale 0: 1×
+            s0 = risk.get_stake()
+            self.assertAlmostEqual(s0, 10.0, places=2)
 
-            risk.update(profit=-1, buy_price=1)
+            # Apos loss: gale 1 = acumulado/payout + base = 10/0.15 + 10 = 76.67
+            risk.update(profit=-s0, buy_price=s0)
             self.assertEqual(risk.martingale_step, 1)
-            self.assertEqual(risk.get_stake(), 2.0)  # gale 1: 2×
+            s1 = risk.get_stake()
+            expected_s1 = round(s0 / 0.15 + s0, 2)
+            self.assertAlmostEqual(s1, expected_s1, places=2)
+            # Verificacao: WIN em s1 recupera s0 e ainda lucra s0*payout
+            self.assertAlmostEqual(s1 * 0.15, s0 + s0 * 0.15, places=1)
 
-            risk.update(profit=-2, buy_price=2)
+            # Apos 2 losses: gale 2 = (s0+s1)/0.15 + s0
+            risk.update(profit=-s1, buy_price=s1)
             self.assertEqual(risk.martingale_step, 2)
-            self.assertEqual(risk.get_stake(), 4.0)  # gale 2: 4×
-
-            risk.update(profit=-4, buy_price=4)
-            self.assertEqual(risk.martingale_step, 3)
-            self.assertEqual(risk.get_stake(), 8.0)  # gale 3: 8×
+            s2 = risk.get_stake()
+            expected_s2 = round((s0 + s1) / 0.15 + s0, 2)
+            self.assertAlmostEqual(s2, expected_s2, places=2)
+            # Verificacao: WIN em s2 recupera s0+s1 e ainda lucra s0*payout
+            self.assertAlmostEqual(s2 * 0.15, s0 + s1 + s0 * 0.15, places=1)
 
     def test_martingale_resets_on_win(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             risk = RiskManager(
-                balance=1000,
-                max_loss_day=200,
+                balance=100_000,
+                max_loss_day=50_000,
                 max_profit_day=0,
                 max_trades_day=50,
                 daily_trailing_start=0,
                 daily_trailing_lock=0,
                 max_stake_pct=0.5,
-                fixed_stake=1,
+                fixed_stake=10,
                 min_stake=0.35,
-                max_stake=100,
-                max_consecutive_losses=4,
+                max_stake=0,
+                max_consecutive_losses=10,
                 use_soros=False,
                 soros_max_steps=1,
                 soros_profit_factor=1.0,
                 use_martingale=True,
                 martingale_max_gales=3,
-                martingale_multiplier=2.0,
+                martingale_payout_rate=0.15,
                 state_path=str(Path(tmp) / "risk.json"),
             )
-            risk.update(profit=-1, buy_price=1)
-            risk.update(profit=-2, buy_price=2)
+            s0 = risk.get_stake()   # 10.0
+            risk.update(profit=-s0, buy_price=s0)   # gale 1
+            s1 = risk.get_stake()
+            risk.update(profit=-s1, buy_price=s1)   # gale 2
             self.assertEqual(risk.martingale_step, 2)
 
-            risk.update(profit=4, buy_price=4)  # win at gale 2
+            risk.update(profit=s1 * 0.15, buy_price=s1)  # win at gale 2
             self.assertEqual(risk.martingale_step, 0)
-            self.assertEqual(risk.get_stake(), 1.0)  # back to base
+            self.assertEqual(risk.martingale_accumulated_loss, 0.0)
+            self.assertEqual(risk.martingale_base_stake, 0.0)
+            self.assertAlmostEqual(risk.get_stake(), s0, places=2)  # volta ao base
 
     def test_martingale_stops_after_max_gales(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -219,14 +232,14 @@ class RiskManagerTest(unittest.TestCase):
                 soros_profit_factor=1.0,
                 use_martingale=True,
                 martingale_max_gales=3,
-                martingale_multiplier=2.0,
+                martingale_payout_rate=0.15,
                 state_path=str(Path(tmp) / "risk.json"),
             )
             # 4 consecutive losses → stop (max_consecutive_losses=4)
             risk.update(profit=-1, buy_price=1)
-            risk.update(profit=-2, buy_price=2)
-            risk.update(profit=-4, buy_price=4)
-            risk.update(profit=-8, buy_price=8)
+            risk.update(profit=-1, buy_price=1)
+            risk.update(profit=-1, buy_price=1)
+            risk.update(profit=-1, buy_price=1)
             self.assertFalse(risk.can_trade())
             # martingale_step capped at 3 (max_gales)
             self.assertEqual(risk.martingale_step, 3)

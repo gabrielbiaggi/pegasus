@@ -28,7 +28,8 @@ class RiskManager:
         dynamic_stake_base_pct: float = 0.02,
         use_martingale: bool = False,
         martingale_max_gales: int = 3,
-        martingale_multiplier: float = 2.0,
+        martingale_multiplier: float = 2.0,  # deprecated: formula now usa payout_rate
+        martingale_payout_rate: float = 0.15,
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -52,6 +53,7 @@ class RiskManager:
         self.use_martingale = bool(use_martingale)
         self.martingale_max_gales = int(martingale_max_gales)
         self.martingale_multiplier = float(martingale_multiplier)
+        self.martingale_payout_rate = max(0.001, float(martingale_payout_rate))
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -69,6 +71,8 @@ class RiskManager:
         self.soros_step = 0
         self.soros_profit = 0.0
         self.martingale_step = 0
+        self.martingale_accumulated_loss: float = 0.0  # soma dos buy_prices perdidos na sequencia atual
+        self.martingale_base_stake: float = 0.0       # stake da primeira aposta da sequencia (step 0)
         # Sliding window timestamps of recent losses (monotonic clock)
         self._recent_loss_times: deque[float] = deque()
 
@@ -99,6 +103,13 @@ class RiskManager:
         self.soros_step = int(data.get("soros_step", 0))
         self.soros_profit = float(data.get("soros_profit", 0.0))
         self.martingale_step = int(data.get("martingale_step", 0))
+        self.martingale_accumulated_loss = float(data.get("martingale_accumulated_loss", 0.0))
+        self.martingale_base_stake = float(data.get("martingale_base_stake", 0.0))
+        # Segurança: estado legado sem base_stake → reseta gale (melhor pausar que calcular errado)
+        if self.martingale_step > 0 and self.martingale_base_stake == 0.0:
+            logger.warning("Estado martingale inconsistente (base_stake=0 com step=%d). Resetando gale.", self.martingale_step)
+            self.martingale_step = 0
+            self.martingale_accumulated_loss = 0.0
         self.max_loss_day = float(data.get("max_loss_day", self.max_loss_day))
         logger.info(
             "Estado de risco restaurado: perda_dia=%.2f, lucro_liquido_dia=%.2f, "
@@ -127,6 +138,8 @@ class RiskManager:
             "soros_step": self.soros_step,
             "soros_profit": self.soros_profit,
             "martingale_step": self.martingale_step,
+            "martingale_accumulated_loss": self.martingale_accumulated_loss,
+            "martingale_base_stake": self.martingale_base_stake,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -149,6 +162,8 @@ class RiskManager:
         self.soros_step = 0
         self.soros_profit = 0.0
         self.martingale_step = 0
+        self.martingale_accumulated_loss = 0.0
+        self.martingale_base_stake = 0.0
         self._save_state()
 
     def get_stake(self, p_loss: float | None = None) -> float:
@@ -181,9 +196,12 @@ class RiskManager:
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
 
-        # Martingale: dobra a stake a cada loss consecutivo (ate martingale_max_gales)
-        if self.use_martingale and self.martingale_step > 0:
-            raw_stake = raw_stake * (self.martingale_multiplier ** self.martingale_step)
+        # Martingale: calcula stake de recuperacao matematicamente correta para o payout atual.
+        # Formula: G = perdas_acumuladas / payout_rate + stake_base
+        # Garante que WIN no proximo gale recupera todas as perdas anteriores + lucro original.
+        # Exemplo com payout=15%: gale1 = loss0/0.15 + loss0 ≈ 7.67× (NAO 2×!)
+        if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
+            raw_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
 
         # Cap to remaining daily loss budget so the trade is capped, not blocked
         # Budget = how much net loss we can still absorb before hitting the stop threshold
@@ -289,6 +307,8 @@ class RiskManager:
             self.wins += 1
             self.consecutive_losses = 0
             self.martingale_step = 0
+            self.martingale_accumulated_loss = 0.0
+            self.martingale_base_stake = 0.0
             if self.use_soros and self.soros_max_steps > 0:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
@@ -304,6 +324,10 @@ class RiskManager:
             self.soros_step = 0
             self.soros_profit = 0.0
             if self.use_martingale:
+                if self.martingale_step == 0:
+                    # Primeiro loss: guarda a stake base desta sequencia de gales
+                    self.martingale_base_stake = buy_price
+                self.martingale_accumulated_loss += buy_price
                 self.martingale_step = min(self.martingale_step + 1, self.martingale_max_gales)
             self.max_loss_streak_today = max(self.max_loss_streak_today, self.consecutive_losses)
             realized_loss = abs(profit) if profit < 0 else buy_price

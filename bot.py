@@ -351,6 +351,7 @@ class DerivBot:
             use_martingale=self.config.use_martingale,
             martingale_max_gales=self.config.martingale_max_gales,
             martingale_multiplier=self.config.martingale_multiplier,
+            martingale_payout_rate=self.config.accumulator_take_profit_percent / 100.0,
         )
         # Subscribe to real-time balance updates (catches manual top-ups, etc.)
         await self.subscribe_balance(ws)
