@@ -207,7 +207,7 @@ def _compute_max_loss_day(risk_state: dict) -> float:
 
 
 def _compute_risk_blocked(risk_state: dict) -> bool:
-    return risk_state.get("daily_loss", 0.0) >= _compute_max_loss_day(risk_state)
+    return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(risk_state)
 
 
 @app.get("/api/status")
@@ -463,7 +463,7 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
         max_single_loss = 0.0 # worst single losing trade
         next_valid = 0  # skip rows with entry_epoch < next_valid (cooldown window)
         day_counts: dict[int, int] = {}
-        day_losses: dict[int, float] = {}  # cumulative loss per calendar-day bucket
+        day_net_pnls: dict[int, float] = {}  # net pnl per calendar-day bucket
         targets: dict = {p: None for p in [10, 20, 25, 30, 50, 100, 200]} if collect_targets else {}
 
         for (epoch, _q, score, result, exit_epoch, held) in rows:
@@ -480,11 +480,13 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
                     continue
                 day_counts[dk] = day_counts.get(dk, 0) + 1
 
-            # Daily loss budget cap: stake can't exceed remaining budget for the day
-            day_loss_so_far = day_losses.get(dk, 0.0)
-            remaining_budget = max(0.0, MAX_LOSS_DAY - day_loss_so_far)
+            # Daily stop: skip if net P&L for this day already hit -MAX_LOSS_DAY
+            _day_net = day_net_pnls.get(dk, 0.0)
+            if _day_net <= -MAX_LOSS_DAY:
+                continue  # daily stop loss reached (net drawdown)
+            remaining_budget = max(0.0, MAX_LOSS_DAY + _day_net)
             if remaining_budget < MIN_STAKE_ABS:
-                continue  # daily loss budget exhausted for this day bucket
+                continue  # remaining budget below minimum stake
 
             base = max(bal * BASE_PCT, STAKE_FIXED)
             soros_add = sp if 0 < ss <= SOROS_MAX else 0.0
@@ -507,11 +509,12 @@ def _run_backtest_simulation(rows: list, initial_balance: float = 10000.0) -> di
                     ss = 0
                     sp = 0.0
                 wins += 1
+                day_net_pnls[dk] = day_net_pnls.get(dk, 0.0) + p
             else:
                 bal = round(bal - stk, 2)
                 total_lost += stk
                 max_single_loss = max(max_single_loss, stk)
-                day_losses[dk] = day_losses.get(dk, 0.0) + stk
+                day_net_pnls[dk] = day_net_pnls.get(dk, 0.0) - stk
                 ss = 0
                 sp = 0.0
                 losses += 1

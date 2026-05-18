@@ -171,7 +171,8 @@ class RiskManager:
             raw_stake = raw_stake + self.soros_profit
 
         # Cap to remaining daily loss budget so the trade is capped, not blocked
-        remaining_budget = max(0.0, self.max_loss_day - self.daily_loss)
+        # Budget = how much net loss we can still absorb before hitting the stop threshold
+        remaining_budget = max(0.0, self.max_loss_day + self.daily_net_profit)
         # max_stake=0 means no absolute cap — use only pct_cap (100% dynamic)
         caps = [raw_stake, pct_cap, remaining_budget]
         if self.max_stake > 0:
@@ -186,8 +187,12 @@ class RiskManager:
     def can_trade(self) -> bool:
         self._reset_if_new_day()
 
-        if self.daily_loss >= self.max_loss_day:
-            logger.warning("Limite de perda diaria atingido: %.2f", self.daily_loss)
+        if self.daily_net_profit <= -self.max_loss_day:
+            logger.warning(
+                "Stop loss diario atingido: lucro_liquido=%.2f (limite=-%.2f)",
+                self.daily_net_profit,
+                self.max_loss_day,
+            )
             return False
 
         if self.max_profit_day > 0 and self.daily_net_profit >= self.max_profit_day:
