@@ -25,6 +25,7 @@ class RiskManager:
         soros_max_steps: int,
         soros_profit_factor: float,
         use_dynamic_stake: bool = True,
+        dynamic_stake_base_pct: float = 0.02,
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -44,6 +45,7 @@ class RiskManager:
         self.soros_max_steps = int(soros_max_steps)
         self.soros_profit_factor = float(soros_profit_factor)
         self.use_dynamic_stake = bool(use_dynamic_stake)
+        self.dynamic_stake_base_pct = float(dynamic_stake_base_pct)
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -139,22 +141,31 @@ class RiskManager:
 
     def get_stake(self, p_loss: float | None = None) -> float:
         self._reset_if_new_day()
+        # Hard cap = menor entre % banca e MAX_STAKE absoluto
         pct_cap = self.balance * self.max_stake_pct
-        raw_stake = self.fixed_stake
 
-        # Opção B: dynamic sizing by P(LOSS) confidence
         if self.use_dynamic_stake and p_loss is not None:
-            if p_loss < 0.10:
-                raw_stake = self.fixed_stake * 5.0
-            elif p_loss < 0.15:
-                raw_stake = self.fixed_stake * 3.0
-            elif p_loss < 0.20:
-                raw_stake = self.fixed_stake * 2.0
-            elif p_loss < 0.25:
-                raw_stake = self.fixed_stake * 1.5
-            # else p_loss < limiar: 1× (raw_stake = fixed_stake)
+            # Base = % da banca atual (nunca menor que fixed_stake mínimo)
+            base = max(self.balance * self.dynamic_stake_base_pct, self.fixed_stake)
 
-        # Opção C: Soros on top (USE_SOROS=true ativa)
+            # Tabela de multiplicadores por confiança da IA (P(LOSS) baixo = IA confiante)
+            if p_loss < 0.05:
+                raw_stake = base * 4.0    # confiança máxima: 4× banca_base
+            elif p_loss < 0.10:
+                raw_stake = base * 3.0    # muito confiante: 3×
+            elif p_loss < 0.15:
+                raw_stake = base * 2.0    # confiante: 2×
+            elif p_loss < 0.20:
+                raw_stake = base * 1.5    # moderado: 1.5×
+            elif p_loss < 0.25:
+                raw_stake = base * 1.25   # limiar próximo: 1.25×
+            else:
+                raw_stake = base          # p_loss próximo ao limite: 1× base
+        else:
+            # Sem IA ou dynamic stake off: aposta fixa conservadora
+            raw_stake = self.fixed_stake
+
+        # Soros: reinveste lucro acumulado de wins consecutivos
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
 

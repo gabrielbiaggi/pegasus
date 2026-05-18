@@ -327,6 +327,7 @@ class DerivBot:
             soros_max_steps=self.config.soros_max_steps,
             soros_profit_factor=self.config.soros_profit_factor,
             use_dynamic_stake=self.config.use_dynamic_stake,
+            dynamic_stake_base_pct=self.config.dynamic_stake_base_pct,
         )
         # Zombie-trade protection: reconcile open positions before subscribing ticks
         await self._reconcile_open_positions(ws)
