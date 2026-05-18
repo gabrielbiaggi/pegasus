@@ -133,6 +133,104 @@ class RiskManagerTest(unittest.TestCase):
 
             self.assertEqual(risk.get_stake(), 1.85)
 
+    def test_martingale_doubles_stake_on_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=1000,
+                max_loss_day=200,
+                max_profit_day=0,
+                max_trades_day=50,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=0.5,
+                fixed_stake=1,
+                min_stake=0.35,
+                max_stake=100,
+                max_consecutive_losses=4,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=3,
+                martingale_multiplier=2.0,
+                state_path=str(Path(tmp) / "risk.json"),
+            )
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.get_stake(), 1.0)  # gale 0: 1×
+
+            risk.update(profit=-1, buy_price=1)
+            self.assertEqual(risk.martingale_step, 1)
+            self.assertEqual(risk.get_stake(), 2.0)  # gale 1: 2×
+
+            risk.update(profit=-2, buy_price=2)
+            self.assertEqual(risk.martingale_step, 2)
+            self.assertEqual(risk.get_stake(), 4.0)  # gale 2: 4×
+
+            risk.update(profit=-4, buy_price=4)
+            self.assertEqual(risk.martingale_step, 3)
+            self.assertEqual(risk.get_stake(), 8.0)  # gale 3: 8×
+
+    def test_martingale_resets_on_win(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=1000,
+                max_loss_day=200,
+                max_profit_day=0,
+                max_trades_day=50,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=0.5,
+                fixed_stake=1,
+                min_stake=0.35,
+                max_stake=100,
+                max_consecutive_losses=4,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=3,
+                martingale_multiplier=2.0,
+                state_path=str(Path(tmp) / "risk.json"),
+            )
+            risk.update(profit=-1, buy_price=1)
+            risk.update(profit=-2, buy_price=2)
+            self.assertEqual(risk.martingale_step, 2)
+
+            risk.update(profit=4, buy_price=4)  # win at gale 2
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.get_stake(), 1.0)  # back to base
+
+    def test_martingale_stops_after_max_gales(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=1000,
+                max_loss_day=200,
+                max_profit_day=0,
+                max_trades_day=50,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=0.5,
+                fixed_stake=1,
+                min_stake=0.35,
+                max_stake=100,
+                max_consecutive_losses=4,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=3,
+                martingale_multiplier=2.0,
+                state_path=str(Path(tmp) / "risk.json"),
+            )
+            # 4 consecutive losses → stop (max_consecutive_losses=4)
+            risk.update(profit=-1, buy_price=1)
+            risk.update(profit=-2, buy_price=2)
+            risk.update(profit=-4, buy_price=4)
+            risk.update(profit=-8, buy_price=8)
+            self.assertFalse(risk.can_trade())
+            # martingale_step capped at 3 (max_gales)
+            self.assertEqual(risk.martingale_step, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

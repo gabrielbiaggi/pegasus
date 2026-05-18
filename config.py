@@ -72,6 +72,9 @@ class BotConfig:
     use_soros: bool
     soros_max_steps: int
     soros_profit_factor: float
+    use_martingale: bool
+    martingale_max_gales: int
+    martingale_multiplier: float
     use_dynamic_stake: bool
     dynamic_stake_base_pct: float
     journal_dir: str
@@ -197,6 +200,9 @@ def load_config() -> BotConfig:
         use_soros=_bool_env("USE_SOROS", False),
         soros_max_steps=_int_env("SOROS_MAX_STEPS", 1),
         soros_profit_factor=_float_env("SOROS_PROFIT_FACTOR", 1.0),
+        use_martingale=_bool_env("USE_MARTINGALE", False),
+        martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 3),
+        martingale_multiplier=_float_env("MARTINGALE_MULTIPLIER", 2.0),
         use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
@@ -277,6 +283,10 @@ def load_config() -> BotConfig:
         raise ValueError("SOROS_MAX_STEPS nao pode ser negativo.")
     if not 0 <= config.soros_profit_factor <= 1:
         raise ValueError("SOROS_PROFIT_FACTOR deve estar entre 0 e 1.")
+    if config.martingale_max_gales < 0:
+        raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
+    if config.martingale_multiplier < 1.0:
+        raise ValueError("MARTINGALE_MULTIPLIER deve ser >= 1.")
     if config.tick_count < config.accumulator_strategy_config.minimum_ticks:
         raise ValueError(
             f"TICK_COUNT deve ser pelo menos {config.accumulator_strategy_config.minimum_ticks} "

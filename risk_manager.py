@@ -26,6 +26,9 @@ class RiskManager:
         soros_profit_factor: float,
         use_dynamic_stake: bool = True,
         dynamic_stake_base_pct: float = 0.02,
+        use_martingale: bool = False,
+        martingale_max_gales: int = 3,
+        martingale_multiplier: float = 2.0,
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -46,6 +49,9 @@ class RiskManager:
         self.soros_profit_factor = float(soros_profit_factor)
         self.use_dynamic_stake = bool(use_dynamic_stake)
         self.dynamic_stake_base_pct = float(dynamic_stake_base_pct)
+        self.use_martingale = bool(use_martingale)
+        self.martingale_max_gales = int(martingale_max_gales)
+        self.martingale_multiplier = float(martingale_multiplier)
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -62,6 +68,7 @@ class RiskManager:
         self.max_loss_streak_today = 0
         self.soros_step = 0
         self.soros_profit = 0.0
+        self.martingale_step = 0
         # Sliding window timestamps of recent losses (monotonic clock)
         self._recent_loss_times: deque[float] = deque()
 
@@ -91,6 +98,7 @@ class RiskManager:
         self.max_loss_streak_today = int(data.get("max_loss_streak_today", 0))
         self.soros_step = int(data.get("soros_step", 0))
         self.soros_profit = float(data.get("soros_profit", 0.0))
+        self.martingale_step = int(data.get("martingale_step", 0))
         self.max_loss_day = float(data.get("max_loss_day", self.max_loss_day))
         logger.info(
             "Estado de risco restaurado: perda_dia=%.2f, lucro_liquido_dia=%.2f, "
@@ -118,6 +126,7 @@ class RiskManager:
             "max_loss_streak_today": self.max_loss_streak_today,
             "soros_step": self.soros_step,
             "soros_profit": self.soros_profit,
+            "martingale_step": self.martingale_step,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -139,6 +148,7 @@ class RiskManager:
         self.max_loss_streak_today = 0
         self.soros_step = 0
         self.soros_profit = 0.0
+        self.martingale_step = 0
         self._save_state()
 
     def get_stake(self, p_loss: float | None = None) -> float:
@@ -170,6 +180,10 @@ class RiskManager:
         # Soros: reinveste lucro acumulado de wins consecutivos
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
+
+        # Martingale: dobra a stake a cada loss consecutivo (ate martingale_max_gales)
+        if self.use_martingale and self.martingale_step > 0:
+            raw_stake = raw_stake * (self.martingale_multiplier ** self.martingale_step)
 
         # Cap to remaining daily loss budget so the trade is capped, not blocked
         # Budget = how much net loss we can still absorb before hitting the stop threshold
@@ -274,6 +288,7 @@ class RiskManager:
         if profit > 0:
             self.wins += 1
             self.consecutive_losses = 0
+            self.martingale_step = 0
             if self.use_soros and self.soros_max_steps > 0:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
@@ -287,6 +302,8 @@ class RiskManager:
             self.consecutive_losses += 1
             self.soros_step = 0
             self.soros_profit = 0.0
+            if self.use_martingale:
+                self.martingale_step = min(self.martingale_step + 1, self.martingale_max_gales)
             self.max_loss_streak_today = max(self.max_loss_streak_today, self.consecutive_losses)
             realized_loss = abs(profit) if profit < 0 else buy_price
             self.daily_loss += realized_loss
@@ -308,5 +325,6 @@ class RiskManager:
             f"WinRate={winrate:.1f}% | LossStreak={self.consecutive_losses} | "
             f"PerdaDia={self.daily_loss:.2f} | LucroLiquidoDia={self.daily_net_profit:.2f} | "
             f"TrailingAtivo={self.daily_trailing_active} | SorosStep={self.soros_step} | "
+            f"MartingaleStep={self.martingale_step} | "
             f"SaldoEstimado={self.balance:.2f}"
         )

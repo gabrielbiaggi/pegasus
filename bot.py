@@ -340,6 +340,9 @@ class DerivBot:
             soros_profit_factor=self.config.soros_profit_factor,
             use_dynamic_stake=self.config.use_dynamic_stake,
             dynamic_stake_base_pct=self.config.dynamic_stake_base_pct,
+            use_martingale=self.config.use_martingale,
+            martingale_max_gales=self.config.martingale_max_gales,
+            martingale_multiplier=self.config.martingale_multiplier,
         )
         # Subscribe to real-time balance updates (catches manual top-ups, etc.)
         await self.subscribe_balance(ws)
