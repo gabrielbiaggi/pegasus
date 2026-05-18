@@ -66,6 +66,10 @@ class DerivBot:
     async def authorize(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self.send(ws, {"authorize": self.config.token})
 
+    async def subscribe_balance(self, ws: websockets.WebSocketClientProtocol) -> None:
+        """Subscribe to real-time balance stream so manual top-ups are reflected immediately."""
+        await self.send(ws, {"balance": 1, "subscribe": 1})
+
     async def subscribe_ticks(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self.send(
             ws,
@@ -329,6 +333,8 @@ class DerivBot:
             use_dynamic_stake=self.config.use_dynamic_stake,
             dynamic_stake_base_pct=self.config.dynamic_stake_base_pct,
         )
+        # Subscribe to real-time balance updates (catches manual top-ups, etc.)
+        await self.subscribe_balance(ws)
         # Zombie-trade protection: reconcile open positions before subscribing ticks
         await self._reconcile_open_positions(ws)
         await self.subscribe_ticks(ws)
@@ -468,6 +474,14 @@ class DerivBot:
             await self.handle_buy(ws, data)
         elif msg_type == "proposal_open_contract":
             await self.handle_contract_update(ws, data)
+        elif msg_type == "balance":
+            bal = data.get("balance", {})
+            new_bal = bal.get("balance")
+            if new_bal is not None and self.risk is not None:
+                new_bal = float(new_bal)
+                if abs(new_bal - self.risk.balance) > 0.01:
+                    logger.info("Saldo atualizado pela API: %.2f → %.2f | saldo_estimado=%.2f", self.risk.balance, new_bal, new_bal)
+                    self.risk.balance = new_bal
         elif msg_type == "sell":
             logger.info("Sell confirmado: %s", data.get("sell"))
         elif msg_type == "portfolio":
