@@ -68,14 +68,20 @@ def _search_log_backward(pattern: bytes, chunk: int = 65536) -> str:
 def _last_balance() -> str:
     global _balance_cache
     now = _time.monotonic()
-    # saldo= only appears at login — cache for 60 s to avoid repeated full scans
-    if now - _balance_cache[0] < 60.0 and _balance_cache[1] != "—":
+    if now - _balance_cache[0] < 10.0 and _balance_cache[1] != "—":
         return _balance_cache[1]
-    line = _search_log_backward(b"saldo=")
-    if not line:
-        return "—"
-    m = re.search(r"saldo=([\d.]+)", line)
-    val = m.group(1) if m else "—"
+    # saldo_estimado= is logged on every WIN/LOSS (most up-to-date)
+    line = _search_log_backward(b"saldo_estimado=")
+    if line:
+        m = re.search(r"saldo_estimado=([\d.]+)", line)
+        val = m.group(1) if m else "—"
+    else:
+        # Fallback: saldo= only appears at login
+        line = _search_log_backward(b"saldo=")
+        if not line:
+            return "—"
+        m = re.search(r"saldo=([\d.]+)", line)
+        val = m.group(1) if m else "—"
     if val != "—":
         _balance_cache = (now, val)
     return val
