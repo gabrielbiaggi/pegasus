@@ -76,6 +76,12 @@ class AccumulatorStrategyConfig:
     # Ensemble scoring (XGBoost P(LOSS) gate)
     use_ensemble: bool = False
     ensemble_min_prob: float = 0.294
+    # RF directional indicator windows
+    ols_window: int = 20
+    momentum_window: int = 5
+    autocorr_window: int = 30
+    skewness_window: int = 20
+    fft_window: int = 64
 
     @property
     def minimum_ticks(self) -> int:
@@ -89,6 +95,7 @@ class AccumulatorStrategyConfig:
             self.integral_window + 2,
             self.markov_window + 2,
             self.shannon_entropy_window + 2,
+            self.fft_window + 2,
         )
 
 
@@ -144,6 +151,20 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     df["kalman_covariance"] = kalman["kalman_covariance"]
     df["kalman_residual"] = kalman["kalman_residual"]
     df["kalman_residual_zscore"] = _rolling_abs_zscore(df["kalman_residual"], config.derivative_window)
+
+    # --- RF directional indicators (signed, direction-predictive) ---
+    df["ols_slope"] = df["close"].rolling(config.ols_window).apply(_ols_slope, raw=True)
+    df["price_momentum"] = df["close"].pct_change(config.momentum_window) * 100
+    _ema_fast = ta.trend.EMAIndicator(df["close"], window=5).ema_indicator()
+    _ema_slow = ta.trend.EMAIndicator(df["close"], window=20).ema_indicator()
+    df["ema_diff"] = _ema_fast - _ema_slow
+    df["run_length"] = _run_length(df["close"])
+    _markov2 = _second_order_markov(df["close"], config.markov_window)
+    df["markov2_puu"] = _markov2["puu"]
+    df["markov2_pdd"] = _markov2["pdd"]
+    df["return_autocorr_lag1"] = _rolling_return_autocorr(df["close"], lag=1, window=config.autocorr_window)
+    df["return_skewness"] = df["close"].diff().rolling(config.skewness_window).skew()
+    df["fft_dominant_period"] = df["close"].rolling(config.fft_window).apply(_fft_dominant_period, raw=True)
 
     return df
 
@@ -452,6 +473,103 @@ def _kalman_filter_metrics(close: pd.Series, process_variance: float, measuremen
 
 
 # ---------------------------------------------------------------------------
+# RF directional indicator helpers
+# ---------------------------------------------------------------------------
+
+def _ols_slope(prices: np.ndarray) -> float:
+    """OLS linear regression slope, normalised by mean price (% per tick)."""
+    n = len(prices)
+    if n < 2:
+        return np.nan
+    t = np.arange(n, dtype=float)
+    st = t.sum()
+    sp = float(prices.sum())
+    stp = float((t * prices).sum())
+    st2 = float((t ** 2).sum())
+    denom = n * st2 - st ** 2
+    if denom == 0:
+        return 0.0
+    slope = (n * stp - st * sp) / denom
+    mean_p = float(np.mean(prices))
+    return float(slope / mean_p * 100) if mean_p != 0 else 0.0
+
+
+def _run_length(close: pd.Series) -> pd.Series:
+    """Signed run-length: +N for N consecutive up-ticks, -N for down-ticks.
+
+    Flat ticks (zero diff) reset the run to 0.
+    """
+    signs = np.sign(close.diff().fillna(0)).to_numpy(dtype=float)
+    runs = np.zeros(len(signs))
+    for i in range(1, len(signs)):
+        s = signs[i]
+        if s > 0:
+            runs[i] = runs[i - 1] + 1 if runs[i - 1] > 0 else 1.0
+        elif s < 0:
+            runs[i] = runs[i - 1] - 1 if runs[i - 1] < 0 else -1.0
+        # s == 0: flat tick — run breaks, stays 0
+    return pd.Series(runs, index=close.index)
+
+
+def _second_order_markov(close: pd.Series, window: int = 50) -> pd.DataFrame:
+    """2nd-order Markov: P(up|up,up) and P(dn|dn,dn) over a rolling window."""
+    states = np.sign(close.diff().fillna(0)).to_numpy(dtype=int)
+    puu: list[float] = [np.nan] * len(states)
+    pdd: list[float] = [np.nan] * len(states)
+
+    for end in range(window, len(states)):
+        s = states[end - window + 1: end + 1]
+        prev2 = s[:-2]
+        prev1 = s[1:-1]
+        curr = s[2:]
+        uu_mask = (prev2 == 1) & (prev1 == 1)
+        dd_mask = (prev2 == -1) & (prev1 == -1)
+        puu[end] = float(np.mean(curr[uu_mask] == 1)) if np.any(uu_mask) else 0.5
+        pdd[end] = float(np.mean(curr[dd_mask] == -1)) if np.any(dd_mask) else 0.5
+
+    return pd.DataFrame({"puu": puu, "pdd": pdd}, index=close.index)
+
+
+def _rolling_return_autocorr(close: pd.Series, lag: int, window: int) -> pd.Series:
+    """Rolling autocorrelation of price returns at the given lag.
+
+    Positive value = momentum (returns persist); negative = mean-reversion.
+    """
+    returns = close.diff().fillna(0.0)
+
+    def _autocorr(x: np.ndarray) -> float:
+        if len(x) < lag + 2:
+            return 0.0
+        x1 = x[:-lag]
+        x2 = x[lag:]
+        std1 = float(np.std(x1, ddof=0))
+        std2 = float(np.std(x2, ddof=0))
+        if std1 == 0.0 or std2 == 0.0:
+            return 0.0
+        return float(np.mean((x1 - x1.mean()) * (x2 - x2.mean())) / (std1 * std2))
+
+    return returns.rolling(window).apply(_autocorr, raw=True).fillna(0.0)
+
+
+def _fft_dominant_period(prices: np.ndarray) -> float:
+    """Dominant cycle period (in ticks) via FFT on de-trended price window.
+
+    Returns NaN if the window is too small. On IID data this will be noisy
+    and close to Nyquist; any consistent value > 4 ticks is worth investigating.
+    """
+    n = len(prices)
+    if n < 8:
+        return np.nan
+    detrended = prices - np.linspace(float(prices[0]), float(prices[-1]), n)
+    spectrum = np.abs(np.fft.rfft(detrended))
+    spectrum[0] = 0.0  # remove DC
+    if len(spectrum) < 2:
+        return np.nan
+    dominant_bin = int(np.argmax(spectrum[1:])) + 1
+    return float(n / dominant_bin)
+
+
+# ---------------------------------------------------------------------------
 # HMM Regime Detection
 # ---------------------------------------------------------------------------
 
@@ -553,13 +671,29 @@ class EnsembleScorer:
 # Rise/Fall (binary options) strategy
 # ---------------------------------------------------------------------------
 
-#: Features used for Rise/Fall direction prediction — includes SIGNED directional
-#: features that the accumulator scorer discards (e.g. raw price_velocity vs abs zscore).
+#: Features used for Rise/Fall direction prediction — signed directional features
+#: plus volatility context for the ensemble model.
 RF_FEATURES = [
-    "price_velocity",            # signed: positive = going up
-    "tick_imbalance",            # signed: positive = more up-ticks recently
-    "markov_p_up_given_up",      # momentum persistence up
-    "markov_p_down_given_down",  # momentum persistence down
+    # Signed velocity / trend indicators
+    "price_velocity",        # causal finite-difference velocity (signed)
+    "ols_slope",             # OLS regression slope over window (% per tick)
+    "price_momentum",        # net return over last N ticks (%)
+    "ema_diff",              # EMA(5) - EMA(20): positive = short-term uptrend
+    "run_length",            # consecutive same-direction tick count (signed)
+    # Flow imbalance
+    "tick_imbalance",        # net up-ticks minus down-ticks in window
+    # 1st-order Markov regime
+    "markov_p_up_given_up",
+    "markov_p_down_given_down",
+    # 2nd-order Markov (run continuation)
+    "markov2_puu",           # P(up | up, up)
+    "markov2_pdd",           # P(dn | dn, dn)
+    # Return distribution statistics
+    "return_autocorr_lag1",  # lag-1 autocorrelation: + = momentum, - = mean-rev
+    "return_skewness",       # rolling skewness of returns
+    # Spectral
+    "fft_dominant_period",   # dominant cycle period in ticks
+    # Volatility context (unsigned)
     "hurst_exponent",
     "hawkes_intensity",
     "velocity_zscore",
@@ -576,14 +710,15 @@ RF_FEATURES = [
 class RiseFallStrategyConfig:
     """Configuration for Rise/Fall directional signal generation."""
 
-    min_votes: int = 3          # votes needed out of 3 direction indicators
+    min_votes: int = 4          # votes needed out of 6 direction indicators
     min_imbalance: float = 1.0  # |tick_imbalance| threshold for directional vote
+    min_ols_slope: float = 0.0  # minimum |ols_slope| to count as directional
+    min_momentum: float = 0.0   # minimum |price_momentum| to count as directional
     use_ensemble: bool = False
     ensemble_min_prob: float = 0.52  # P(correct direction) threshold
 
     @property
     def minimum_ticks(self) -> int:
-        # Reuse accumulator defaults — indicators require the same buffer size.
         return AccumulatorStrategyConfig().minimum_ticks
 
 
@@ -594,10 +729,13 @@ def generate_rise_fall_signal(
 ) -> tuple[Optional[str], int, Optional[float]]:
     """Return ("CALL"/"PUT"/None, votes, p_direction).
 
-    Direction signal based on 3 aligned indicators:
-      1. price_velocity > 0 / < 0 (signed momentum)
-      2. tick_imbalance >= min_imbalance / <= -min_imbalance
-      3. markov_p_up_given_up > markov_p_down_given_down (persistence bias)
+    Direction signal from 6 aligned indicators (rule-based) or ensemble model:
+      1. price_velocity > 0 / < 0    (instantaneous signed momentum)
+      2. ols_slope > 0 / < 0         (linear regression trend direction)
+      3. price_momentum > 0 / < 0    (N-tick net return)
+      4. ema_diff > 0 / < 0          (EMA fast/slow crossover)
+      5. tick_imbalance ≥ / ≤ threshold (flow imbalance)
+      6. markov_up > markov_dn        (1st-order persistence)
     """
     config = config or RiseFallStrategyConfig()
     if len(df) < config.minimum_ticks:
@@ -610,30 +748,49 @@ def generate_rise_fall_signal(
         p_up = ensemble_scorer.predict_up_probability(last)
         if p_up >= config.ensemble_min_prob:
             logger.info("EnsembleScorerRF P(UP)=%.4f >= %.4f → CALL", p_up, config.ensemble_min_prob)
-            return "CALL", 3, p_up
+            return "CALL", 6, p_up
         if p_up <= 1.0 - config.ensemble_min_prob:
             logger.info("EnsembleScorerRF P(UP)=%.4f <= %.4f → PUT", p_up, 1.0 - config.ensemble_min_prob)
-            return "PUT", 3, 1.0 - p_up
+            return "PUT", 6, 1.0 - p_up
         logger.debug("EnsembleScorerRF P(UP)=%.4f — sem sinal direcional", p_up)
         return None, 0, None
 
-    # Rule-based directional votes
-    velocity = float(last.get("price_velocity", 0.0) or 0.0)
-    imbalance = float(last.get("tick_imbalance", 0.0) or 0.0)
-    markov_up = float(last.get("markov_p_up_given_up", 0.5) or 0.5)
-    markov_dn = float(last.get("markov_p_down_given_down", 0.5) or 0.5)
+    def _get(name: str, default: float = 0.0) -> float:
+        v = last.get(name, default)
+        try:
+            f = float(v if v is not None else default)
+        except (TypeError, ValueError):
+            f = default
+        return default if f != f else f  # NaN guard
 
-    # NaN guard
-    for v in (velocity, imbalance, markov_up, markov_dn):
-        if v != v:
-            return None, 0, None
+    velocity  = _get("price_velocity")
+    imbalance = _get("tick_imbalance")
+    ols       = _get("ols_slope")
+    momentum  = _get("price_momentum")
+    ema_d     = _get("ema_diff")
+    markov_up = _get("markov_p_up_given_up", 0.5)
+    markov_dn = _get("markov_p_down_given_down", 0.5)
 
-    up_votes = int(velocity > 0) + int(imbalance >= config.min_imbalance) + int(markov_up > markov_dn)
-    dn_votes = int(velocity < 0) + int(imbalance <= -config.min_imbalance) + int(markov_dn > markov_up)
+    up_votes = (
+        int(velocity > 0)
+        + int(imbalance >= config.min_imbalance)
+        + int(ols > config.min_ols_slope)
+        + int(momentum > config.min_momentum)
+        + int(ema_d > 0)
+        + int(markov_up > markov_dn)
+    )
+    dn_votes = (
+        int(velocity < 0)
+        + int(imbalance <= -config.min_imbalance)
+        + int(ols < -config.min_ols_slope)
+        + int(momentum < -config.min_momentum)
+        + int(ema_d < 0)
+        + int(markov_dn > markov_up)
+    )
 
     logger.debug(
-        "RF vel=%.5f imb=%.1f mUp=%.3f mDn=%.3f → up_votes=%d dn_votes=%d",
-        velocity, imbalance, markov_up, markov_dn, up_votes, dn_votes,
+        "RF vel=%.5f ols=%.5f mom=%.4f ema=%.5f imb=%.1f mUp=%.3f mDn=%.3f → up=%d dn=%d",
+        velocity, ols, momentum, ema_d, imbalance, markov_up, markov_dn, up_votes, dn_votes,
     )
 
     if up_votes >= config.min_votes:

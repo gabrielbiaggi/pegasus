@@ -8,11 +8,14 @@ from strategy import AccumulatorStrategyConfig
 logger.disabled = True
 
 
-def compressed_ticks(total: int = 90, spike_after_setup: bool = False) -> list[dict]:
+def compressed_ticks(total: int = 100, spike_after_setup: bool = False) -> list[dict]:
+    # minimum_ticks is now 66 (fft_window=64 + 2). First valid signal fires at
+    # index 65 (buffer has 66 ticks). Spike at index 66 lands inside that trade
+    # and should trigger the barrier exit.
     ticks = []
     for index in range(total):
         quote = 100 + (index % 2) * 0.001
-        if spike_after_setup and index == 60:
+        if spike_after_setup and index == 66:
             quote = 100.2
         ticks.append({"epoch": 1_700_000_000 + index, "quote": quote})
     return ticks
