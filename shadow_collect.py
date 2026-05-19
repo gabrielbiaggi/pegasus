@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import csv
 import json
 import os
 from collections import deque
@@ -288,20 +287,8 @@ def _future_result_with_real_barrier(
     }
 
 
-def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists() and path.stat().st_size > 0
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS)
-        if not exists:
-            writer.writeheader()
-        writer.writerows({field: row.get(field, "") for field in FIELDS} for row in rows)
-
-
 # ---------------------------------------------------------------------------
-# PostgreSQL sink (opcional) — ativa quando PG_DSN está definido no .env
+# PostgreSQL sink — ativa quando PG_DSN está definido no .env
 # ---------------------------------------------------------------------------
 
 _PG_CREATE_TABLE = """
@@ -387,7 +374,7 @@ def _pg_write_rows(pg_dsn: str, rows: list[dict[str, Any]]) -> None:
         print(f"[shadow_collect] PG write error (non-fatal): {exc}")
 
 
-async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: int, pg_dsn: str = "") -> int:
+async def collect_shadow_rows(ticks_to_collect: int, flush_every: int, pg_dsn: str = "") -> int:
     bot_config = load_config()
     strategy_config = bot_config.accumulator_strategy_config
     win_ticks = _ticks_to_take_profit(
@@ -611,13 +598,11 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                 })
 
             if len(rows) >= flush_every:
-                _write_rows(output, rows)
                 if pg_dsn:
                     _pg_write_rows(pg_dsn, rows)
                 written += len(rows)
                 rows.clear()
 
-    _write_rows(output, rows)
     if pg_dsn:
         _pg_write_rows(pg_dsn, rows)
     return written + len(rows)
@@ -630,21 +615,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Coleta ticks demo e grava dataset shadow com metricas e resultado futuro.")
     parser.add_argument("--ticks", type=int, default=600)
     parser.add_argument("--flush-every", type=int, default=100)
-    parser.add_argument("--output", type=Path, default=Path("data/shadow_ticks.csv"))
     parser.add_argument(
         "--pg-dsn",
         type=str,
         default=os.getenv("PG_DSN", ""),
         help="PostgreSQL DSN (ex: postgresql://user:pass@localhost/pegasus_db). "
-             "Também lido de PG_DSN no .env. Opcional.",
+             "Também lido de PG_DSN no .env.",
     )
     args = parser.parse_args()
 
-    if args.pg_dsn and not _HAS_PSYCOPG2:
-        print("⚠️  PG_DSN definido mas psycopg2 não está instalado. Instale: pip install psycopg2-binary")
+    if not args.pg_dsn:
+        print("Erro: PG_DSN nao definido. Use --pg-dsn ou defina PG_DSN no .env")
+        raise SystemExit(1)
+    if not _HAS_PSYCOPG2:
+        print("Erro: psycopg2 nao instalado. Execute: pip install psycopg2-binary")
+        raise SystemExit(1)
 
-    total = asyncio.run(collect_shadow_rows(args.output, args.ticks, args.flush_every, args.pg_dsn))
-    print(f"{total} linhas shadow salvas em {args.output}")
+    total = asyncio.run(collect_shadow_rows(args.ticks, args.flush_every, args.pg_dsn))
+    print(f"{total} linhas shadow salvas no PostgreSQL")
 
 
 if __name__ == "__main__":

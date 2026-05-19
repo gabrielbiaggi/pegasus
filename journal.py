@@ -1,97 +1,137 @@
 from __future__ import annotations
 
-import csv
+import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
+
+try:
+    import psycopg2  # type: ignore
+    _HAS_PSYCOPG2 = True
+except ImportError:
+    _HAS_PSYCOPG2 = False
+
+_log = logging.getLogger(__name__)
+
+_DDL_SIGNALS = """
+CREATE TABLE IF NOT EXISTS signals (
+    id                        BIGSERIAL PRIMARY KEY,
+    timestamp                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol                    TEXT,
+    contract_mode             TEXT,
+    entry_epoch               BIGINT,
+    direction                 TEXT,
+    score                     INTEGER,
+    stake                     DOUBLE PRECISION,
+    dry_run                   BOOLEAN,
+    bb_width_percent          DOUBLE PRECISION,
+    tick_atr_percent          DOUBLE PRECISION,
+    recent_move_percent       DOUBLE PRECISION,
+    hurst_exponent            DOUBLE PRECISION,
+    tick_imbalance            DOUBLE PRECISION,
+    hawkes_intensity          DOUBLE PRECISION,
+    velocity_zscore           DOUBLE PRECISION,
+    acceleration_zscore       DOUBLE PRECISION,
+    pmi_distance_percent      DOUBLE PRECISION,
+    markov_p_up_given_up      DOUBLE PRECISION,
+    markov_p_down_given_down  DOUBLE PRECISION,
+    shannon_entropy           DOUBLE PRECISION,
+    kalman_residual_zscore    DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS signals_entry_epoch_idx ON signals (entry_epoch);
+"""
+
+_DDL_TRADES = """
+CREATE TABLE IF NOT EXISTS trades (
+    id                        BIGSERIAL PRIMARY KEY,
+    timestamp                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol                    TEXT,
+    contract_mode             TEXT,
+    contract_id               BIGINT,
+    entry_epoch               BIGINT,
+    exit_epoch                BIGINT,
+    held_ticks                INTEGER,
+    direction                 TEXT,
+    score                     INTEGER,
+    soros_step                INTEGER,
+    gale_step                 INTEGER,
+    stake                     DOUBLE PRECISION,
+    buy_price                 DOUBLE PRECISION,
+    profit                    DOUBLE PRECISION,
+    result                    TEXT,
+    bb_width_percent          DOUBLE PRECISION,
+    tick_atr_percent          DOUBLE PRECISION,
+    recent_move_percent       DOUBLE PRECISION,
+    hurst_exponent            DOUBLE PRECISION,
+    tick_imbalance            DOUBLE PRECISION,
+    hawkes_intensity          DOUBLE PRECISION,
+    velocity_zscore           DOUBLE PRECISION,
+    acceleration_zscore       DOUBLE PRECISION,
+    pmi_distance_percent      DOUBLE PRECISION,
+    markov_p_up_given_up      DOUBLE PRECISION,
+    markov_p_down_given_down  DOUBLE PRECISION,
+    shannon_entropy           DOUBLE PRECISION,
+    kalman_residual_zscore    DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS trades_entry_epoch_idx ON trades (entry_epoch);
+CREATE INDEX IF NOT EXISTS trades_result_idx ON trades (result);
+"""
+
+_SQL_INSERT_SIGNAL = """
+INSERT INTO signals (
+    timestamp, symbol, contract_mode, entry_epoch, direction, score, stake, dry_run,
+    bb_width_percent, tick_atr_percent, recent_move_percent, hurst_exponent,
+    tick_imbalance, hawkes_intensity, velocity_zscore, acceleration_zscore,
+    pmi_distance_percent, markov_p_up_given_up, markov_p_down_given_down,
+    shannon_entropy, kalman_residual_zscore
+) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+"""
+
+_SQL_INSERT_TRADE = """
+INSERT INTO trades (
+    timestamp, symbol, contract_mode, contract_id, entry_epoch, exit_epoch,
+    held_ticks, direction, score, soros_step, gale_step, stake, buy_price,
+    profit, result,
+    bb_width_percent, tick_atr_percent, recent_move_percent, hurst_exponent,
+    tick_imbalance, hawkes_intensity, velocity_zscore, acceleration_zscore,
+    pmi_distance_percent, markov_p_up_given_up, markov_p_down_given_down,
+    shannon_entropy, kalman_residual_zscore
+) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+"""
 
 
 class TradeJournal:
-    signal_fields = [
-        "timestamp",
-        "symbol",
-        "contract_mode",
-        "entry_epoch",
-        "direction",
-        "score",
-        "stake",
-        "dry_run",
-        "bb_width_percent",
-        "tick_atr_percent",
-        "recent_move_percent",
-        "hurst_exponent",
-        "tick_imbalance",
-        "hawkes_intensity",
-        "velocity_zscore",
-        "acceleration_zscore",
-        "pmi_distance_percent",
-        "markov_p_up_given_up",
-        "markov_p_down_given_down",
-        "shannon_entropy",
-        "kalman_residual_zscore",
-    ]
-    trade_fields = [
-        "timestamp",
-        "symbol",
-        "contract_mode",
-        "contract_id",
-        "entry_epoch",
-        "exit_epoch",
-        "held_ticks",
-        "direction",
-        "score",
-        "soros_step",
-        "gale_step",
-        "stake",
-        "buy_price",
-        "profit",
-        "result",
-        "bb_width_percent",
-        "tick_atr_percent",
-        "recent_move_percent",
-        "hurst_exponent",
-        "tick_imbalance",
-        "hawkes_intensity",
-        "velocity_zscore",
-        "acceleration_zscore",
-        "pmi_distance_percent",
-        "markov_p_up_given_up",
-        "markov_p_down_given_down",
-        "shannon_entropy",
-        "kalman_residual_zscore",
-    ]
+    def __init__(self, pg_dsn: str = ""):
+        self._pg_dsn = pg_dsn
+        self._schema_ready = False
+        if pg_dsn and _HAS_PSYCOPG2:
+            self._ensure_schema()
+        elif pg_dsn and not _HAS_PSYCOPG2:
+            _log.warning("PG_DSN definido mas psycopg2 nao instalado. Instale: pip install psycopg2-binary")
 
-    def __init__(self, directory: str = "logs"):
-        self.directory = Path(directory)
-        self.directory.mkdir(parents=True, exist_ok=True)
+    def _connect(self):
+        return psycopg2.connect(self._pg_dsn)
 
-    def _append(self, filename: str, fields: list[str], row: dict[str, Any]) -> None:
-        path = self.directory / filename
-        exists = path.exists()
-        if exists and path.stat().st_size > 0:
-            first_line = path.read_text(encoding="utf-8").splitlines()[0]
-            if first_line != ",".join(fields):
-                archive = path.with_name(f"{path.stem}.legacy-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}{path.suffix}")
-                path.replace(archive)
-                exists = False
-
-        with path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            if not exists:
-                writer.writeheader()
-            writer.writerow({field: row.get(field, "") for field in fields})
+    def _ensure_schema(self) -> None:
+        if self._schema_ready:
+            return
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(_DDL_SIGNALS)
+                    cur.execute(_DDL_TRADES)
+            self._schema_ready = True
+        except Exception as exc:
+            _log.error("TradeJournal schema error: %s", exc)
 
     @staticmethod
-    def _format_metric(metrics: dict[str, Any] | None, name: str) -> str:
+    def _metric(metrics: dict[str, Any] | None, name: str) -> float | None:
         if not metrics or name not in metrics:
-            return ""
+            return None
         try:
-            value = float(metrics[name])
+            v = float(metrics[name])
         except (TypeError, ValueError):
-            return ""
-        if value != value:
-            return ""
-        return f"{value:.6f}"
+            return None
+        return None if v != v else v  # NaN → None
 
     def log_signal(
         self,
@@ -104,33 +144,33 @@ class TradeJournal:
         dry_run: bool,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        self._append(
-            "signals.csv",
-            self.signal_fields,
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "symbol": symbol,
-                "contract_mode": contract_mode,
-                "entry_epoch": entry_epoch,
-                "direction": direction,
-                "score": score,
-                "stake": f"{stake:.2f}",
-                "dry_run": dry_run,
-                "bb_width_percent": self._format_metric(metrics, "bb_width_percent"),
-                "tick_atr_percent": self._format_metric(metrics, "tick_atr_percent"),
-                "recent_move_percent": self._format_metric(metrics, "recent_move_percent"),
-                "hurst_exponent": self._format_metric(metrics, "hurst_exponent"),
-                "tick_imbalance": self._format_metric(metrics, "tick_imbalance"),
-                "hawkes_intensity": self._format_metric(metrics, "hawkes_intensity"),
-                "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
-                "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
-                "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
-                "markov_p_up_given_up": self._format_metric(metrics, "markov_p_up_given_up"),
-                "markov_p_down_given_down": self._format_metric(metrics, "markov_p_down_given_down"),
-                "shannon_entropy": self._format_metric(metrics, "shannon_entropy"),
-                "kalman_residual_zscore": self._format_metric(metrics, "kalman_residual_zscore"),
-            },
+        if not self._pg_dsn or not _HAS_PSYCOPG2:
+            return
+        self._ensure_schema()
+        m = metrics
+        row = (
+            datetime.now(UTC),
+            symbol, contract_mode, entry_epoch, direction, score, stake, dry_run,
+            self._metric(m, "bb_width_percent"),
+            self._metric(m, "tick_atr_percent"),
+            self._metric(m, "recent_move_percent"),
+            self._metric(m, "hurst_exponent"),
+            self._metric(m, "tick_imbalance"),
+            self._metric(m, "hawkes_intensity"),
+            self._metric(m, "velocity_zscore"),
+            self._metric(m, "acceleration_zscore"),
+            self._metric(m, "pmi_distance_percent"),
+            self._metric(m, "markov_p_up_given_up"),
+            self._metric(m, "markov_p_down_given_down"),
+            self._metric(m, "shannon_entropy"),
+            self._metric(m, "kalman_residual_zscore"),
         )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(_SQL_INSERT_SIGNAL, row)
+        except Exception as exc:
+            _log.error("log_signal PG error: %s", exc)
 
     def log_trade(
         self,
@@ -149,38 +189,32 @@ class TradeJournal:
         soros_step: int = 0,
         gale_step: int = 0,
     ) -> None:
+        if not self._pg_dsn or not _HAS_PSYCOPG2:
+            return
+        self._ensure_schema()
         result = "WIN" if profit > 0 else "LOSS"
-        self._append(
-            "trades.csv",
-            self.trade_fields,
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "symbol": symbol,
-                "contract_mode": contract_mode,
-                "contract_id": contract_id,
-                "entry_epoch": entry_epoch,
-                "exit_epoch": exit_epoch or "",
-                "held_ticks": held_ticks if held_ticks is not None else "",
-                "direction": direction,
-                "score": score,
-                "soros_step": soros_step,
-                "gale_step": gale_step if gale_step > 0 else "",
-                "stake": f"{stake:.2f}",
-                "buy_price": f"{buy_price:.2f}",
-                "profit": f"{profit:.2f}",
-                "result": result,
-                "bb_width_percent": self._format_metric(metrics, "bb_width_percent"),
-                "tick_atr_percent": self._format_metric(metrics, "tick_atr_percent"),
-                "recent_move_percent": self._format_metric(metrics, "recent_move_percent"),
-                "hurst_exponent": self._format_metric(metrics, "hurst_exponent"),
-                "tick_imbalance": self._format_metric(metrics, "tick_imbalance"),
-                "hawkes_intensity": self._format_metric(metrics, "hawkes_intensity"),
-                "velocity_zscore": self._format_metric(metrics, "velocity_zscore"),
-                "acceleration_zscore": self._format_metric(metrics, "acceleration_zscore"),
-                "pmi_distance_percent": self._format_metric(metrics, "pmi_distance_percent"),
-                "markov_p_up_given_up": self._format_metric(metrics, "markov_p_up_given_up"),
-                "markov_p_down_given_down": self._format_metric(metrics, "markov_p_down_given_down"),
-                "shannon_entropy": self._format_metric(metrics, "shannon_entropy"),
-                "kalman_residual_zscore": self._format_metric(metrics, "kalman_residual_zscore"),
-            },
+        m = metrics
+        row = (
+            datetime.now(UTC),
+            symbol, contract_mode, contract_id, entry_epoch, exit_epoch, held_ticks,
+            direction, score, soros_step, gale_step, stake, buy_price, profit, result,
+            self._metric(m, "bb_width_percent"),
+            self._metric(m, "tick_atr_percent"),
+            self._metric(m, "recent_move_percent"),
+            self._metric(m, "hurst_exponent"),
+            self._metric(m, "tick_imbalance"),
+            self._metric(m, "hawkes_intensity"),
+            self._metric(m, "velocity_zscore"),
+            self._metric(m, "acceleration_zscore"),
+            self._metric(m, "pmi_distance_percent"),
+            self._metric(m, "markov_p_up_given_up"),
+            self._metric(m, "markov_p_down_given_down"),
+            self._metric(m, "shannon_entropy"),
+            self._metric(m, "kalman_residual_zscore"),
         )
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(_SQL_INSERT_TRADE, row)
+        except Exception as exc:
+            _log.error("log_trade PG error: %s", exc)

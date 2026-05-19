@@ -55,7 +55,7 @@ class DerivBot:
         self.last_accumulator_entry_epoch: Optional[int] = None
         self.accumulator_open_epoch: Optional[int] = None
         self.accumulator_sell_requested = False
-        self.journal = TradeJournal(config.journal_dir)
+        self.journal = TradeJournal(config.pg_dsn)
         # Load XGBoost ensemble scorer if enabled
         self._ensemble_scorer: EnsembleScorer | None = None
         if config.accumulator_use_ensemble:

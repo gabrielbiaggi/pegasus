@@ -82,6 +82,7 @@ class BotConfig:
     use_dynamic_stake: bool
     dynamic_stake_base_pct: float
     journal_dir: str
+    pg_dsn: str
     dry_run: bool
     allow_real_trading: bool
     reconnect_delay_seconds: int
@@ -232,6 +233,7 @@ def load_config() -> BotConfig:
         use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
+        pg_dsn=os.getenv("PG_DSN", "").strip(),
         dry_run=_bool_env("DRY_RUN", True),
         allow_real_trading=_bool_env("ALLOW_REAL_TRADING", False),
         reconnect_delay_seconds=_int_env("RECONNECT_DELAY_SECONDS", 10),
