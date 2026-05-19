@@ -547,3 +547,132 @@ class EnsembleScorer:
         x = np.array([values], dtype=float)
         dmatrix = xgb.DMatrix(x, feature_names=self.feature_names)
         return float(self.booster.predict(dmatrix)[0])
+
+
+# ---------------------------------------------------------------------------
+# Rise/Fall (binary options) strategy
+# ---------------------------------------------------------------------------
+
+#: Features used for Rise/Fall direction prediction — includes SIGNED directional
+#: features that the accumulator scorer discards (e.g. raw price_velocity vs abs zscore).
+RF_FEATURES = [
+    "price_velocity",            # signed: positive = going up
+    "tick_imbalance",            # signed: positive = more up-ticks recently
+    "markov_p_up_given_up",      # momentum persistence up
+    "markov_p_down_given_down",  # momentum persistence down
+    "hurst_exponent",
+    "hawkes_intensity",
+    "velocity_zscore",
+    "acceleration_zscore",
+    "bb_width_percent",
+    "tick_atr_percent",
+    "recent_move_percent",
+    "shannon_entropy",
+    "kalman_residual_zscore",
+]
+
+
+@dataclass(frozen=True)
+class RiseFallStrategyConfig:
+    """Configuration for Rise/Fall directional signal generation."""
+
+    min_votes: int = 3          # votes needed out of 3 direction indicators
+    min_imbalance: float = 1.0  # |tick_imbalance| threshold for directional vote
+    use_ensemble: bool = False
+    ensemble_min_prob: float = 0.52  # P(correct direction) threshold
+
+    @property
+    def minimum_ticks(self) -> int:
+        # Reuse accumulator defaults — indicators require the same buffer size.
+        return AccumulatorStrategyConfig().minimum_ticks
+
+
+def generate_rise_fall_signal(
+    df: pd.DataFrame,
+    config: RiseFallStrategyConfig | None = None,
+    ensemble_scorer: "EnsembleScorerRF | None" = None,
+) -> tuple[Optional[str], int, Optional[float]]:
+    """Return ("CALL"/"PUT"/None, votes, p_direction).
+
+    Direction signal based on 3 aligned indicators:
+      1. price_velocity > 0 / < 0 (signed momentum)
+      2. tick_imbalance >= min_imbalance / <= -min_imbalance
+      3. markov_p_up_given_up > markov_p_down_given_down (persistence bias)
+    """
+    config = config or RiseFallStrategyConfig()
+    if len(df) < config.minimum_ticks:
+        return None, 0, None
+
+    last = df.iloc[-1]
+
+    # Ensemble gate (optional): use trained direction model
+    if config.use_ensemble and ensemble_scorer is not None:
+        p_up = ensemble_scorer.predict_up_probability(last)
+        if p_up >= config.ensemble_min_prob:
+            logger.info("EnsembleScorerRF P(UP)=%.4f >= %.4f → CALL", p_up, config.ensemble_min_prob)
+            return "CALL", 3, p_up
+        if p_up <= 1.0 - config.ensemble_min_prob:
+            logger.info("EnsembleScorerRF P(UP)=%.4f <= %.4f → PUT", p_up, 1.0 - config.ensemble_min_prob)
+            return "PUT", 3, 1.0 - p_up
+        logger.debug("EnsembleScorerRF P(UP)=%.4f — sem sinal direcional", p_up)
+        return None, 0, None
+
+    # Rule-based directional votes
+    velocity = float(last.get("price_velocity", 0.0) or 0.0)
+    imbalance = float(last.get("tick_imbalance", 0.0) or 0.0)
+    markov_up = float(last.get("markov_p_up_given_up", 0.5) or 0.5)
+    markov_dn = float(last.get("markov_p_down_given_down", 0.5) or 0.5)
+
+    # NaN guard
+    for v in (velocity, imbalance, markov_up, markov_dn):
+        if v != v:
+            return None, 0, None
+
+    up_votes = int(velocity > 0) + int(imbalance >= config.min_imbalance) + int(markov_up > markov_dn)
+    dn_votes = int(velocity < 0) + int(imbalance <= -config.min_imbalance) + int(markov_dn > markov_up)
+
+    logger.debug(
+        "RF vel=%.5f imb=%.1f mUp=%.3f mDn=%.3f → up_votes=%d dn_votes=%d",
+        velocity, imbalance, markov_up, markov_dn, up_votes, dn_votes,
+    )
+
+    if up_votes >= config.min_votes:
+        return "CALL", up_votes, None
+    if dn_votes >= config.min_votes:
+        return "PUT", dn_votes, None
+    return None, 0, None
+
+
+class EnsembleScorerRF:
+    """XGBoost Booster — predicts P(UP) for Rise/Fall direction.
+
+    Returns probability that price will be higher at t+N ticks.
+    Train with train_rf_model.py to generate models/pegasus_rf_v1.json.
+    """
+
+    def __init__(
+        self,
+        model_path: str = "models/pegasus_rf_v1.json",
+        features_path: str = "models/pegasus_rf_features_v1.json",
+    ) -> None:
+        if not _XGB_AVAILABLE:
+            raise RuntimeError("xgboost nao instalado. Execute: pip install xgboost")
+        import json as _json
+        with open(features_path) as _f:
+            self.feature_names: list[str] = _json.load(_f)
+        self.booster = xgb.Booster()
+        self.booster.load_model(model_path)
+        logger.info(
+            "EnsembleScorerRF XGBoost carregado: %d features, modelo=%s",
+            len(self.feature_names),
+            model_path,
+        )
+
+    def predict_up_probability(self, row: pd.Series) -> float:
+        """Return P(UP) in [0,1]. Values above 0.52 suggest CALL; below 0.48 suggest PUT."""
+        values = [float(row.get(feat, 0.0) or 0.0) for feat in self.feature_names]
+        if any(v != v for v in values):  # NaN guard
+            return 0.5
+        x = np.array([values], dtype=float)
+        dmatrix = xgb.DMatrix(x, feature_names=self.feature_names)
+        return float(self.booster.predict(dmatrix)[0])

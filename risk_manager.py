@@ -68,6 +68,7 @@ class RiskManager:
         self.losses = 0
         self.consecutive_losses = 0
         self.max_loss_streak_today = 0
+        self.loss_block_override = False   # set True via dashboard to bypass daily loss limit
         self.soros_step = 0
         self.soros_profit = 0.0
         self.martingale_step = 0
@@ -75,8 +76,44 @@ class RiskManager:
         self.martingale_base_stake: float = 0.0       # stake da primeira aposta da sequencia (step 0)
         # Sliding window timestamps of recent losses (monotonic clock)
         self._recent_loss_times: deque[float] = deque()
+        # Last time we re-read the state file to pick up external overrides (e.g. dashboard unblock)
+        self._last_override_check: float = 0.0
 
         self._load_state()
+
+    def _reload_overrides(self) -> None:
+        """Re-read only the override/block fields from disk.
+
+        Called by can_trade() when the bot is in a blocked state so that an
+        external unblock (e.g. dashboard setting loss_block_override=True or
+        resetting consecutive_losses) is detected without requiring a restart.
+        Rate-limited to at most once every 5 seconds.
+        """
+        now = time.monotonic()
+        if now - self._last_override_check < 5.0:
+            return
+        self._last_override_check = now
+
+        if not self.state_path.exists():
+            return
+        try:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if data.get("day") != self.day:
+            return
+
+        new_override = bool(data.get("loss_block_override", False))
+        new_consec = int(data.get("consecutive_losses", self.consecutive_losses))
+        if new_override != self.loss_block_override or new_consec != self.consecutive_losses:
+            logger.info(
+                "Override detectado no disco: loss_block_override %s→%s  consecutive_losses %s→%s",
+                self.loss_block_override, new_override,
+                self.consecutive_losses, new_consec,
+            )
+            self.loss_block_override = new_override
+            self.consecutive_losses = new_consec
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
@@ -105,6 +142,7 @@ class RiskManager:
         self.martingale_step = int(data.get("martingale_step", 0))
         self.martingale_accumulated_loss = float(data.get("martingale_accumulated_loss", 0.0))
         self.martingale_base_stake = float(data.get("martingale_base_stake", 0.0))
+        self.loss_block_override = bool(data.get("loss_block_override", False))
         # Segurança: estado legado sem base_stake → reseta gale (melhor pausar que calcular errado)
         if self.martingale_step > 0 and self.martingale_base_stake == 0.0:
             logger.warning("Estado martingale inconsistente (base_stake=0 com step=%d). Resetando gale.", self.martingale_step)
@@ -140,6 +178,7 @@ class RiskManager:
             "martingale_step": self.martingale_step,
             "martingale_accumulated_loss": self.martingale_accumulated_loss,
             "martingale_base_stake": self.martingale_base_stake,
+            "loss_block_override": self.loss_block_override,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -159,6 +198,7 @@ class RiskManager:
         self.losses = 0
         self.consecutive_losses = 0
         self.max_loss_streak_today = 0
+        self.loss_block_override = False
         self.soros_step = 0
         self.soros_profit = 0.0
         self.martingale_step = 0
@@ -166,10 +206,21 @@ class RiskManager:
         self.martingale_base_stake = 0.0
         self._save_state()
 
+    def abandon_gale(self) -> None:
+        """Abandona a sequência de gale atual — absorve as perdas acumuladas e reseta para G0."""
+        logger.warning(
+            "⛔ Gale %d/%d ABANDONADO por P(LOSS) alto — perdas absorvidas: %.2f",
+            self.martingale_step,
+            self.martingale_max_gales,
+            self.martingale_accumulated_loss,
+        )
+        self.martingale_step = 0
+        self.martingale_accumulated_loss = 0.0
+        self.martingale_base_stake = 0.0
+        self._save_state()
+
     def get_stake(self, p_loss: float | None = None) -> float:
         self._reset_if_new_day()
-        # Hard cap = menor entre % banca e MAX_STAKE absoluto
-        pct_cap = self.balance * self.max_stake_pct
 
         if self.use_dynamic_stake and p_loss is not None:
             # Base = % da banca atual (nunca menor que fixed_stake mínimo)
@@ -192,9 +243,23 @@ class RiskManager:
             # Sem IA ou dynamic stake off: aposta fixa conservadora
             raw_stake = self.fixed_stake
 
-        # Soros: reinveste lucro acumulado de wins consecutivos
+        # Soros: reinveste lucro acumulado de wins consecutivos (limpos, não gale)
         if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
+
+        # Gale-safe cap: limita G0 (incluindo Soros) para que G(max_gales) caiba dentro de max_stake.
+        # Posicionado APÓS Soros para capturar qualquer inflação de stake.
+        # Fórmula: G_n = G0 × (1 + 1/rate)^n  →  G0_max = max_stake / (1+1/rate)^n
+        # Com rate=0.50 e max_gales=2: G0_max = max_stake / 9
+        # Garante recuperação total no último gale SEM estourar o cap.
+        if (
+            self.use_martingale
+            and self.martingale_step == 0
+            and self.max_stake > 0
+            and self.martingale_payout_rate > 0
+        ):
+            gale_factor = (1.0 + 1.0 / self.martingale_payout_rate) ** self.martingale_max_gales
+            raw_stake = min(raw_stake, self.max_stake / gale_factor)
 
         # Martingale: calcula stake de recuperacao matematicamente correta para o payout atual.
         # Formula: G = perdas_acumuladas / payout_rate + stake_base
@@ -207,6 +272,9 @@ class RiskManager:
 
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
             # Martingale recovery: o limite é a banca inteira.
+            caps = [raw_stake, self.balance]
+        elif self.loss_block_override:
+            # Override ativo: ignora o budget restante do limite diário, usa banca inteira.
             caps = [raw_stake, self.balance]
         else:
             # Cap = banca inteira (sem pct_cap). Proteção real via can_trade() e remaining_budget.
@@ -234,8 +302,10 @@ class RiskManager:
 
     def can_trade(self) -> bool:
         self._reset_if_new_day()
+        # Check for external override changes written by dashboard (no restart needed)
+        self._reload_overrides()
 
-        if self.daily_net_profit <= -self.max_loss_day:
+        if self.daily_net_profit <= -self.max_loss_day and not self.loss_block_override:
             logger.warning(
                 "Stop loss diario atingido: lucro_liquido=%.2f (limite=-%.2f)",
                 self.daily_net_profit,
@@ -321,6 +391,7 @@ class RiskManager:
         if profit > 0:
             self.wins += 1
             self.consecutive_losses = 0
+            _was_gale_win = self.use_martingale and self.martingale_step > 0
             if self.use_martingale and self.martingale_step > 0:
                 # Partial recovery: reduce accumulated_loss by this WIN's profit.
                 # The gale stake may have been capped by MAX_STAKE so a single WIN
@@ -356,10 +427,13 @@ class RiskManager:
                 self.martingale_step = 0
                 self.martingale_accumulated_loss = 0.0
                 self.martingale_base_stake = 0.0
-            if self.use_soros and self.soros_max_steps > 0:
+            # Soros só ativa em wins limpos (G0), NÃO em recuperações de gale.
+            # Após um gale win, o "lucro" bruto é apenas recuperação de perdas, não ganho real.
+            if self.use_soros and self.soros_max_steps > 0 and not _was_gale_win:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
-                    self.soros_profit = round(profit * self.soros_profit_factor, 2)
+                    # Acumula o lucro de todos os wins da sequência Soros (não sobrescreve)
+                    self.soros_profit = round(self.soros_profit + profit * self.soros_profit_factor, 2)
                 else:
                     self.soros_step = 0
                     self.soros_profit = 0.0
@@ -375,7 +449,19 @@ class RiskManager:
                     # Primeiro loss: guarda a stake base desta sequencia de gales
                     self.martingale_base_stake = buy_price
                 self.martingale_accumulated_loss += buy_price
-                self.martingale_step = min(self.martingale_step + 1, self.martingale_max_gales)
+                if self.martingale_step >= self.martingale_max_gales:
+                    # Último gale esgotado — perdas absorvidas, reseta sequência para G0
+                    logger.warning(
+                        "⛔ Gale %d/%d ESGOTADO — perdas totais=%.2f absorvidas, iniciando nova sequência",
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                        self.martingale_accumulated_loss,
+                    )
+                    self.martingale_step = 0
+                    self.martingale_accumulated_loss = 0.0
+                    self.martingale_base_stake = 0.0
+                else:
+                    self.martingale_step += 1
             self.max_loss_streak_today = max(self.max_loss_streak_today, self.consecutive_losses)
             realized_loss = abs(profit) if profit < 0 else buy_price
             self.daily_loss += realized_loss

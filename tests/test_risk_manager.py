@@ -249,13 +249,14 @@ class RiskManagerTest(unittest.TestCase):
                 state_path=str(Path(tmp) / "risk.json"),
             )
             # 4 consecutive losses → stop (max_consecutive_losses=4)
-            risk.update(profit=-1, buy_price=1)
-            risk.update(profit=-1, buy_price=1)
-            risk.update(profit=-1, buy_price=1)
-            risk.update(profit=-1, buy_price=1)
+            risk.update(profit=-1, buy_price=1)   # G0 perde → step=1
+            risk.update(profit=-1, buy_price=1)   # G1 perde → step=2
+            risk.update(profit=-1, buy_price=1)   # G2 perde → step=3
+            risk.update(profit=-1, buy_price=1)   # G3 (last gale) perde → RESET → step=0
             self.assertFalse(risk.can_trade())
-            # martingale_step capped at 3 (max_gales)
-            self.assertEqual(risk.martingale_step, 3)
+            # Após perder o último gale, a sequência reseta para G0 (começa de novo)
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.martingale_accumulated_loss, 0.0)
 
 
 if __name__ == "__main__":

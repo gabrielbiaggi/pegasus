@@ -17,6 +17,7 @@ app = FastAPI(title="Pegasus Dashboard")
 BASE = Path("/opt/pegasus")
 TRADES_CSV = BASE / "logs" / "trades.csv"
 TRADES_LOG = BASE / "logs" / "trades.log"
+BALANCE_JSON = BASE / "logs" / "balance.json"
 ENV_FILE = BASE / ".env"
 SCREEN_BOT = "pegasus"
 VENV_PYTHON = str(BASE / ".venv/bin/python")
@@ -38,6 +39,26 @@ def _bot_running() -> bool:
 
 # Cache: balance changes only at login, so refresh at most every 60s
 _balance_cache: tuple[float, str] = (0.0, "—")
+# Fast balance cache: backed by logs/balance.json written by bot on every balance_after event
+_balance_fast_cache: tuple[float, str] = (0.0, "—")
+
+
+def _read_balance_fast() -> str:
+    """Read balance from logs/balance.json (written by bot on every buy/sell/balance event).
+    Cache TTL = 0.5s. Falls back to log scanning if file absent."""
+    global _balance_fast_cache
+    now = _time.monotonic()
+    if now - _balance_fast_cache[0] < 0.5 and _balance_fast_cache[1] != "—":
+        return _balance_fast_cache[1]
+    try:
+        data = json.loads(BALANCE_JSON.read_text())
+        val = str(round(float(data["balance"]), 2))
+        _balance_fast_cache = (now, val)
+        return val
+    except Exception:
+        pass
+    # fallback to slow log scan
+    return _last_balance()
 
 
 def _search_log_backward(pattern: bytes, chunk: int = 65536) -> str:
@@ -188,8 +209,10 @@ def _set_env(key: str, value: str) -> None:
 def _restart_bot() -> None:
     subprocess.run(["screen", "-S", SCREEN_BOT, "-X", "quit"], capture_output=True)
     import time; time.sleep(1)
+    # Limpa sessões mortas antes de criar nova
+    subprocess.run(["screen", "-wipe"], capture_output=True)
     cmd = (
-        f"cd {BASE} && {VENV_PYTHON} bot.py 2>&1 | tee -a logs/trades.log"
+        f"cd {BASE} && PYTHONUNBUFFERED=1 {VENV_PYTHON} -u bot.py 2>&1 | tee -a logs/bot.log"
     )
     subprocess.run(["screen", "-dmS", SCREEN_BOT, "bash", "-c", cmd])
 
@@ -207,6 +230,8 @@ def _compute_max_loss_day(risk_state: dict) -> float:
 
 
 def _compute_risk_blocked(risk_state: dict) -> bool:
+    # Always reflect the raw monetary condition — independent of loss_block_override.
+    # The button exists precisely to let the user override a block, so we always show it.
     return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(risk_state)
 
 
@@ -265,7 +290,7 @@ def api_status(response: Response):
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
     risk_state = _read_risk_state()
     # P&L total: current balance vs initial capital
-    bal_str = _last_balance()
+    bal_str = _read_balance_fast()
     try:
         bal_float = float(bal_str)
     except (ValueError, TypeError):
@@ -274,7 +299,7 @@ def api_status(response: Response):
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     return {
         "running": _bot_running(),
-        "balance": _last_balance(),
+        "balance": _read_balance_fast(),
         "wins": wins,
         "losses": losses,
         "total": total,
@@ -311,7 +336,22 @@ def api_status(response: Response):
         "next_gale_stake": _compute_next_gale_stake(risk_state),
         "pnl_total": pnl_total,
         "initial_balance": ini_bal,
+        "loss_pause_enabled": _get_env("LOSS_PAUSE_ENABLED") != "false",
     }
+
+
+@app.get("/api/balance")
+def api_balance(response: Response):
+    """Lightweight endpoint — returns current balance only. Polled every 500ms by dashboard."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    bal = _read_balance_fast()
+    try:
+        bal_float = float(bal)
+    except (ValueError, TypeError):
+        bal_float = 0.0
+    ini_bal = _initial_balance()
+    pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
+    return {"balance": bal, "pnl_total": pnl_total, "initial_balance": ini_bal}
 
 
 @app.get("/api/sessions")
@@ -385,6 +425,24 @@ def bot_stop():
 def bot_restart():
     _restart_bot()
     return {"ok": True, "msg": "Bot reiniciado."}
+
+
+@app.post("/api/bot/unblock")
+def bot_unblock():
+    """Ignore the daily monetary loss limit — bot continues from current state."""
+    risk_path = BASE / "logs" / "risk_state.json"
+    if risk_path.exists():
+        try:
+            state = json.loads(risk_path.read_text())
+            state["loss_block_override"] = True
+            risk_path.write_text(json.dumps(state, indent=2))
+        except Exception as exc:
+            return {"ok": False, "msg": f"Erro ao atualizar estado: {exc}"}
+    else:
+        risk_path.parent.mkdir(parents=True, exist_ok=True)
+        risk_path.write_text(json.dumps({"loss_block_override": True}, indent=2))
+    _restart_bot()
+    return {"ok": True, "msg": "Bot desbloqueado. Limite de perda ignorado."}
 
 
 @app.post("/api/reset")
@@ -464,7 +522,7 @@ ALLOWED_KEYS = {
     "MAX_STAKE", "MAX_STAKE_PERCENT",
     "ACCUMULATOR_TAKE_PROFIT_PERCENT", "ACCUMULATOR_MAX_HOLD_TICKS",
     "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_MULTIPLIER", "MARTINGALE_PAYOUT_RATE",
-    "INITIAL_BALANCE",
+    "INITIAL_BALANCE", "LOSS_PAUSE_ENABLED",
 }
 
 @app.post("/api/env")

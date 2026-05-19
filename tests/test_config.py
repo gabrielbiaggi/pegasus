@@ -45,15 +45,25 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_config()
 
-    def test_rejects_non_accumulator_mode(self) -> None:
+    def test_rejects_invalid_contract_mode(self) -> None:
+        env = {
+            "DERIV_TOKEN": "token",
+            "DERIV_APP_ID": "1089",
+            "CONTRACT_MODE": "options",
+        }
+        with patch("config.load_dotenv"), patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(ValueError):
+                load_config()
+
+    def test_accepts_rise_fall_mode(self) -> None:
         env = {
             "DERIV_TOKEN": "token",
             "DERIV_APP_ID": "1089",
             "CONTRACT_MODE": "rise_fall",
         }
         with patch("config.load_dotenv"), patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(ValueError):
-                load_config()
+            cfg = load_config()
+            self.assertEqual(cfg.contract_mode, "rise_fall")
 
 
 if __name__ == "__main__":

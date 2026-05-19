@@ -59,6 +59,7 @@ class BotConfig:
     stake: float
     blocked_utc_hours: tuple[int, ...]
     block_weekends: bool
+    loss_pause_enabled: bool
     max_loss_per_day: float
     max_loss_day_pct: float  # 0.0 = use max_loss_per_day; >0 = % of balance (overrides fixed)
     max_profit_per_day: float
@@ -76,6 +77,8 @@ class BotConfig:
     martingale_max_gales: int
     martingale_multiplier: float
     martingale_payout_rate: float
+    martingale_last_gale_max_ploss: float
+    martingale_last_gale_max_wait_ticks: int  # max ticks to wait in last-gale mode; 0 = wait forever
     use_dynamic_stake: bool
     dynamic_stake_base_pct: float
     journal_dir: str
@@ -125,6 +128,13 @@ class BotConfig:
     accumulator_use_ensemble: bool
     accumulator_ensemble_min_prob: float
     accumulator_min_barrier_distance_pct: float  # 0.0 = desativado; >0 = % minima da barreira (saida defensiva)
+    # Rise/Fall (binary options) config
+    rise_fall_duration_ticks: int
+    rise_fall_min_votes: int
+    rise_fall_min_imbalance: float
+    rise_fall_use_ensemble: bool
+    rise_fall_ensemble_min_prob: float
+    rise_fall_cooldown_ticks: int
 
     @property
     def ws_url(self) -> str:
@@ -166,6 +176,17 @@ class BotConfig:
         )
 
 
+    @property
+    def rise_fall_strategy_config(self) -> "RiseFallStrategyConfig":
+        from strategy import RiseFallStrategyConfig
+        return RiseFallStrategyConfig(
+            min_votes=self.rise_fall_min_votes,
+            min_imbalance=self.rise_fall_min_imbalance,
+            use_ensemble=self.rise_fall_use_ensemble,
+            ensemble_min_prob=self.rise_fall_ensemble_min_prob,
+        )
+
+
 def load_config() -> BotConfig:
     load_dotenv()
 
@@ -188,6 +209,7 @@ def load_config() -> BotConfig:
         stake=_float_env("STAKE", 1.0),
         blocked_utc_hours=_hours_env("BLOCKED_UTC_HOURS"),
         block_weekends=_bool_env("BLOCK_WEEKENDS", True),
+        loss_pause_enabled=_bool_env("LOSS_PAUSE_ENABLED", True),
         max_loss_per_day=_float_env("MAX_LOSS_PER_DAY", 20.0),
         max_loss_day_pct=_float_env("MAX_LOSS_DAY_PCT", 0.0),
         max_profit_per_day=_float_env("MAX_PROFIT_PER_DAY", 0.0),
@@ -205,6 +227,8 @@ def load_config() -> BotConfig:
         martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 3),
         martingale_multiplier=_float_env("MARTINGALE_MULTIPLIER", 2.0),
         martingale_payout_rate=_float_env("MARTINGALE_PAYOUT_RATE", 0.15),
+        martingale_last_gale_max_ploss=_float_env("MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05),
+        martingale_last_gale_max_wait_ticks=_int_env("MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0),
         use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
@@ -254,14 +278,21 @@ def load_config() -> BotConfig:
         accumulator_use_ensemble=_bool_env("USE_ENSEMBLE", False),
         accumulator_ensemble_min_prob=_float_env("ENSEMBLE_MIN_PROB", 0.294),
         accumulator_min_barrier_distance_pct=_float_env("ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0),
+        # Rise/Fall
+        rise_fall_duration_ticks=_int_env("RISE_FALL_DURATION_TICKS", 5),
+        rise_fall_min_votes=_int_env("RISE_FALL_MIN_VOTES", 3),
+        rise_fall_min_imbalance=_float_env("RISE_FALL_MIN_IMBALANCE", 1.0),
+        rise_fall_use_ensemble=_bool_env("RISE_FALL_USE_ENSEMBLE", False),
+        rise_fall_ensemble_min_prob=_float_env("RISE_FALL_ENSEMBLE_MIN_PROB", 0.52),
+        rise_fall_cooldown_ticks=_int_env("RISE_FALL_COOLDOWN_TICKS", 3),
     )
 
     if config.stake <= 0:
         raise ValueError("STAKE precisa ser maior que zero.")
     if config.account_mode not in {"demo", "real", "any"}:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
-    if config.contract_mode != "accumulator":
-        raise ValueError("CONTRACT_MODE deve ser accumulator. Pegasus agora opera somente Accumulators por ticks.")
+    if config.contract_mode not in {"accumulator", "rise_fall"}:
+        raise ValueError("CONTRACT_MODE deve ser accumulator ou rise_fall.")
     if config.max_loss_day_pct > 0:
         if not 0 < config.max_loss_day_pct <= 1:
             raise ValueError("MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%).")

@@ -63,6 +63,10 @@ FIELDS = [
     # Regression targets for WFO/SHAP analysis
     "y1_max_drawdown_5ticks",  # max adverse move % in next 5 ticks
     "y2_seconds_to_3pct",      # seconds until price moves >=3%; -1 if never within max_hold
+    # Rise/Fall direction labels (binary prediction targets)
+    "future_rf_direction_1t",  # "UP"/"DOWN"/"TIE" at t+1
+    "future_rf_direction_3t",  # "UP"/"DOWN"/"TIE" at t+3
+    "future_rf_direction_5t",  # "UP"/"DOWN"/"TIE" at t+5
 ]
 
 
@@ -90,6 +94,26 @@ def _y1_max_drawdown_5ticks(
         move = abs(float(ticks[i]["quote"]) - entry_quote) / entry_quote * 100
         max_move = max(max_move, move)
     return round(max_move, 8)
+
+
+def _future_rf_direction(
+    ticks: list[dict[str, Any]],
+    entry_index: int,
+    lookahead: int,
+) -> str | None:
+    """Return 'UP'/'DOWN'/'TIE' based on price at t+lookahead vs t.
+
+    Returns None if there are not enough ticks yet.
+    """
+    if len(ticks) <= entry_index + lookahead:
+        return None
+    entry_quote = float(ticks[entry_index]["quote"])
+    future_quote = float(ticks[entry_index + lookahead]["quote"])
+    if future_quote > entry_quote:
+        return "UP"
+    if future_quote < entry_quote:
+        return "DOWN"
+    return "TIE"
 
 
 def _y2_seconds_to_3pct(
@@ -557,6 +581,16 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                 )
                 if y2 is None:
                     break
+                # Rise/Fall direction labels — require max 5 ticks lookahead
+                rf_dir_1t = _future_rf_direction(all_ticks, idx, 1)
+                if rf_dir_1t is None:
+                    break
+                rf_dir_3t = _future_rf_direction(all_ticks, idx, 3)
+                if rf_dir_3t is None:
+                    break
+                rf_dir_5t = _future_rf_direction(all_ticks, idx, 5)
+                if rf_dir_5t is None:
+                    break
                 pending.popleft()
                 rows.append({
                     **row,
@@ -565,6 +599,9 @@ async def collect_shadow_rows(output: Path, ticks_to_collect: int, flush_every: 
                     "future_result_spot_005": spot_result["future_result"],
                     "y1_max_drawdown_5ticks": y1,
                     "y2_seconds_to_3pct": y2,
+                    "future_rf_direction_1t": rf_dir_1t,
+                    "future_rf_direction_3t": rf_dir_3t,
+                    "future_rf_direction_5t": rf_dir_5t,
                 })
 
             if len(rows) >= flush_every:

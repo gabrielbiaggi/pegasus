@@ -1,0 +1,1 @@
+["hurst_exponent", "shannon_entropy", "tick_imbalance", "hawkes_intensity", "velocity_zscore", "acceleration_zscore", "kalman_residual_zscore", "pmi_distance_percent", "markov_p_up_given_up", "markov_p_down_given_down", "bb_width_percent", "tick_atr_percent", "recent_move_percent"]
