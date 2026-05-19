@@ -25,7 +25,7 @@ except Exception as e:
     sys.exit(1)
 
 # ─── carrega shadow data ─────────────────────────────────────────────────────
-DATA_PATH = "data/shadow_ticks_full.csv"
+DATA_PATH = "data/legacy_accumulator/shadow_ticks_full.csv"
 print(f"\nCarregando {DATA_PATH} …", flush=True)
 t0 = time.time()
 df = pd.read_csv(DATA_PATH, on_bad_lines="skip")

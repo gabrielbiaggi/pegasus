@@ -72,7 +72,7 @@ scorer = EnsembleScorer()
 features = scorer.feature_names
 
 # ── Carrega dados ─────────────────────────────────────────────────────────────
-DATA = "data/shadow_ticks_full.csv"
+DATA = "data/legacy_accumulator/shadow_ticks_full.csv"
 print(f"Carregando {DATA} …", flush=True)
 df = pd.read_csv(DATA, on_bad_lines="skip")
 df = df[df["future_result"].isin(["WIN", "LOSS"])].copy()

@@ -23,7 +23,7 @@ from sklearn.metrics import roc_auc_score, classification_report, brier_score_lo
 from sklearn.calibration import calibration_curve
 
 # ─── Config ─────────────────────────────────────────────────────────────────
-DATA_PATH       = "data/shadow_ticks_full.csv"
+DATA_PATH       = "data/legacy_accumulator/shadow_ticks_full.csv"
 FEATURES_PATH   = "models/pegasus_features_v1.json"
 OUT_MODEL       = "models/pegasus_xgb_v2.json"
 OUT_FEATURES    = "models/pegasus_features_v2.json"

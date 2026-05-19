@@ -51,7 +51,7 @@ RF_FEATURES = [
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Treina modelo de direcao Rise/Fall.")
-    parser.add_argument("--data", default="data/shadow_ticks_full.csv")
+    parser.add_argument("--data", default="data/legacy_accumulator/shadow_ticks_full.csv")
     parser.add_argument("--out", default="models/pegasus_rf_v1.json")
     parser.add_argument("--features-out", default="models/pegasus_rf_features_v1.json")
     parser.add_argument("--target", default="future_rf_direction_5t",
