@@ -358,6 +358,7 @@ def api_status(response: Response):
         "stake_value": float(_get_env("STAKE") or "0"),
         "stop_loss_value": float(_get_env("MAX_LOSS_PER_DAY") or "0"),
         "stop_gain_value": float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
+        "account_mode": _get_env("ACCOUNT_MODE") or "demo",
     }
 
 
@@ -568,7 +569,7 @@ class EnvUpdate(BaseModel):
     value: str
 
 ALLOWED_KEYS = {
-    "BLOCK_WEEKENDS", "STAKE",
+    "BLOCK_WEEKENDS", "STAKE", "ACCOUNT_MODE",
     "MAX_LOSS_PER_DAY", "MAX_PROFIT_PER_DAY", "MAX_LOSS_DAY_PCT",
     "STOP_LOSS_PCT", "STOP_GAIN_PCT", "DYNAMIC_STAKE_BASE_PCT",
     "MAX_TICK_LATENCY_MS", "LOG_LEVEL",
