@@ -339,6 +339,9 @@ CREATE TABLE IF NOT EXISTS shadow_ticks (
     future_max_move_percent   DOUBLE PRECISION,
     y1_max_drawdown_5ticks    DOUBLE PRECISION,
     y2_seconds_to_3pct        DOUBLE PRECISION,
+    future_rf_direction_1t    TEXT,
+    future_rf_direction_3t    TEXT,
+    future_rf_direction_5t    TEXT,
     inserted_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS accu_barrier_est_percent DOUBLE PRECISION;
@@ -348,6 +351,9 @@ ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS real_barrier_percent DOUBLE PR
 ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS barrier_source TEXT;
 ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_result_atr_est TEXT;
 ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_result_spot_005 TEXT;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_rf_direction_1t TEXT;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_rf_direction_3t TEXT;
+ALTER TABLE shadow_ticks ADD COLUMN IF NOT EXISTS future_rf_direction_5t TEXT;
 CREATE INDEX IF NOT EXISTS shadow_ticks_entry_epoch_idx ON shadow_ticks (entry_epoch);
 """
 
