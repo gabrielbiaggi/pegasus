@@ -585,6 +585,20 @@ def update_env(body: EnvUpdate):
     if body.key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Chave não permitida: {body.key}")
     _set_env(body.key, body.value)
+    # Swap tokens when account mode changes
+    if body.key == "ACCOUNT_MODE":
+        if body.value == "real":
+            real_token = _get_env("DERIV_REAL_TOKEN") or ""
+            if not real_token:
+                raise HTTPException(status_code=400, detail="DERIV_REAL_TOKEN não configurado no .env")
+            _set_env("DERIV_TOKEN", real_token)
+            _set_env("ALLOW_REAL_TRADING", "true")
+        else:
+            demo_token = _get_env("DERIV_DEMO_TOKEN") or ""
+            if not demo_token:
+                raise HTTPException(status_code=400, detail="DERIV_DEMO_TOKEN não configurado no .env")
+            _set_env("DERIV_TOKEN", demo_token)
+            _set_env("ALLOW_REAL_TRADING", "false")
     return {"ok": True, "key": body.key, "value": body.value}
 
 
