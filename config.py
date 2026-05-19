@@ -63,6 +63,8 @@ class BotConfig:
     max_loss_per_day: float
     max_loss_day_pct: float  # 0.0 = use max_loss_per_day; >0 = % of balance (overrides fixed)
     max_profit_per_day: float
+    stop_loss_pct: float
+    stop_gain_pct: float
     max_trades_per_day: int
     daily_trailing_start: float
     daily_trailing_lock: float
@@ -79,7 +81,6 @@ class BotConfig:
     martingale_payout_rate: float
     martingale_last_gale_max_ploss: float
     martingale_last_gale_max_wait_ticks: int  # max ticks to wait in last-gale mode; 0 = wait forever
-    use_dynamic_stake: bool
     dynamic_stake_base_pct: float
     journal_dir: str
     pg_dsn: str
@@ -214,6 +215,8 @@ def load_config() -> BotConfig:
         max_loss_per_day=_float_env("MAX_LOSS_PER_DAY", 20.0),
         max_loss_day_pct=_float_env("MAX_LOSS_DAY_PCT", 0.0),
         max_profit_per_day=_float_env("MAX_PROFIT_PER_DAY", 0.0),
+        stop_loss_pct=_float_env("STOP_LOSS_PCT", 0.0),
+        stop_gain_pct=_float_env("STOP_GAIN_PCT", 0.0),
         max_trades_per_day=_int_env("MAX_TRADES_PER_DAY", 50),
         daily_trailing_start=_float_env("DAILY_TRAILING_START", 0.0),
         daily_trailing_lock=_float_env("DAILY_TRAILING_LOCK", 0.0),
@@ -225,12 +228,11 @@ def load_config() -> BotConfig:
         soros_max_steps=_int_env("SOROS_MAX_STEPS", 1),
         soros_profit_factor=_float_env("SOROS_PROFIT_FACTOR", 1.0),
         use_martingale=_bool_env("USE_MARTINGALE", False),
-        martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 3),
+        martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 6),
         martingale_multiplier=_float_env("MARTINGALE_MULTIPLIER", 2.0),
         martingale_payout_rate=_float_env("MARTINGALE_PAYOUT_RATE", 0.15),
         martingale_last_gale_max_ploss=_float_env("MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05),
         martingale_last_gale_max_wait_ticks=_int_env("MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0),
-        use_dynamic_stake=_bool_env("DYNAMIC_STAKE", True),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
         pg_dsn=os.getenv("PG_DSN", "").strip(),
@@ -293,8 +295,8 @@ def load_config() -> BotConfig:
         raise ValueError("STAKE precisa ser maior que zero.")
     if config.account_mode not in {"demo", "real", "any"}:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
-    if config.contract_mode not in {"accumulator", "rise_fall"}:
-        raise ValueError("CONTRACT_MODE deve ser accumulator ou rise_fall.")
+    if config.contract_mode not in {"accumulator", "rise_fall", "jump_rise_fall"}:
+        raise ValueError("CONTRACT_MODE deve ser accumulator, rise_fall ou jump_rise_fall.")
     if config.max_loss_day_pct > 0:
         if not 0 < config.max_loss_day_pct <= 1:
             raise ValueError("MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%).")
@@ -322,7 +324,7 @@ def load_config() -> BotConfig:
         raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
     if config.martingale_multiplier < 1.0:
         raise ValueError("MARTINGALE_MULTIPLIER deve ser >= 1.")
-    if config.tick_count < config.accumulator_strategy_config.minimum_ticks:
+    if config.contract_mode != "jump_rise_fall" and config.tick_count < config.accumulator_strategy_config.minimum_ticks:
         raise ValueError(
             f"TICK_COUNT deve ser pelo menos {config.accumulator_strategy_config.minimum_ticks} "
             "para Accumulators."

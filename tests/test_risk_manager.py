@@ -127,6 +127,7 @@ class RiskManagerTest(unittest.TestCase):
                 use_soros=True,
                 soros_max_steps=1,
                 soros_profit_factor=1.0,
+                dynamic_stake_base_pct=0.001,  # 1000 * 0.001 = 1
                 state_path=str(Path(tmp) / "risk.json"),
             )
             risk.update(profit=0.85, buy_price=1)
@@ -154,6 +155,7 @@ class RiskManagerTest(unittest.TestCase):
                 use_martingale=True,
                 martingale_max_gales=3,
                 martingale_payout_rate=0.15,
+                dynamic_stake_base_pct=0.0001,  # 100000 * 0.0001 = 10
                 state_path=str(Path(tmp) / "risk.json"),
             )
             # Gale 0: aposta base
@@ -199,6 +201,7 @@ class RiskManagerTest(unittest.TestCase):
                 use_martingale=True,
                 martingale_max_gales=3,
                 martingale_payout_rate=0.15,
+                dynamic_stake_base_pct=0.0001,  # 100000 * 0.0001 = 10
                 state_path=str(Path(tmp) / "risk.json"),
             )
             s0 = risk.get_stake()   # 10.0
@@ -257,6 +260,70 @@ class RiskManagerTest(unittest.TestCase):
             # Após perder o último gale, a sequência reseta para G0 (começa de novo)
             self.assertEqual(risk.martingale_step, 0)
             self.assertEqual(risk.martingale_accumulated_loss, 0.0)
+
+    def test_pct_based_stop_loss(self) -> None:
+        """stop_loss_pct=5 on balance=1000 → effective limit = 50. Fixed max_loss_day is ignored."""
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=1000,
+                max_loss_day=9999,       # high fixed $, should be ignored when pct > 0
+                max_profit_day=0,
+                max_trades_day=100,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=1.0,
+                fixed_stake=10,
+                min_stake=0.35,
+                max_stake=500,
+                max_consecutive_losses=100,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                max_losses_in_window=100,
+                state_path=str(Path(tmp) / "risk.json"),
+                stop_loss_pct=5.0,       # 5% of 1000 = 50
+            )
+            # Simulate Deriv balance stream updating balance after loss
+            risk.update(profit=-49, buy_price=49)
+            risk.balance = 951  # 1000 - 49
+            # start_of_day_balance = 951 - (-49) = 1000 → effective limit = 50
+            self.assertTrue(risk.can_trade())   # net=-49, limit=-50 → OK
+            risk.update(profit=-2, buy_price=2)
+            risk.balance = 949  # 951 - 2
+            # start_of_day_balance = 949 - (-51) = 1000 → effective limit = 50
+            self.assertFalse(risk.can_trade())  # net=-51, limit=-50 → BLOCKED
+
+    def test_pct_based_stop_gain(self) -> None:
+        """stop_gain_pct=10 on balance=1000 → effective profit target = 100."""
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=1000,
+                max_loss_day=500,
+                max_profit_day=0,         # no fixed $ target
+                max_trades_day=100,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=1.0,
+                fixed_stake=10,
+                min_stake=0.35,
+                max_stake=500,
+                max_consecutive_losses=100,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                max_losses_in_window=100,
+                state_path=str(Path(tmp) / "risk.json"),
+                stop_gain_pct=10.0,       # 10% of 1000 = 100
+            )
+            # Simulate Deriv balance stream updating balance after win
+            risk.update(profit=99, buy_price=10)
+            risk.balance = 1099  # 1000 + 99
+            # start_of_day_balance = 1099 - 99 = 1000 → effective target = 100
+            self.assertTrue(risk.can_trade())    # net=99, target=100 → OK
+            risk.update(profit=2, buy_price=10)
+            risk.balance = 1101  # 1099 + 2
+            # start_of_day_balance = 1101 - 101 = 1000 → effective target = 100
+            self.assertFalse(risk.can_trade())   # net=101, target=100 → BLOCKED
 
 
 if __name__ == "__main__":

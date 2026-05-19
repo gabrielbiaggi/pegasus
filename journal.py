@@ -35,7 +35,14 @@ CREATE TABLE IF NOT EXISTS signals (
     markov_p_up_given_up      DOUBLE PRECISION,
     markov_p_down_given_down  DOUBLE PRECISION,
     shannon_entropy           DOUBLE PRECISION,
-    kalman_residual_zscore    DOUBLE PRECISION
+    kalman_residual_zscore    DOUBLE PRECISION,
+    bayesian_prob_up          DOUBLE PRECISION,
+    renyi_entropy             DOUBLE PRECISION,
+    fisher_information        DOUBLE PRECISION,
+    wavelet_energy_ratio      DOUBLE PRECISION,
+    cusum_score               DOUBLE PRECISION,
+    tail_dependence           DOUBLE PRECISION,
+    mi_flow                   DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS signals_entry_epoch_idx ON signals (entry_epoch);
 """
@@ -70,7 +77,14 @@ CREATE TABLE IF NOT EXISTS trades (
     markov_p_up_given_up      DOUBLE PRECISION,
     markov_p_down_given_down  DOUBLE PRECISION,
     shannon_entropy           DOUBLE PRECISION,
-    kalman_residual_zscore    DOUBLE PRECISION
+    kalman_residual_zscore    DOUBLE PRECISION,
+    bayesian_prob_up          DOUBLE PRECISION,
+    renyi_entropy             DOUBLE PRECISION,
+    fisher_information        DOUBLE PRECISION,
+    wavelet_energy_ratio      DOUBLE PRECISION,
+    cusum_score               DOUBLE PRECISION,
+    tail_dependence           DOUBLE PRECISION,
+    mi_flow                   DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS trades_entry_epoch_idx ON trades (entry_epoch);
 CREATE INDEX IF NOT EXISTS trades_result_idx ON trades (result);
@@ -82,8 +96,10 @@ INSERT INTO signals (
     bb_width_percent, tick_atr_percent, recent_move_percent, hurst_exponent,
     tick_imbalance, hawkes_intensity, velocity_zscore, acceleration_zscore,
     pmi_distance_percent, markov_p_up_given_up, markov_p_down_given_down,
-    shannon_entropy, kalman_residual_zscore
-) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    shannon_entropy, kalman_residual_zscore,
+    bayesian_prob_up, renyi_entropy, fisher_information,
+    wavelet_energy_ratio, cusum_score, tail_dependence, mi_flow
+) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 """
 
 _SQL_INSERT_TRADE = """
@@ -94,8 +110,10 @@ INSERT INTO trades (
     bb_width_percent, tick_atr_percent, recent_move_percent, hurst_exponent,
     tick_imbalance, hawkes_intensity, velocity_zscore, acceleration_zscore,
     pmi_distance_percent, markov_p_up_given_up, markov_p_down_given_down,
-    shannon_entropy, kalman_residual_zscore
-) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    shannon_entropy, kalman_residual_zscore,
+    bayesian_prob_up, renyi_entropy, fisher_information,
+    wavelet_energy_ratio, cusum_score, tail_dependence, mi_flow
+) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 """
 
 
@@ -164,6 +182,13 @@ class TradeJournal:
             self._metric(m, "markov_p_down_given_down"),
             self._metric(m, "shannon_entropy"),
             self._metric(m, "kalman_residual_zscore"),
+            self._metric(m, "bayesian_prob_up"),
+            self._metric(m, "renyi_entropy"),
+            self._metric(m, "fisher_information"),
+            self._metric(m, "wavelet_energy_ratio"),
+            self._metric(m, "cusum_score"),
+            self._metric(m, "tail_dependence"),
+            self._metric(m, "mi_flow"),
         )
         try:
             with self._connect() as conn:
@@ -211,6 +236,13 @@ class TradeJournal:
             self._metric(m, "markov_p_down_given_down"),
             self._metric(m, "shannon_entropy"),
             self._metric(m, "kalman_residual_zscore"),
+            self._metric(m, "bayesian_prob_up"),
+            self._metric(m, "renyi_entropy"),
+            self._metric(m, "fisher_information"),
+            self._metric(m, "wavelet_energy_ratio"),
+            self._metric(m, "cusum_score"),
+            self._metric(m, "tail_dependence"),
+            self._metric(m, "mi_flow"),
         )
         try:
             with self._connect() as conn:

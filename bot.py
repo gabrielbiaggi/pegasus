@@ -20,6 +20,8 @@ from strategy import (
     calculate_tick_indicators,
     generate_accumulator_signal,
     generate_rise_fall_signal,
+    generate_jump_momentum_signal,
+    JumpMomentumConfig,
     EnsembleScorer,
     EnsembleScorerRF,
 )
@@ -91,6 +93,7 @@ class DerivBot:
         self._gale_order: Optional[PendingOrder] = None  # first order (for logging)
         self._gale_sell_requested: set[int] = set()  # contracts already sell-requested
         self._last_tick_time: float = 0.0  # epoch of last live tick received (for watchdog)
+        self._pause_log_ts: float = 0.0  # throttle "Bot pausado" log (once per 60s)
         self._balance_file = os.path.join(config.journal_dir, "balance.json")
 
     def _flush_balance(self, balance: float) -> None:
@@ -277,6 +280,8 @@ class DerivBot:
         return True
 
     async def evaluate_tick(self, ws: websockets.WebSocketClientProtocol, tick_epoch: int) -> None:
+        _is_rf_like = self.config.contract_mode in {"rise_fall", "jump_rise_fall"}
+
         if self.waiting_for_result:
             stuck_sec = time.monotonic() - self._waiting_since
             if stuck_sec > 120:
@@ -290,12 +295,12 @@ class DerivBot:
                 self.current_contract_id = None
                 self.accumulator_sell_requested = False
             else:
-                _mode_lbl = "RF" if self.config.contract_mode == "rise_fall" else "ACCU"
+                _mode_lbl = "RF" if _is_rf_like else "ACCU"
                 logger.info("Aguardando resultado da operacao %s anterior.", _mode_lbl)
                 return
 
         if self.pending_order:
-            _mode_lbl = "RF" if self.config.contract_mode == "rise_fall" else "ACCU"
+            _mode_lbl = "RF" if _is_rf_like else "ACCU"
             logger.info("Aguardando proposta/compra %s pendente.", _mode_lbl)
             return
 
@@ -321,7 +326,8 @@ class DerivBot:
                 logger.info("Fim de semana bloqueado (BLOCK_WEEKENDS=true): dow=%s hour=%s", dow, tick_hour)
                 return
 
-        if self.last_accumulator_entry_epoch is not None:
+        # Accumulator cooldown — only applies to accumulator mode
+        if not _is_rf_like and self.last_accumulator_entry_epoch is not None:
             ticks_since_entry = tick_epoch - self.last_accumulator_entry_epoch
             if ticks_since_entry <= self.config.accumulator_cooldown_ticks:
                 logger.info(
@@ -332,10 +338,73 @@ class DerivBot:
                 return
 
         if not self.risk.can_trade():
-            logger.warning("Bot pausado por regra de risco.")
+            now = time.monotonic()
+            if now - self._pause_log_ts >= 60:
+                logger.warning("Bot pausado por regra de risco.")
+                self._pause_log_ts = now
             return
 
         df = calculate_tick_indicators(list(self.tick_buffer), config=self.config.accumulator_strategy_config)
+
+        # ---- Jump Rise/Fall mode (JD10, JD25, JD50, JD75, JD100) ----
+        if self.config.contract_mode == "jump_rise_fall":
+            if self.last_rf_entry_epoch is not None:
+                ticks_since_rf = tick_epoch - self.last_rf_entry_epoch
+                if ticks_since_rf <= self.config.rise_fall_cooldown_ticks:
+                    logger.debug(
+                        "Cooldown JumpRF ativo: %s tick(s) desde ultima entrada; minimo=%s.",
+                        ticks_since_rf, self.config.rise_fall_cooldown_ticks + 1,
+                    )
+                    return
+
+            signal, score, confidence = generate_jump_momentum_signal(
+                list(self.tick_buffer),
+                config=JumpMomentumConfig(
+                    mom_lookback=5,
+                    mom_horizon=self.config.rise_fall_duration_ticks,
+                    ema_fast=5,
+                    ema_slow=20,
+                    rev_lookback=7,
+                    min_score=self.config.rise_fall_min_votes,
+                    min_ticks=30,
+                ),
+                df=df,
+            )
+
+            if signal not in {"CALL", "PUT"}:
+                logger.debug("Sem setup JumpRF no tick %s.", tick_epoch)
+                return
+
+            stake = self.risk.get_stake()
+            if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+                raw_gale = self.risk.get_gale_raw_stake()
+                if raw_gale > stake:
+                    logger.info(
+                        "GALE JumpRF cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f)",
+                        raw_gale, stake, self.config.max_stake,
+                    )
+
+            if self._gale_wait_ticks > 0:
+                self._gale_wait_ticks = 0
+
+            metrics = self._last_tick_metrics(df)
+            if confidence is not None:
+                metrics["jump_confidence"] = round(confidence, 4)
+            _mode = (
+                f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
+                if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+                else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
+                if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
+                else "NORMAL"
+            )
+            logger.info(
+                "Setup JumpRF %s detectado: score=%s stake=%.2f conf=%s modo=%s",
+                signal, score, stake,
+                f"{confidence:.4f}" if confidence is not None else "N/A",
+                _mode,
+            )
+            await self.request_rise_fall_proposal(ws, stake, signal, score, tick_epoch, metrics=metrics)
+            return
 
         # ---- Rise/Fall mode ----
         if self.config.contract_mode == "rise_fall":
@@ -370,7 +439,7 @@ class DerivBot:
             if self._gale_wait_ticks > 0:
                 self._gale_wait_ticks = 0
 
-            metrics = self._last_accumulator_metrics(df)
+            metrics = self._last_tick_metrics(df)
             _mode = (
                 f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
                 if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
@@ -398,7 +467,7 @@ class DerivBot:
             logger.debug("Sem setup ACCU no tick %s.", tick_epoch)
             return
 
-        stake = self.risk.get_stake(p_loss=p_loss)
+        stake = self.risk.get_stake()
         if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
             raw_gale = self.risk.get_gale_raw_stake()
             if raw_gale > stake:
@@ -447,7 +516,7 @@ class DerivBot:
             logger.info("✅ Sinal seguro encontrado após %d ticks de espera", self._gale_wait_ticks)
             self._gale_wait_ticks = 0
             self._gale_wait_log_ts = 0.0
-        metrics = self._last_accumulator_metrics(df)
+        metrics = self._last_tick_metrics(df)
         _mode = (
             f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
             if getattr(self.risk, 'use_martingale', False) and self.risk.martingale_step > 0
@@ -465,7 +534,7 @@ class DerivBot:
         await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
 
     @staticmethod
-    def _last_accumulator_metrics(df: Any) -> dict[str, float]:
+    def _last_tick_metrics(df: Any) -> dict[str, float]:
         if df.empty:
             return {}
 
@@ -485,6 +554,22 @@ class DerivBot:
             "markov_p_down_given_down",
             "shannon_entropy",
             "kalman_residual_zscore",
+            # Advanced calculus indicators
+            "jerk_zscore",
+            "curvature_zscore",
+            "integral_momentum_div",
+            "derivative_energy",
+            "trend_exhaustion",
+            "return_zscore",
+            "lyapunov_exponent",
+            # Advanced intelligence filters
+            "bayesian_prob_up",
+            "renyi_entropy",
+            "fisher_information",
+            "wavelet_energy_ratio",
+            "cusum_score",
+            "tail_dependence",
+            "mi_flow",
         ):
             try:
                 value = float(last.get(name))
@@ -574,13 +659,14 @@ class DerivBot:
             use_soros=self.config.use_soros,
             soros_max_steps=self.config.soros_max_steps,
             soros_profit_factor=self.config.soros_profit_factor,
-            use_dynamic_stake=self.config.use_dynamic_stake,
             dynamic_stake_base_pct=self.config.dynamic_stake_base_pct,
             use_martingale=self.config.use_martingale,
             martingale_max_gales=self.config.martingale_max_gales,
             martingale_multiplier=self.config.martingale_multiplier,
             martingale_payout_rate=self.config.martingale_payout_rate,
             max_losses_in_window=_loss_pause_window,
+            stop_loss_pct=self.config.stop_loss_pct,
+            stop_gain_pct=self.config.stop_gain_pct,
         )
         # Subscribe to real-time balance updates (catches manual top-ups, etc.)
         await self.subscribe_balance(ws)
@@ -655,8 +741,8 @@ class DerivBot:
             # Clear pending_order so evaluate_tick does not stall on proposal check.
             # waiting_for_result stays True — next contract is dispatched on WIN settlement.
             self.pending_order = None
-        elif self.config.contract_mode == "rise_fall":
-            # Rise/Fall: single binary contract per gale step, auto-settles.
+        elif self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+            # Rise/Fall (or JumpRF): single binary contract per gale step, auto-settles.
             self.current_contract_id = contract_id
             if self.pending_order:
                 direction = getattr(self.pending_order, "direction", "RF")
@@ -693,7 +779,7 @@ class DerivBot:
         )
         if not is_sold:
             # Rise/Fall contracts settle automatically — no monitoring needed.
-            if self.config.contract_mode == "rise_fall":
+            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
                 return
 
             # Multi-gale: per-contract open-position monitoring.
@@ -839,7 +925,7 @@ class DerivBot:
                     contract_mode=self.config.contract_mode,
                     contract_id=contract_id,
                     entry_epoch=order.entry_epoch,
-                    direction="ACCU",
+                    direction=order.direction,
                     score=order.score,
                     stake=self._gale_total_stake,
                     buy_price=total_buy_price,
@@ -893,7 +979,7 @@ class DerivBot:
             contract_mode=self.config.contract_mode,
             contract_id=contract_id,
             entry_epoch=order.entry_epoch,
-            direction="ACCU",
+            direction=order.direction,
             score=order.score,
             stake=order.stake,
             buy_price=buy_price,
@@ -1013,7 +1099,7 @@ class DerivBot:
     async def _reconcile_open_positions(self, ws: websockets.WebSocketClientProtocol) -> None:
         """Zombie-trade protection: check for open contracts on reconnect."""
         logger.info("Verificando contratos abertos no portfolio (protecao zombie trade)...")
-        if self.config.contract_mode == "rise_fall":
+        if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
             await self.send(ws, {"portfolio": 1, "contract_type": ["CALL", "PUT"]})
         else:
             await self.send(ws, {"portfolio": 1, "contract_type": ["ACCU"]})
@@ -1022,7 +1108,7 @@ class DerivBot:
         portfolio = data.get("portfolio", {})
         contracts = portfolio.get("contracts", [])
         open_contracts = [c for c in contracts if not c.get("is_sold") and not c.get("is_expired")]
-        mode_label = "RF" if self.config.contract_mode == "rise_fall" else "ACCU"
+        mode_label = "RF" if self.config.contract_mode in {"rise_fall", "jump_rise_fall"} else "ACCU"
         if not open_contracts:
             logger.info("Portfolio: nenhum contrato %s aberto encontrado.", mode_label)
             if self.waiting_for_result or self.pending_order:
@@ -1092,9 +1178,15 @@ class DerivBot:
             self.current_contract_id = None
             self.accumulator_sell_requested = False
             try:
+                _mode_desc = {
+                    "accumulator": "Accumulators 1s",
+                    "rise_fall": "Rise/Fall",
+                    "jump_rise_fall": "JumpRF Momentum",
+                }.get(self.config.contract_mode, self.config.contract_mode)
                 logger.info(
-                    "Iniciando %s | Accumulators 1s | ativo=%s | endpoint=%s",
+                    "Iniciando %s | %s | ativo=%s | endpoint=%s",
                     self.config.bot_name,
+                    _mode_desc,
                     self.config.symbol,
                     self.config.ws_url,
                 )

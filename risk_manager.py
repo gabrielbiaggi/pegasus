@@ -24,7 +24,6 @@ class RiskManager:
         use_soros: bool,
         soros_max_steps: int,
         soros_profit_factor: float,
-        use_dynamic_stake: bool = True,
         dynamic_stake_base_pct: float = 0.02,
         use_martingale: bool = False,
         martingale_max_gales: int = 3,
@@ -33,6 +32,8 @@ class RiskManager:
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
+        stop_loss_pct: float = 0.0,
+        stop_gain_pct: float = 0.0,
     ):
         self.balance = float(balance)
         self.max_loss_day = float(max_loss_day)
@@ -48,7 +49,6 @@ class RiskManager:
         self.use_soros = bool(use_soros)
         self.soros_max_steps = int(soros_max_steps)
         self.soros_profit_factor = float(soros_profit_factor)
-        self.use_dynamic_stake = bool(use_dynamic_stake)
         self.dynamic_stake_base_pct = float(dynamic_stake_base_pct)
         self.use_martingale = bool(use_martingale)
         self.martingale_max_gales = int(martingale_max_gales)
@@ -57,6 +57,8 @@ class RiskManager:
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
+        self.stop_loss_pct = float(stop_loss_pct)
+        self.stop_gain_pct = float(stop_gain_pct)
 
         self.day = date.today().isoformat()
         self.daily_loss = 0.0
@@ -78,21 +80,30 @@ class RiskManager:
         self._recent_loss_times: deque[float] = deque()
         # Last time we re-read the state file to pick up external overrides (e.g. dashboard unblock)
         self._last_override_check: float = 0.0
+        # Throttle can_trade() warning logs (monotonic timestamps, one log per 60s per reason)
+        self._log_ts_profit: float = 0.0
+        self._log_ts_loss: float = 0.0
+        self._log_ts_trailing: float = 0.0
+        self._log_ts_trades: float = 0.0
+        self._log_ts_consec: float = 0.0
+        self._log_ts_freq: float = 0.0
 
         self._load_state()
 
     def _reload_overrides(self) -> None:
-        """Re-read only the override/block fields from disk.
+        """Re-read override fields from disk + env settings changed via dashboard.
 
-        Called by can_trade() when the bot is in a blocked state so that an
-        external unblock (e.g. dashboard setting loss_block_override=True or
-        resetting consecutive_losses) is detected without requiring a restart.
+        Called by can_trade() so that external changes (dashboard unblock,
+        stop loss/gain adjustments) are detected without requiring a restart.
         Rate-limited to at most once every 5 seconds.
         """
         now = time.monotonic()
         if now - self._last_override_check < 5.0:
             return
         self._last_override_check = now
+
+        # --- re-read .env for real-time stop loss/gain changes ---
+        self._reload_env_settings()
 
         if not self.state_path.exists():
             return
@@ -114,6 +125,62 @@ class RiskManager:
             )
             self.loss_block_override = new_override
             self.consecutive_losses = new_consec
+
+    def _reload_env_settings(self) -> None:
+        """Re-read .env file for dashboard-adjustable settings (stop loss/gain, stake, max_stake, etc.).
+
+        This is the SINGLE SOURCE OF TRUTH for these values during runtime.
+        The .env file is written by the dashboard and read here every 5s.
+        """
+        env_path = self.state_path.parent.parent / ".env"
+        if not env_path.exists():
+            return
+        try:
+            env_mtime = env_path.stat().st_mtime
+            if env_mtime == getattr(self, "_env_mtime", -1.0):
+                return
+            self._env_mtime = env_mtime
+            env_data: dict[str, str] = {}
+            for line in env_path.read_text().splitlines():
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    env_data[k.strip()] = v.strip()
+            # Update stop loss — MAX_LOSS_PER_DAY is the sole source (pct logic only at startup)
+            new_loss = float(env_data.get("MAX_LOSS_PER_DAY", str(self.max_loss_day)))
+            if new_loss != self.max_loss_day:
+                logger.info("Stop Loss atualizado via dashboard: %.2f → %.2f", self.max_loss_day, new_loss)
+                self.max_loss_day = new_loss
+            # Update stop gain
+            new_profit = float(env_data.get("MAX_PROFIT_PER_DAY", str(self.max_profit_day)))
+            if new_profit != self.max_profit_day:
+                logger.info("Stop Gain atualizado via dashboard: %.2f → %.2f", self.max_profit_day, new_profit)
+                self.max_profit_day = new_profit
+            # Update stake
+            new_stake = float(env_data.get("STAKE", str(self.fixed_stake)))
+            if new_stake != self.fixed_stake:
+                logger.info("Stake atualizado via dashboard: %.2f → %.2f", self.fixed_stake, new_stake)
+                self.fixed_stake = new_stake
+            # Update max_stake
+            new_max_stake = float(env_data.get("MAX_STAKE", str(self.max_stake)))
+            if new_max_stake != self.max_stake:
+                logger.info("Max Stake atualizado via dashboard: %.2f → %.2f", self.max_stake, new_max_stake)
+                self.max_stake = new_max_stake
+            # Update stop loss/gain percentages
+            new_sl_pct = float(env_data.get("STOP_LOSS_PCT", str(self.stop_loss_pct)))
+            if new_sl_pct != self.stop_loss_pct:
+                logger.info("Stop Loss %% atualizado: %.1f%% → %.1f%%", self.stop_loss_pct, new_sl_pct)
+                self.stop_loss_pct = new_sl_pct
+            new_sg_pct = float(env_data.get("STOP_GAIN_PCT", str(self.stop_gain_pct)))
+            if new_sg_pct != self.stop_gain_pct:
+                logger.info("Stop Gain %% atualizado: %.1f%% → %.1f%%", self.stop_gain_pct, new_sg_pct)
+                self.stop_gain_pct = new_sg_pct
+            # Update stake percentage
+            new_base_pct = float(env_data.get("DYNAMIC_STAKE_BASE_PCT", str(self.dynamic_stake_base_pct)))
+            if new_base_pct != self.dynamic_stake_base_pct:
+                logger.info("Stake base pct atualizado: %.4f → %.4f", self.dynamic_stake_base_pct, new_base_pct)
+                self.dynamic_stake_base_pct = new_base_pct
+        except (OSError, ValueError):
+            pass
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
@@ -148,7 +215,8 @@ class RiskManager:
             logger.warning("Estado martingale inconsistente (base_stake=0 com step=%d). Resetando gale.", self.martingale_step)
             self.martingale_step = 0
             self.martingale_accumulated_loss = 0.0
-        self.max_loss_day = float(data.get("max_loss_day", self.max_loss_day))
+        # NOTE: max_loss_day is NOT loaded from state file — .env is the single source of truth
+        # (dashboard writes to .env, _reload_env_settings() reads it every 5s)
         logger.info(
             "Estado de risco restaurado: perda_dia=%.2f, lucro_liquido_dia=%.2f, "
             "trailing=%s, trades=%s, streak_loss=%s",
@@ -163,7 +231,6 @@ class RiskManager:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "day": self.day,
-            "max_loss_day": self.max_loss_day,
             "daily_loss": self.daily_loss,
             "daily_net_profit": self.daily_net_profit,
             "daily_peak_profit": self.daily_peak_profit,
@@ -219,47 +286,50 @@ class RiskManager:
         self.martingale_base_stake = 0.0
         self._save_state()
 
-    def get_stake(self, p_loss: float | None = None) -> float:
+    @property
+    def _start_of_day_balance(self) -> float:
+        """Balance at the start of the trading day (before any trades)."""
+        return self.balance - self.daily_net_profit
+
+    def _effective_loss_limit(self) -> float:
+        """Dynamic loss limit: uses % of start-of-day balance when stop_loss_pct > 0."""
+        if self.stop_loss_pct > 0:
+            return self._start_of_day_balance * self.stop_loss_pct / 100.0
+        return self.max_loss_day
+
+    def _effective_profit_limit(self) -> float:
+        """Dynamic profit target: uses % of start-of-day balance when stop_gain_pct > 0."""
+        if self.stop_gain_pct > 0:
+            return self._start_of_day_balance * self.stop_gain_pct / 100.0
+        return self.max_profit_day
+
+    def get_stake(self) -> float:
         self._reset_if_new_day()
 
-        if self.use_dynamic_stake and p_loss is not None:
-            # Base = % da banca atual (nunca menor que fixed_stake mínimo)
-            base = max(self.balance * self.dynamic_stake_base_pct, self.fixed_stake)
-
-            # Tabela de multiplicadores por confiança da IA (P(LOSS) baixo = IA confiante)
-            if p_loss < 0.05:
-                raw_stake = base * 4.0    # confiança máxima: 4× banca_base
-            elif p_loss < 0.10:
-                raw_stake = base * 3.0    # muito confiante: 3×
-            elif p_loss < 0.15:
-                raw_stake = base * 2.0    # confiante: 2×
-            elif p_loss < 0.20:
-                raw_stake = base * 1.5    # moderado: 1.5×
-            elif p_loss < 0.25:
-                raw_stake = base * 1.25   # limiar próximo: 1.25×
-            else:
-                raw_stake = base          # p_loss próximo ao limite: 1× base
+        # Base = % da banca atual OU fixed_stake quando pct == 0
+        if self.dynamic_stake_base_pct > 0:
+            raw_stake = max(self.balance * self.dynamic_stake_base_pct, self.min_stake)
         else:
-            # Sem IA ou dynamic stake off: aposta fixa conservadora
             raw_stake = self.fixed_stake
 
-        # Soros: reinveste lucro acumulado de wins consecutivos (limpos, não gale)
-        if self.use_soros and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
-            raw_stake = raw_stake + self.soros_profit
-
-        # Gale-safe cap: limita G0 (incluindo Soros) para que G(max_gales) caiba dentro de max_stake.
-        # Posicionado APÓS Soros para capturar qualquer inflação de stake.
-        # Fórmula: G_n = G0 × (1 + 1/rate)^n  →  G0_max = max_stake / (1+1/rate)^n
-        # Com rate=0.50 e max_gales=2: G0_max = max_stake / 9
-        # Garante recuperação total no último gale SEM estourar o cap.
+        # Gale-safe cap: limita a stake BASE (sem Soros) para que G(max_gales) caiba em max_stake.
+        # Aplicado ANTES do Soros para que a progressão Soros cresça corretamente.
+        # Se um bet Soros perder, o gale recovery pode exceder max_stake → partial recovery trata.
+        _in_gale = self.use_martingale and self.martingale_step > 0
         if (
             self.use_martingale
             and self.martingale_step == 0
             and self.max_stake > 0
             and self.martingale_payout_rate > 0
         ):
-            gale_factor = (1.0 + 1.0 / self.martingale_payout_rate) ** self.martingale_max_gales
+            safe_gales = min(self.martingale_max_gales, 3)
+            gale_factor = (1.0 + 1.0 / self.martingale_payout_rate) ** safe_gales
             raw_stake = min(raw_stake, self.max_stake / gale_factor)
+
+        # Soros: reinveste lucro acumulado de wins consecutivos (limpos, não gale)
+        # Posicionado APÓS gale-safe cap para que cada step Soros cresça progressivamente.
+        if self.use_soros and not _in_gale and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
+            raw_stake = raw_stake + self.soros_profit
 
         # Martingale: calcula stake de recuperacao matematicamente correta para o payout atual.
         # Formula: G = perdas_acumuladas / payout_rate + stake_base
@@ -268,7 +338,7 @@ class RiskManager:
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
             raw_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
 
-        remaining_budget = max(0.0, self.max_loss_day + self.daily_net_profit)
+        remaining_budget = max(0.0, self._effective_loss_limit() + self.daily_net_profit)
 
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
             # Martingale recovery: o limite é a banca inteira.
@@ -305,33 +375,51 @@ class RiskManager:
         # Check for external override changes written by dashboard (no restart needed)
         self._reload_overrides()
 
-        if self.daily_net_profit <= -self.max_loss_day and not self.loss_block_override:
-            logger.warning(
-                "Stop loss diario atingido: lucro_liquido=%.2f (limite=-%.2f)",
-                self.daily_net_profit,
-                self.max_loss_day,
-            )
-            return False
+        _now = time.monotonic()
 
-        if self.max_profit_day > 0 and self.daily_net_profit >= self.max_profit_day:
-            logger.warning("Meta de lucro diaria atingida: %.2f", self.daily_net_profit)
+        _loss_limit = self._effective_loss_limit()
+        if self.daily_net_profit <= -_loss_limit and not self.loss_block_override:
+            # Never block during martingale recovery — the gale MUST continue to recover losses
+            if not (self.use_martingale and self.martingale_step > 0):
+                if _now - self._log_ts_loss >= 60:
+                    logger.warning(
+                        "Stop loss diario atingido: lucro_liquido=%.2f (limite=-%.2f)",
+                        self.daily_net_profit,
+                        _loss_limit,
+                    )
+                    self._log_ts_loss = _now
+                return False
+
+        _profit_limit = self._effective_profit_limit()
+        if _profit_limit > 0 and self.daily_net_profit >= _profit_limit:
+            if _now - self._log_ts_profit >= 60:
+                logger.warning("Meta de lucro diaria atingida: %.2f", self.daily_net_profit)
+                self._log_ts_profit = _now
             return False
 
         if self.daily_trailing_active and self.daily_net_profit <= self.daily_trailing_lock:
-            logger.warning(
-                "Trailing diario protegido: lucro_liquido=%.2f lock=%.2f",
-                self.daily_net_profit,
-                self.daily_trailing_lock,
-            )
+            if _now - self._log_ts_trailing >= 60:
+                logger.warning(
+                    "Trailing diario protegido: lucro_liquido=%.2f lock=%.2f",
+                    self.daily_net_profit,
+                    self.daily_trailing_lock,
+                )
+                self._log_ts_trailing = _now
             return False
 
         if self.trades_today >= self.max_trades_day:
-            logger.warning("Limite diario de operacoes atingido: %s", self.trades_today)
+            if _now - self._log_ts_trades >= 60:
+                logger.warning("Limite diario de operacoes atingido: %s", self.trades_today)
+                self._log_ts_trades = _now
             return False
 
         if self.consecutive_losses >= self.max_consecutive_losses:
-            logger.warning("Limite de losses consecutivos atingido: %s", self.consecutive_losses)
-            return False
+            # Never block during martingale recovery — the gale MUST continue
+            if not (self.use_martingale and self.martingale_step > 0):
+                if _now - self._log_ts_consec >= 60:
+                    logger.warning("Limite de losses consecutivos atingido: %s", self.consecutive_losses)
+                    self._log_ts_consec = _now
+                return False
 
         stake = self.get_stake()
         if stake <= 0:
@@ -357,18 +445,22 @@ class RiskManager:
             return False
 
         # Frequency-based drawdown: stop if too many losses in sliding time window
+        # Never block during martingale recovery
         now = time.monotonic()
         cutoff = now - self.loss_window_seconds
         while self._recent_loss_times and self._recent_loss_times[0] < cutoff:
             self._recent_loss_times.popleft()
         if len(self._recent_loss_times) >= self.max_losses_in_window:
-            logger.warning(
-                "Frequencia de losses excedida: %d losses nos ultimos %.0fs (limite=%d). Bot pausado.",
-                len(self._recent_loss_times),
-                self.loss_window_seconds,
-                self.max_losses_in_window,
-            )
-            return False
+            if not (self.use_martingale and self.martingale_step > 0):
+                if now - self._log_ts_freq >= 60:
+                    logger.warning(
+                        "Frequencia de losses excedida: %d losses nos ultimos %.0fs (limite=%d). Bot pausado.",
+                        len(self._recent_loss_times),
+                        self.loss_window_seconds,
+                        self.max_losses_in_window,
+                    )
+                    self._log_ts_freq = now
+                return False
 
         return True
 

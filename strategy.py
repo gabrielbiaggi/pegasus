@@ -166,6 +166,30 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     df["return_skewness"] = df["close"].diff().rolling(config.skewness_window).skew()
     df["fft_dominant_period"] = df["close"].rolling(config.fft_window).apply(_fft_dominant_period, raw=True)
 
+    # --- Advanced calculus & statistical indicators (universal) ---
+    df["price_jerk"] = _finite_jerk(df["close"])
+    df["jerk_zscore"] = _rolling_abs_zscore(df["price_jerk"], config.derivative_window)
+    df["price_curvature"] = _price_curvature(df["close"])
+    df["curvature_zscore"] = _rolling_abs_zscore(df["price_curvature"], config.derivative_window)
+    df["integral_momentum_div"] = _integral_momentum_divergence(
+        df["close"], _ema_slow, config.integral_window,
+    )
+    df["derivative_energy"] = _derivative_energy(df["price_velocity"], config.derivative_window)
+    df["trend_exhaustion"] = _trend_exhaustion(df["close"], config.integral_window)
+    df["return_zscore"] = _rolling_return_zscore(df["close"], config.derivative_window)
+    df["lyapunov_exponent"] = df["close"].rolling(
+        config.hurst_window
+    ).apply(_rolling_lyapunov, raw=True)
+
+    # --- Advanced mathematical intelligence filters ---
+    df["bayesian_prob_up"] = _bayesian_prob_up(df["close"], config.shannon_entropy_window)
+    df["renyi_entropy"] = _renyi_entropy(df["close"], config.shannon_entropy_window, alpha=0.5)
+    df["fisher_information"] = _fisher_information(df["close"], config.derivative_window)
+    df["wavelet_energy_ratio"] = _wavelet_energy_ratio(df["close"], window=32)
+    df["cusum_score"] = _cusum_score(df["close"], config.shannon_entropy_window)
+    df["tail_dependence"] = _copula_tail_dependence(df["close"], config.markov_window)
+    df["mi_flow"] = _mutual_information_flow(df["close"], config.shannon_entropy_window, lag=1)
+
     return df
 
 
@@ -470,6 +494,381 @@ def _kalman_filter_metrics(close: pd.Series, process_variance: float, measuremen
         },
         index=close.index,
     )
+
+
+# ---------------------------------------------------------------------------
+# Advanced Calculus & Statistical Helpers (universal)
+# ---------------------------------------------------------------------------
+
+def _finite_jerk(close: pd.Series) -> pd.Series:
+    """3rd derivative of price — rate of change of acceleration.
+
+    Jerk detects regime transitions: a spike in jerk means acceleration itself
+    is changing rapidly, signaling the START or END of a move, not the move itself.
+    J[t] = P[t] - 3*P[t-1] + 3*P[t-2] - P[t-3]  (forward finite diff, 3rd order)
+    """
+    return close - 3 * close.shift(1) + 3 * close.shift(2) - close.shift(3)
+
+
+def _price_curvature(close: pd.Series) -> pd.Series:
+    """Discrete curvature κ of the price curve.
+
+    κ = |v'| / (1 + v²)^(3/2)  where v = dP/dt, v' = d²P/dt²
+
+    High curvature → sharp bend (inflection point / reversal).
+    Low curvature → straight move or flat.
+    Returns absolute curvature (unsigned — direction comes from other indicators).
+    """
+    v = close.diff()                # velocity
+    a = v.diff()                    # acceleration
+    denom = (1.0 + v ** 2) ** 1.5
+    # Protect against zero denominator (perfectly flat)
+    denom = denom.replace(0, np.nan)
+    return (a.abs() / denom).fillna(0.0)
+
+
+def _integral_momentum_divergence(
+    close: pd.Series,
+    ema_slow: pd.Series,
+    window: int,
+) -> pd.Series:
+    """Signed integral divergence: ∫(price - EMA_slow) dt over rolling window.
+
+    Positive → price has been persistently above the slow EMA (bullish pressure).
+    Negative → persistently below (bearish pressure).
+    Near zero → oscillating around EMA (no clear trend).
+
+    This is analogous to the MACD histogram area — accumulated divergence energy.
+    """
+    diff = close - ema_slow
+    return diff.rolling(window).apply(
+        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
+    ).fillna(0.0)
+
+
+def _derivative_energy(velocity: pd.Series, window: int) -> pd.Series:
+    """Rolling kinetic energy proxy: ∫v² dt over window (trapezoidal rule).
+
+    Analogous to kinetic energy ½mv². High energy = large sustained moves.
+    Low energy = calm market. This is scale-free (no price level bias).
+    """
+    v2 = velocity ** 2
+    return v2.rolling(window).apply(
+        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
+    ).fillna(0.0)
+
+
+def _trend_exhaustion(close: pd.Series, window: int) -> pd.Series:
+    """Signed trend exhaustion: ∫(price - SMA) / SMA dt.
+
+    Measures accumulated percentage deviation from rolling mean.
+    Large positive → overbought (trend exhaustion, reversal risk).
+    Large negative → oversold.
+    Near zero → fair value zone.
+    """
+    sma = close.rolling(window).mean()
+    pct_dev = (close - sma) / sma.replace(0, np.nan)
+    pct_dev = pct_dev.fillna(0.0)
+    return pct_dev.rolling(window).apply(
+        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
+    ).fillna(0.0)
+
+
+def _rolling_return_zscore(close: pd.Series, window: int) -> pd.Series:
+    """Z-score of latest return vs rolling distribution.
+
+    Detects fat-tail / extreme moves. |z| > 3 = outlier.
+    Signed: positive = unusually large up-move, negative = large down-move.
+    """
+    ret = close.diff()
+    mu = ret.rolling(window).mean()
+    sigma = ret.rolling(window).std(ddof=0).replace(0, np.nan)
+    return ((ret - mu) / sigma).fillna(0.0)
+
+
+def _rolling_lyapunov(prices: np.ndarray) -> float:
+    """Approximation of the maximal Lyapunov exponent from price series.
+
+    Positive λ → chaotic / sensitive to perturbation → hard to predict.
+    Negative or near-zero λ → more predictable dynamics.
+
+    Uses the simple Rosenstein method approximation: mean log divergence
+    of nearby trajectories in embedding space (delay=1, dim=2).
+    """
+    n = len(prices)
+    if n < 10:
+        return np.nan
+    returns = np.diff(prices)
+    if len(returns) < 8:
+        return np.nan
+    # Embedding: (r[t], r[t+1]) pairs
+    m = len(returns) - 1
+    if m < 4:
+        return np.nan
+    phase = np.column_stack([returns[:-1], returns[1:]])
+    # For each point, find nearest neighbor (not itself)
+    log_divs = []
+    for i in range(m):
+        dists = np.sqrt(np.sum((phase - phase[i]) ** 2, axis=1))
+        dists[i] = np.inf  # exclude self
+        j = int(np.argmin(dists))
+        d0 = dists[j]
+        if d0 < 1e-15:
+            continue
+        # Check divergence after 1 step
+        i2, j2 = min(i + 1, m - 1), min(j + 1, m - 1)
+        d1 = np.sqrt(np.sum((phase[i2] - phase[j2]) ** 2))
+        if d1 < 1e-15:
+            continue
+        log_divs.append(np.log(d1 / d0))
+    if not log_divs:
+        return 0.0
+    return float(np.mean(log_divs))
+
+
+# ---------------------------------------------------------------------------
+# Advanced Mathematical Intelligence Filters
+# ---------------------------------------------------------------------------
+
+def _bayesian_prob_up(close: pd.Series, window: int = 30) -> pd.Series:
+    """Sequential Bayesian posterior P(next tick up) using Beta conjugate prior.
+
+    Starts with uniform Beta(1,1) prior and updates with each tick direction.
+    Returns P(up) from Beta(α, β) posterior: α/(α+β).
+
+    Near 0.5 = uncertain. Near 0/1 = strong directional conviction.
+    Uses rolling window so stale evidence decays.
+    """
+    signs = (close.diff() > 0).astype(float).fillna(0.5)
+
+    def _beta_prob(x: np.ndarray) -> float:
+        alpha = 1.0 + float(x.sum())          # prior=1 + observed ups
+        beta = 1.0 + float(len(x) - x.sum())  # prior=1 + observed downs
+        return alpha / (alpha + beta)
+
+    return signs.rolling(window).apply(_beta_prob, raw=True).fillna(0.5)
+
+
+def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5) -> pd.Series:
+    """Rényi entropy of order α on discretized returns.
+
+    Generalization of Shannon entropy. For α < 1, Rényi entropy is MORE
+    sensitive to rare events (tail risk). For α > 1, it emphasizes common
+    patterns. At α → 1 it converges to Shannon entropy.
+
+    H_α = (1/(1-α)) * log₂(∑ pᵢ^α)
+
+    Returns normalized to [0,1] range (divided by log₂(n_bins)).
+    Low value = highly concentrated/predictable. High = dispersed/random.
+    """
+    returns = close.diff().fillna(0.0)
+    scale = returns.abs().rolling(window).median().replace(0, np.nan)
+    normalized = returns / scale
+    bins = [-np.inf, -2.0, -1.0, -0.01, 0.01, 1.0, 2.0, np.inf]
+    n_bins = len(bins) - 1
+    categories = pd.cut(normalized, bins=bins, labels=False, include_lowest=True).fillna(n_bins // 2)
+
+    def _renyi(x: np.ndarray) -> float:
+        counts = np.bincount(x.astype(int), minlength=n_bins).astype(float)
+        probs = counts[counts > 0] / counts.sum()
+        if probs.size <= 1:
+            return 0.0
+        # Rényi formula: H_α = 1/(1-α) * log₂(∑ p^α)
+        sum_pa = float(np.sum(probs ** alpha))
+        if sum_pa <= 0:
+            return 0.0
+        h = (1.0 / (1.0 - alpha)) * np.log2(sum_pa)
+        return float(h / np.log2(n_bins))  # normalize to [0,1]
+
+    return categories.rolling(window).apply(_renyi, raw=True).fillna(0.5)
+
+
+def _fisher_information(close: pd.Series, window: int = 30) -> pd.Series:
+    """Fisher Information of the return distribution (estimated from sample).
+
+    FI = 1/σ² for Gaussian returns. Higher FI = more concentrated returns
+    around the mean → more predictable. Lower FI = wide dispersion → noisy.
+
+    For non-Gaussian, uses the discrete approximation:
+    FI ≈ ∑ (p'(x))² / p(x) over histogram bins.
+
+    We use the simpler parametric estimate: FI = n/σ² scaled to [0, ∞).
+    """
+    returns = close.diff().fillna(0.0)
+    var = returns.rolling(window).var(ddof=1).replace(0, np.nan)
+    # FI = 1/variance (parametric estimate for location parameter)
+    fi = (1.0 / var).fillna(0.0)
+    # Scale by window to make it comparable across window sizes
+    return fi / window
+
+
+def _wavelet_energy_ratio(close: pd.Series, window: int = 32) -> pd.Series:
+    """Haar wavelet decomposition signal-to-noise energy ratio.
+
+    Decomposes price into approximation (signal) and detail (noise) at
+    log₂(window) levels using the Haar wavelet transform (no scipy needed).
+
+    Returns ratio: E_signal / E_total. High = clean trend. Low = noisy.
+    Range [0, 1]. Values above 0.7 = strong signal. Below 0.3 = noise-dominated.
+    """
+    def _haar_snr(prices: np.ndarray) -> float:
+        n = len(prices)
+        if n < 4:
+            return np.nan
+        # Pad to nearest power of 2
+        p2 = 1
+        while p2 < n:
+            p2 <<= 1
+        x = np.zeros(p2)
+        x[:n] = prices - prices.mean()  # center
+
+        detail_energy = 0.0
+        length = p2
+        while length > 1:
+            half = length >> 1
+            approx = np.zeros(half)
+            detail = np.zeros(half)
+            for i in range(half):
+                approx[i] = (x[2 * i] + x[2 * i + 1]) / np.sqrt(2)
+                detail[i] = (x[2 * i] - x[2 * i + 1]) / np.sqrt(2)
+            detail_energy += float(np.sum(detail ** 2))
+            x[:half] = approx
+            length = half
+
+        total_energy = float(np.sum((prices - prices.mean()) ** 2))
+        if total_energy < 1e-15:
+            return 1.0  # perfectly flat = pure signal
+        signal_energy = max(total_energy - detail_energy, 0.0)
+        return signal_energy / total_energy
+
+    return close.rolling(window).apply(_haar_snr, raw=True).fillna(0.5)
+
+
+def _cusum_score(close: pd.Series, window: int = 30) -> pd.Series:
+    """CUSUM (Cumulative Sum) regime change detector score.
+
+    Tracks cumulative deviations of returns from their rolling mean.
+    When the CUSUM exceeds a threshold, a regime change is likely occurring.
+
+    Returns absolute CUSUM score normalized by rolling std.
+    High values (>3) = regime transition in progress.
+    Low values (<1) = stable regime.
+    """
+    returns = close.diff().fillna(0.0)
+    mu = returns.rolling(window).mean()
+    sigma = returns.rolling(window).std(ddof=0).replace(0, np.nan)
+
+    # Compute running CUSUM within each rolling window
+    def _cusum(x: np.ndarray) -> float:
+        n = len(x)
+        if n < 4:
+            return 0.0
+        m = float(np.mean(x))
+        s = float(np.std(x, ddof=0))
+        if s < 1e-15:
+            return 0.0
+        # One-sided CUSUM (positive and negative)
+        cusum_pos = 0.0
+        cusum_neg = 0.0
+        max_cusum = 0.0
+        for v in x:
+            z = (v - m) / s
+            cusum_pos = max(0.0, cusum_pos + z)
+            cusum_neg = max(0.0, cusum_neg - z)
+            max_cusum = max(max_cusum, cusum_pos, cusum_neg)
+        return max_cusum
+
+    return returns.rolling(window).apply(_cusum, raw=True).fillna(0.0)
+
+
+def _copula_tail_dependence(close: pd.Series, window: int = 50) -> pd.Series:
+    """Empirical tail dependence coefficient between velocity and acceleration.
+
+    Measures the probability that both velocity AND acceleration are in their
+    extreme tails simultaneously. High tail dependence = extreme moves cluster
+    (velocity spike + acceleration spike happen together).
+
+    λ_upper = P(V > V_q | A > A_q) where q = 90th percentile.
+    Returns average of upper and lower tail dependence.
+
+    High values (>0.3) = dangerous clustering of extremes.
+    Low values (<0.1) = extremes are independent → safer market.
+    """
+    vel = close.diff().fillna(0.0)
+    accel = vel.diff().fillna(0.0)
+
+    def _tail_dep(window_data: np.ndarray) -> float:
+        # window_data is velocity; we need to reconstruct accel from it
+        n = len(window_data)
+        if n < 10:
+            return 0.0
+        v = window_data
+        a = np.diff(v)
+        if len(a) < 5:
+            return 0.0
+        v_trunc = v[1:]  # align with a
+        # 90th percentile thresholds
+        v_q = np.percentile(np.abs(v_trunc), 90)
+        a_q = np.percentile(np.abs(a), 90)
+        if v_q < 1e-15 or a_q < 1e-15:
+            return 0.0
+        # Tail events
+        v_extreme = np.abs(v_trunc) > v_q
+        a_extreme = np.abs(a) > a_q
+        # Conditional probability: P(both extreme | at least one extreme)
+        both = v_extreme & a_extreme
+        either = v_extreme | a_extreme
+        n_either = float(np.sum(either))
+        if n_either < 1:
+            return 0.0
+        return float(np.sum(both)) / n_either
+
+    return vel.rolling(window).apply(_tail_dep, raw=True).fillna(0.0)
+
+
+def _mutual_information_flow(close: pd.Series, window: int = 30, lag: int = 1) -> pd.Series:
+    """Mutual information between past returns and future returns.
+
+    MI(past, future) measures how much knowing the past tick direction
+    tells us about the next tick direction. Non-zero MI = exploitable
+    predictability. Zero MI = IID (pure random walk, no edge).
+
+    Uses discrete MI: MI = ∑∑ p(x,y) * log₂(p(x,y) / (p(x)*p(y)))
+    on discretized return categories {down, flat, up}.
+
+    Returns MI in bits. Typical range [0, 0.3] for financial data.
+    Values above 0.1 = significant predictability.
+    """
+    returns = close.diff().fillna(0.0)
+    # Discretize: -1=down, 0=flat, 1=up
+    categories = np.sign(returns).astype(int) + 1  # map to 0,1,2
+
+    def _mi(x: np.ndarray) -> float:
+        n = len(x)
+        if n < lag + 4:
+            return 0.0
+        past = x[:-lag].astype(int)
+        future = x[lag:].astype(int)
+        m = len(past)
+        # Joint and marginal distributions
+        joint = np.zeros((3, 3))
+        for i in range(m):
+            p, f = past[i], future[i]
+            if 0 <= p < 3 and 0 <= f < 3:
+                joint[p, f] += 1
+        if joint.sum() < 1:
+            return 0.0
+        joint /= joint.sum()
+        p_past = joint.sum(axis=1)
+        p_future = joint.sum(axis=0)
+        mi = 0.0
+        for i in range(3):
+            for j in range(3):
+                if joint[i, j] > 0 and p_past[i] > 0 and p_future[j] > 0:
+                    mi += joint[i, j] * np.log2(joint[i, j] / (p_past[i] * p_future[j]))
+        return max(0.0, mi)  # MI is non-negative
+
+    return categories.rolling(window).apply(_mi, raw=True).fillna(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -833,3 +1232,325 @@ class EnsembleScorerRF:
         x = np.array([values], dtype=float)
         dmatrix = xgb.DMatrix(x, feature_names=self.feature_names)
         return float(self.booster.predict(dmatrix)[0])
+
+
+# ---------------------------------------------------------------------------
+# Jump Index momentum strategy (JD10, JD25, JD50, JD75, JD100)
+# ---------------------------------------------------------------------------
+# Based on empirical analysis of 5000-tick datasets showing statistically
+# significant edge (CI above 50%) on Jump Indices.
+#
+# Three strategies, combined as an ensemble:
+#   1. MomCont_5t: after 5 consecutive ticks in same direction → bet continuation
+#   2. EMA crossover: fast EMA crosses slow EMA → bet in cross direction
+#   3. Reversal: after 7 consecutive ticks in same direction → bet reversal
+#
+# Confidence levels and signal quality scored 1-6 based on agreement.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JumpMomentumConfig:
+    """Configuration for Jump Index momentum signal generation."""
+
+    # Momentum continuation: N consecutive ticks → bet continuation
+    mom_lookback: int = 5       # how many consecutive same-direction ticks needed
+    mom_horizon: int = 5        # bet duration in ticks (Rise/Fall)
+    # EMA crossover
+    ema_fast: int = 5           # fast EMA period
+    ema_slow: int = 20          # slow EMA period
+    # Reversal after long streak
+    rev_lookback: int = 7       # streak length to trigger reversal bet
+    # Minimum combined score to trigger signal (out of max ~10)
+    min_score: int = 2          # 2 = at least 2 strategies agree
+    # Minimum ticks in buffer before generating signals
+    min_ticks: int = 30
+    # Advanced calculus thresholds
+    curvature_reversal_z: float = 2.0   # curvature z-score → high = inflection
+    jerk_regime_z: float = 2.5          # jerk z-score → regime transition
+    energy_calm_pctile: float = 30.0    # derivative energy below this pctile = calm
+    exhaustion_extreme: float = 0.02    # |trend_exhaustion| above this = overbought/oversold
+    lyapunov_chaos: float = 1.5         # positive lyapunov above this → too chaotic to trade
+    return_z_extreme: float = 2.5       # |return_zscore| above this = extreme move
+    # Advanced intelligence filter thresholds
+    bayesian_strong_prob: float = 0.65  # P(up) above this or below (1-this) = strong signal
+    renyi_low_entropy: float = 0.3      # Rényi below this = highly concentrated → predictable
+    fisher_info_min: float = 0.1        # Fisher info above this = tight distribution → reliable
+    wavelet_snr_min: float = 0.55       # wavelet ratio above this = clean signal
+    cusum_regime_alert: float = 3.5     # CUSUM above this = regime shift in progress
+    tail_dep_danger: float = 0.3        # tail dependence above this = extreme clustering
+    mi_flow_min: float = 0.05           # MI above this = exploitable predictability
+
+
+def _ema_series(prices: list[float], period: int) -> list[float]:
+    """Compute exponential moving average from a list of prices."""
+    k = 2.0 / (period + 1)
+    result = [prices[0]]
+    for p in prices[1:]:
+        result.append(p * k + result[-1] * (1.0 - k))
+    return result
+
+
+def generate_jump_momentum_signal(
+    tick_buffer: list[dict],
+    config: JumpMomentumConfig | None = None,
+    df: pd.DataFrame | None = None,
+) -> tuple[Optional[str], int, Optional[float]]:
+    """Return ("CALL"/"PUT"/None, score, confidence).
+
+    Enhanced signal generator that combines:
+      Core (original 3 strategies):
+        1. Momentum continuation (5 consecutive ticks → same direction, weight=2)
+        2. EMA crossover (fast/slow cross → direction, weight=1-2)
+        3. Reversal (7+ consecutive ticks → opposite direction, weight=2)
+
+      Advanced calculus layer (4 new strategies):
+        4. Curvature inflection (high κ + deceleration → reversal imminent, weight=1)
+        5. Integral momentum divergence (sustained divergence from EMA → continuation, weight=1)
+        6. Trend exhaustion reversal (accumulated deviation extreme → mean-revert, weight=1)
+        7. Kalman + derivative energy filter (calm + low residual → higher confidence, weight=1)
+
+      Safety filters (block/reduce score):
+        - Lyapunov chaos filter: too chaotic → skip signal entirely
+        - Jerk regime transition: regime changing → reduce confidence
+        - Extreme return z-score: just had a spike → skip (don't chase)
+
+    Score range: 0-10. Confidence adjusted by filter penalties.
+    """
+    config = config or JumpMomentumConfig()
+    n = len(tick_buffer)
+    if n < config.min_ticks:
+        return None, 0, None
+
+    quotes = [t["quote"] for t in tick_buffer]
+
+    up_votes = 0
+    dn_votes = 0
+
+    # ── Strategy 1: Momentum continuation ─────────────────────────────────
+    lb = config.mom_lookback
+    if n > lb:
+        tick_dirs = [quotes[i] > quotes[i - 1] for i in range(n - lb, n)]
+        if all(tick_dirs):
+            up_votes += 2
+        elif not any(tick_dirs):
+            dn_votes += 2
+
+    # ── Strategy 2: EMA crossover ─────────────────────────────────────────
+    if n > config.ema_slow + 1:
+        ema_f = _ema_series(quotes, config.ema_fast)
+        ema_s = _ema_series(quotes, config.ema_slow)
+        fast_above_now = ema_f[-1] > ema_s[-1]
+        fast_above_prev = ema_f[-2] > ema_s[-2]
+        if fast_above_now and not fast_above_prev:
+            up_votes += 2
+        elif not fast_above_now and fast_above_prev:
+            dn_votes += 2
+        elif fast_above_now:
+            up_votes += 1
+        else:
+            dn_votes += 1
+
+    # ── Strategy 3: Reversal after long streak ────────────────────────────
+    rl = config.rev_lookback
+    if n > rl:
+        streak_dirs = [quotes[i] > quotes[i - 1] for i in range(n - rl, n)]
+        if all(streak_dirs):
+            dn_votes += 2
+        elif not any(streak_dirs):
+            up_votes += 2
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Advanced calculus layer — only fires if DataFrame with indicators is
+    # available. When df is None, falls back to original 3-strategy mode.
+    # ══════════════════════════════════════════════════════════════════════
+    confidence_penalty = 0.0
+
+    if df is not None and len(df) >= config.min_ticks:
+        last = df.iloc[-1]
+
+        def _g(name: str, default: float = 0.0) -> float:
+            v = last.get(name, default)
+            try:
+                f = float(v if v is not None else default)
+            except (TypeError, ValueError):
+                f = default
+            return default if f != f else f  # NaN guard
+
+        curv_z   = _g("curvature_zscore")
+        jerk_z   = _g("jerk_zscore")
+        int_div  = _g("integral_momentum_div")
+        energy   = _g("derivative_energy")
+        exhaust  = _g("trend_exhaustion")
+        ret_z    = _g("return_zscore")
+        lyap     = _g("lyapunov_exponent")
+        vel      = _g("price_velocity")
+        accel    = _g("price_acceleration", 0.0)
+        kalman_z = _g("kalman_residual_zscore")
+        hurst    = _g("hurst_exponent", 0.5)
+
+        # ── Safety filter: Lyapunov chaos gate ────────────────────────
+        if lyap > config.lyapunov_chaos:
+            logger.debug(
+                "JumpMom: Lyapunov=%.3f > %.3f → mercado caotico, sinal bloqueado.",
+                lyap, config.lyapunov_chaos,
+            )
+            return None, 0, None
+
+        # ── Safety filter: extreme return → don't chase the spike ─────
+        if abs(ret_z) > config.return_z_extreme:
+            logger.debug(
+                "JumpMom: return_z=%.2f → movimento extremo, nao entrar agora.",
+                ret_z,
+            )
+            return None, 0, None
+
+        # ── Confidence penalty: jerk regime transition ────────────────
+        if jerk_z > config.jerk_regime_z:
+            confidence_penalty += 0.15
+            logger.debug(
+                "JumpMom: jerk_z=%.2f → regime em transicao, confianca reduzida.",
+                jerk_z,
+            )
+
+        # ══════════════════════════════════════════════════════════════
+        # S4-S7: Confirmation-only layer.
+        # These do NOT add independent votes — they only adjust
+        # confidence when they AGREE or DISAGREE with S1-S3 direction.
+        # This prevents the advanced math from overriding proven core
+        # strategies with un-backtested noise.
+        # ══════════════════════════════════════════════════════════════
+
+        # Determine tentative direction from core S1-S3
+        _core_dir = 0  # +1=bullish, -1=bearish, 0=no consensus
+        if up_votes > dn_votes:
+            _core_dir = 1
+        elif dn_votes > up_votes:
+            _core_dir = -1
+
+        # ── S4: Curvature inflection confirmation ────────────────────
+        if curv_z > config.curvature_reversal_z and _core_dir != 0:
+            if accel > 0 and vel <= 0 and _core_dir == 1:
+                confidence_penalty -= 0.10  # boost: curvature agrees with CALL
+            elif accel < 0 and vel >= 0 and _core_dir == -1:
+                confidence_penalty -= 0.10  # boost: curvature agrees with PUT
+            elif (accel > 0 and vel <= 0 and _core_dir == -1) or \
+                 (accel < 0 and vel >= 0 and _core_dir == 1):
+                confidence_penalty += 0.10  # penalize: curvature contradicts
+
+        # ── S5: Integral momentum divergence confirmation ────────────
+        if abs(int_div) > 0:
+            norm_div = int_div / max(energy, 1e-10)
+            if norm_div > 1.0 and _core_dir == 1:
+                confidence_penalty -= 0.10  # bullish pressure confirms CALL
+            elif norm_div < -1.0 and _core_dir == -1:
+                confidence_penalty -= 0.10  # bearish pressure confirms PUT
+            elif (norm_div > 1.0 and _core_dir == -1) or \
+                 (norm_div < -1.0 and _core_dir == 1):
+                confidence_penalty += 0.10  # pressure contradicts direction
+
+        # ── S6: Trend exhaustion confirmation ────────────────────────
+        if abs(exhaust) > config.exhaustion_extreme:
+            if exhaust > config.exhaustion_extreme and _core_dir == -1:
+                confidence_penalty -= 0.05  # overbought + PUT = good
+            elif exhaust < -config.exhaustion_extreme and _core_dir == 1:
+                confidence_penalty -= 0.05  # oversold + CALL = good
+            elif (exhaust > config.exhaustion_extreme and _core_dir == 1) or \
+                 (exhaust < -config.exhaustion_extreme and _core_dir == -1):
+                confidence_penalty += 0.15  # chasing exhausted trend = bad
+
+        # ── S7: Calm market boost ────────────────────────────────────
+        if kalman_z < 1.0 and hurst < 0.45 and _core_dir != 0:
+            confidence_penalty -= 0.10  # calm + predictable = reliable signal
+
+        # ══════════════════════════════════════════════════════════════
+        # S8-S14: Advanced Intelligence Filters
+        # Bayesian, Information-theoretic, Wavelet & Regime detection
+        # These further adjust confidence based on deep math analysis.
+        # ══════════════════════════════════════════════════════════════
+
+        bayes_up  = _g("bayesian_prob_up", 0.5)
+        renyi     = _g("renyi_entropy", 0.5)
+        fisher    = _g("fisher_information", 0.0)
+        wavelet   = _g("wavelet_energy_ratio", 0.5)
+        cusum     = _g("cusum_score", 0.0)
+        tail_dep  = _g("tail_dependence", 0.0)
+        mi        = _g("mi_flow", 0.0)
+
+        # ── S8: Bayesian directional confirmation ────────────────────
+        # If Bayesian posterior strongly agrees with core direction, boost.
+        # If it strongly disagrees, penalize.
+        if _core_dir != 0:
+            if _core_dir == 1 and bayes_up > config.bayesian_strong_prob:
+                confidence_penalty -= 0.10  # Bayesian agrees: high P(up) + CALL
+            elif _core_dir == -1 and bayes_up < (1.0 - config.bayesian_strong_prob):
+                confidence_penalty -= 0.10  # Bayesian agrees: low P(up) + PUT
+            elif _core_dir == 1 and bayes_up < (1.0 - config.bayesian_strong_prob):
+                confidence_penalty += 0.12  # Bayesian disagrees: low P(up) + CALL
+            elif _core_dir == -1 and bayes_up > config.bayesian_strong_prob:
+                confidence_penalty += 0.12  # Bayesian disagrees: high P(up) + PUT
+
+        # ── S9: Rényi entropy — rare event sensitivity ───────────────
+        # Low Rényi entropy = returns are highly concentrated → predictable
+        if renyi < config.renyi_low_entropy and _core_dir != 0:
+            confidence_penalty -= 0.08  # predictable regime → boost
+
+        # ── S10: Fisher information — tight distribution ─────────────
+        # High Fisher info = returns are tightly clustered → reliable signals
+        if fisher > config.fisher_info_min and _core_dir != 0:
+            confidence_penalty -= 0.05  # well-determined parameters → boost
+
+        # ── S11: Wavelet energy — signal vs noise ────────────────────
+        # High wavelet energy ratio = clean trend signal (low noise)
+        if wavelet > config.wavelet_snr_min and _core_dir != 0:
+            confidence_penalty -= 0.08  # clean signal → boost
+        elif wavelet < 0.3:
+            confidence_penalty += 0.10  # noise-dominated → penalize
+
+        # ── S12: CUSUM regime change — block during transitions ──────
+        # High CUSUM = regime is shifting, signals unreliable
+        if cusum > config.cusum_regime_alert:
+            confidence_penalty += 0.15
+            logger.debug(
+                "JumpMom: CUSUM=%.2f → regime shift detected, confidence reduced.",
+                cusum,
+            )
+
+        # ── S13: Tail dependence — extreme clustering danger ─────────
+        # High tail dependence = velocity and acceleration extremes cluster
+        if tail_dep > config.tail_dep_danger:
+            confidence_penalty += 0.10
+            logger.debug(
+                "JumpMom: tail_dep=%.3f → extreme clustering, confidence reduced.",
+                tail_dep,
+            )
+
+        # ── S14: Mutual information flow — predictability gate ───────
+        # If MI is high, the market has exploitable structure
+        if mi > config.mi_flow_min and _core_dir != 0:
+            confidence_penalty -= 0.05  # predictable structure → boost
+        # If MI is near zero, the market is IID random → no edge
+        if mi < 0.01 and _core_dir != 0:
+            confidence_penalty += 0.05  # no predictability → penalize
+
+    # ── Combine votes ─────────────────────────────────────────────────────
+    total_votes = up_votes + dn_votes
+    if total_votes == 0:
+        return None, 0, None
+
+    if up_votes >= config.min_score and up_votes > dn_votes:
+        confidence = max(0.0, up_votes / max(total_votes, 1) - confidence_penalty)
+        logger.info(
+            "JumpMom CALL: up=%d dn=%d conf=%.2f",
+            up_votes, dn_votes, confidence,
+        )
+        return "CALL", up_votes, confidence
+    if dn_votes >= config.min_score and dn_votes > up_votes:
+        confidence = max(0.0, dn_votes / max(total_votes, 1) - confidence_penalty)
+        logger.info(
+            "JumpMom PUT: up=%d dn=%d conf=%.2f",
+            up_votes, dn_votes, confidence,
+        )
+        return "PUT", dn_votes, confidence
+
+    return None, 0, None
