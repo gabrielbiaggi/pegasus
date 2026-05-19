@@ -55,6 +55,9 @@ class DerivBot:
         self.last_accumulator_entry_epoch: Optional[int] = None
         self.accumulator_open_epoch: Optional[int] = None
         self.accumulator_sell_requested = False
+        # Saved on disconnect so portfolio-empty handler can account for a trade
+        # that settled while the WebSocket was down.
+        self._stale_pending_order: Optional[PendingOrder] = None
         self.journal = TradeJournal(config.pg_dsn)
         # Load XGBoost ensemble scorer if enabled
         self._ensemble_scorer: EnsembleScorer | None = None
@@ -287,11 +290,13 @@ class DerivBot:
                 self.current_contract_id = None
                 self.accumulator_sell_requested = False
             else:
-                logger.info("Aguardando resultado da operacao ACCU anterior.")
+                _mode_lbl = "RF" if self.config.contract_mode == "rise_fall" else "ACCU"
+                logger.info("Aguardando resultado da operacao %s anterior.", _mode_lbl)
                 return
 
         if self.pending_order:
-            logger.info("Aguardando proposta/compra ACCU pendente.")
+            _mode_lbl = "RF" if self.config.contract_mode == "rise_fall" else "ACCU"
+            logger.info("Aguardando proposta/compra %s pendente.", _mode_lbl)
             return
 
         if not self.risk:
@@ -1031,6 +1036,20 @@ class DerivBot:
                 self.pending_order = None
                 self.current_contract_id = None
                 self.accumulator_sell_requested = False
+            elif self._stale_pending_order is not None:
+                # A trade was open during disconnect and has since settled on Deriv's
+                # side. We don't know the outcome — treat as LOSS so the risk manager
+                # doesn't under-count daily losses.
+                stale = self._stale_pending_order
+                self._stale_pending_order = None
+                if self.risk:
+                    logger.warning(
+                        "Trade %s aberto durante desconexao ja expirou — contabilizando como LOSS stake=%.2f.",
+                        stale.direction,
+                        stale.stake,
+                    )
+                    self.risk.update(profit=-stale.stake, buy_price=stale.stake)
+                    logger.info(self.risk.stats())
             return
         for contract in open_contracts:
             cid = int(contract.get("contract_id", 0))
@@ -1038,7 +1057,8 @@ class DerivBot:
                 continue
             if self.current_contract_id is None and cid not in self.settled_contract_ids:
                 logger.warning(
-                    "Zombie trade detectado: contrato ACCU id=%s aberto sem rastreamento local. Subscrevendo.",
+                    "Zombie trade detectado: contrato %s id=%s aberto sem rastreamento local. Subscrevendo.",
+                    mode_label,
                     cid,
                 )
                 self.current_contract_id = cid
@@ -1061,6 +1081,9 @@ class DerivBot:
 
     async def run_forever(self) -> None:
         while True:
+            # Preserve pending state across reconnects so _reconcile_open_positions
+            # can account for a trade that settled while the WebSocket was down.
+            self._stale_pending_order = self.pending_order if self.waiting_for_result else None
             # Reset transient per-connection state so every reconnect starts clean.
             # _reconcile_open_positions will re-establish any genuinely open contract.
             self._reset_gale_state()
