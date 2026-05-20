@@ -655,8 +655,9 @@ class RiskManager:
             self.soros_profit = 0.0
             if self.use_martingale:
                 if self.martingale_step == 0:
-                    # Primeiro loss: guarda a stake base desta sequencia de gales
-                    self.martingale_base_stake = buy_price
+                    # Primeiro loss: base_stake é SEMPRE o valor base (sem Soros)
+                    # para que gales não herdem a inflação do Soros.
+                    self.martingale_base_stake = self.fixed_stake
                 self.martingale_accumulated_loss += buy_price
                 if self.martingale_step >= self.martingale_max_gales:
                     # Último gale esgotado — perdas absorvidas, reseta sequência para G0
