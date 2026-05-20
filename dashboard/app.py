@@ -666,7 +666,7 @@ def api_trades():
         return []
     cols = ["timestamp", "direction", "result", "soros_step", "gale_step", "profit", "score", "stake", "held_ticks"]
     available = [c for c in cols if c in df.columns]
-    records = df[available].tail(50).iloc[::-1].to_dict(orient="records")
+    records = df[available].iloc[::-1].to_dict(orient="records")
     for r in records:
         if "timestamp" in r and hasattr(r["timestamp"], "isoformat"):
             r["timestamp"] = r["timestamp"].isoformat()
@@ -678,14 +678,14 @@ def api_trades():
 
 @app.get("/api/logs")
 def api_logs():
-    text = _read_log_tail(65536)  # last 64KB is plenty for 100 log lines
+    text = _read_log_tail(524288)  # last 512KB — unlimited scrollable in dashboard
     if not text:
         return {"lines": []}
     lines = text.splitlines()
     # Drop first (possibly partial) line from the middle of the tail read
     if len(lines) > 1:
         lines = lines[1:]
-    return {"lines": lines[-100:]}
+    return {"lines": lines}
 
 
 @app.get("/api/indicators")

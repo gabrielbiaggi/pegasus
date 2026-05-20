@@ -245,6 +245,25 @@ class RiskManager:
                 else:
                     logger.info("Max gales atualizado: %d → %d", self.martingale_max_gales, new_max_gales)
                     self.martingale_max_gales = new_max_gales
+            # SOROS_MAX_STEPS live-reload
+            new_soros_steps = int(env_data.get("SOROS_MAX_STEPS", str(self.soros_max_steps)))
+            if new_soros_steps != self.soros_max_steps:
+                logger.info("Soros max steps atualizado: %d → %d", self.soros_max_steps, new_soros_steps)
+                self.soros_max_steps = new_soros_steps
+            # SOROS_PROFIT_FACTOR live-reload
+            new_soros_factor = float(env_data.get("SOROS_PROFIT_FACTOR", str(self.soros_profit_factor)))
+            if new_soros_factor != self.soros_profit_factor:
+                logger.info("Soros profit factor atualizado: %.1f → %.1f", self.soros_profit_factor, new_soros_factor)
+                self.soros_profit_factor = new_soros_factor
+            # MARTINGALE_PAYOUT_RATE live-reload
+            new_payout = float(env_data.get("MARTINGALE_PAYOUT_RATE", str(self.martingale_payout_rate)))
+            new_payout = max(0.001, new_payout)
+            if new_payout != self.martingale_payout_rate:
+                if _config_locked:
+                    logger.warning("\U0001f512 MARTINGALE_PAYOUT_RATE BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                else:
+                    logger.info("Payout rate atualizado: %.4f → %.4f", self.martingale_payout_rate, new_payout)
+                    self.martingale_payout_rate = new_payout
             # BLOCK_WEEKENDS live-reload
             self.block_weekends = env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
         except (OSError, ValueError):
