@@ -420,20 +420,76 @@ class DerivBot:
                 return
 
             if _in_gale:
-                # Exigir confiança mínima proporcional ao gale step
-                _gale_min_conf = min(0.65 + self.risk.martingale_step * 0.03, 0.85)
-                _gale_min_score = self.config.rise_fall_min_votes + min(self.risk.martingale_step, 2)
+                # --- REGIME GUARD: aguardar condições ideais ---
+                _cusum = df["cusum_score"].iloc[-1] if "cusum_score" in df.columns and len(df) > 0 else 0.0
+                _hurst = df["hurst_exponent"].iloc[-1] if "hurst_exponent" in df.columns and len(df) > 0 else 0.5
+                _bayes = df["bayesian_prob_up"].iloc[-1] if "bayesian_prob_up" in df.columns and len(df) > 0 else 0.5
+                _step = self.risk.martingale_step
+
+                # --- G4+ = SNIPER MODE: todas condições precisam estar perfeitas ---
+                if _step >= 4:
+                    # Cusum baixo = regime estável (< 4.0 pra sniper)
+                    if _cusum > 4.0:
+                        logger.debug(
+                            "🎯 SNIPER G%d: cusum=%.2f > 4.0 — aguardando regime calmo.",
+                            _step, _cusum,
+                        )
+                        return
+                    # Hurst < 0.55 = mercado mean-reverting (ideal pra Rise/Fall)
+                    if _hurst > 0.55:
+                        logger.debug(
+                            "🎯 SNIPER G%d: hurst=%.3f > 0.55 — aguardando mercado lateral.",
+                            _step, _hurst,
+                        )
+                        return
+                    # Bayesian deve concordar com a direção (>0.58 pra CALL, <0.42 pra PUT)
+                    _bayes_ok = (_bayes > 0.58 and signal == "CALL") or (_bayes < 0.42 and signal == "PUT")
+                    if not _bayes_ok:
+                        logger.debug(
+                            "🎯 SNIPER G%d: bayes=%.3f não confirma %s — aguardando alinhamento.",
+                            _step, _bayes, signal,
+                        )
+                        return
+                elif _step >= 3:
+                    # G3: regime guard moderado
+                    if _cusum > 5.5:
+                        logger.debug(
+                            "GALE %d/%d: cusum=%.2f > 5.5 — aguardando estabilizar.",
+                            _step, self.risk.martingale_max_gales, _cusum,
+                        )
+                        return
+                    if _hurst > 0.60:
+                        logger.debug(
+                            "GALE %d/%d: hurst=%.3f > 0.60 — aguardando.",
+                            _step, self.risk.martingale_max_gales, _hurst,
+                        )
+                        return
+
+                # Confiança mínima: G1-3=65-74%, G4=80%, G5=85%, G6=90%
+                if _step >= 4:
+                    _gale_min_conf = min(0.75 + (_step - 4) * 0.05, 0.90)
+                else:
+                    _gale_min_conf = min(0.65 + _step * 0.03, 0.74)
+                # Score mínimo: G1-2=base+1, G3=base+2, G4=base+3, G5-6=base+4
+                if _step >= 5:
+                    _gale_min_score = self.config.rise_fall_min_votes + 4
+                elif _step >= 4:
+                    _gale_min_score = self.config.rise_fall_min_votes + 3
+                elif _step >= 3:
+                    _gale_min_score = self.config.rise_fall_min_votes + 2
+                else:
+                    _gale_min_score = self.config.rise_fall_min_votes + 1
                 if confidence is not None and confidence < _gale_min_conf:
                     logger.debug(
                         "GALE %d/%d: conf=%.0f%% < min=%.0f%% — aguardando sinal mais forte.",
-                        self.risk.martingale_step, self.risk.martingale_max_gales,
+                        _step, self.risk.martingale_max_gales,
                         confidence * 100, _gale_min_conf * 100,
                     )
                     return
                 if score < _gale_min_score:
                     logger.debug(
                         "GALE %d/%d: score=%d < min=%d — aguardando sinal mais forte.",
-                        self.risk.martingale_step, self.risk.martingale_max_gales,
+                        _step, self.risk.martingale_max_gales,
                         score, _gale_min_score,
                     )
                     return
