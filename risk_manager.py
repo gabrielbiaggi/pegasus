@@ -306,8 +306,9 @@ class RiskManager:
         self.daily_loss = float(data.get("daily_loss", 0.0))
         self.daily_net_profit = float(data.get("daily_net_profit", data.get("daily_profit", 0.0)))
         self.daily_peak_profit = float(data.get("daily_peak_profit", max(0.0, self.daily_net_profit)))
-        # Restore fixed start-of-day balance; fallback to derived value for legacy state
-        self.start_of_day_balance = float(data.get("start_of_day_balance", self.balance - self.daily_net_profit))
+        # start_of_day_balance is NOT restored from file — always uses balance at
+        # bot startup so P&L reflects change since this session started.
+        # (self.start_of_day_balance already set in __init__ from authorization balance)
         self.daily_trailing_active = bool(data.get("daily_trailing_active", False))
         self.trades_today = int(data.get("trades_today", 0))
         self.wins = int(data.get("wins", 0))
@@ -378,14 +379,14 @@ class RiskManager:
         if old != new:
             logger.info(
                 "♻ Reconciliado com DB: trades %d→%d | W %d→%d | L %d→%d | "
-                "loss %.2f→%.2f | net_profit(saldo)=%.2f | saldo_inicio_dia=%.2f",
+                "loss %.2f→%.2f | net_profit(saldo)=%.2f | saldo_inicio_sessao=%.2f",
                 old[0], new[0], old[1], new[1], old[2], new[2],
                 old[3], new[3], self.daily_net_profit, self.start_of_day_balance,
             )
             self._save_state()
         else:
             logger.info(
-                "♻ DB confere | net_profit(saldo)=%.2f | saldo_inicio_dia=%.2f",
+                "♻ DB confere | net_profit(saldo)=%.2f | saldo_inicio_sessao=%.2f",
                 self.daily_net_profit, self.start_of_day_balance,
             )
 
