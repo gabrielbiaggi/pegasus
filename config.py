@@ -84,6 +84,7 @@ class BotConfig:
     martingale_lock_config: bool  # lock SL/SG/stake changes while gale is active
     martingale_last_gale_max_ploss: float
     martingale_last_gale_max_wait_ticks: int  # max ticks to wait in last-gale mode; 0 = wait forever
+    martingale_sniper_max_wait_secs: int  # 0 = wait forever; abandon gale after N secs blocked by SNIPER
     dynamic_stake_base_pct: float
     journal_dir: str
     pg_dsn: str
@@ -240,6 +241,7 @@ def load_config() -> BotConfig:
         martingale_lock_config=_bool_env("MARTINGALE_LOCK_CONFIG", True),
         martingale_last_gale_max_ploss=_float_env("MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05),
         martingale_last_gale_max_wait_ticks=_int_env("MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0),
+        martingale_sniper_max_wait_secs=_int_env("MARTINGALE_SNIPER_MAX_WAIT_SECS", 0),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
         journal_dir=os.getenv("JOURNAL_DIR", "logs").strip() or "logs",
         pg_dsn=os.getenv("PG_DSN", "").strip(),

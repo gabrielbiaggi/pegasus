@@ -73,6 +73,8 @@ class DerivBot:
         self._waiting_since: float = 0.0
         self._gale_wait_log_ts: float = 0.0  # throttle log para aguardo do último gale
         self._gale_wait_ticks: int = 0  # contador de ticks em modo wait do último gale
+        self._sniper_wait_start: float = 0.0   # monotonic time when current gale step was first blocked by SNIPER
+        self._sniper_wait_step: int = -1        # gale step associated with _sniper_wait_start
         self._gale_locked_direction = None  # Lock direction during gale
         self._gale_exhaustion_epoch: int = 0  # epoch when last gale sequence exhausted (cooldown)
         # Rise/Fall specific state
@@ -458,6 +460,25 @@ class DerivBot:
                 # Quanto mais fundo no gale, mais rigoroso o filtro.
                 # G1-3: warm-up, G4-6: sniper, G7-9: deep, G10-15: ultra.
                 _step = self.risk.martingale_step
+
+                # ── SNIPER TIMEOUT: abandona gale se bloqueado por muito tempo sem conseguir entrar ──
+                if _step >= 4:
+                    _sniper_max_secs = self.config.martingale_sniper_max_wait_secs
+                    if _sniper_max_secs > 0:
+                        if self._sniper_wait_step != _step:
+                            # Novo nível de gale — reinicia o contador
+                            self._sniper_wait_start = time.monotonic()
+                            self._sniper_wait_step = _step
+                        elif (time.monotonic() - self._sniper_wait_start) >= _sniper_max_secs:
+                            _waited = time.monotonic() - self._sniper_wait_start
+                            logger.warning(
+                                "⏰ SNIPER TIMEOUT G%d: aguardando há %.0fs (limite=%ds) — absorvendo perdas=%.2f e resetando",
+                                _step, _waited, _sniper_max_secs, self.risk.martingale_accumulated_loss,
+                            )
+                            self._sniper_wait_start = 0.0
+                            self._sniper_wait_step = -1
+                            self.risk.abandon_gale()
+                            return
 
                 def _ind(name: str, default: float = 0.0) -> float:
                     if name in df.columns and len(df) > 0:
