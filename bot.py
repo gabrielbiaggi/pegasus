@@ -469,66 +469,87 @@ class DerivBot:
                         return default if f != f else f
                     return default
 
+                def _ind_valid(name: str) -> bool:
+                    """True if indicator column exists and last value is not NaN."""
+                    if name not in df.columns or len(df) == 0:
+                        return False
+                    v = df[name].iloc[-1]
+                    if v is None:
+                        return False
+                    try:
+                        f = float(v)
+                        return f == f  # False for NaN
+                    except (TypeError, ValueError):
+                        return False
+
                 _cusum = _ind("cusum_score")
                 _hurst = _ind("hurst_exponent", 0.5)
                 _bayes = _ind("bayesian_prob_up", 0.5)
 
                 # ── REGIME GUARD: thresholds progressivos por profundidade ──
+                # Thresholds calibrados com dados reais do instrumento:
+                #   cusum típico: 3-5, hurst: 0.35-0.45, bayes: 0.50-0.60
                 if _step >= 4:
-                    # Cusum: 4.0 no G4, -0.25/step, piso 2.0
-                    _max_cusum = max(4.0 - (_step - 4) * 0.25, 2.0)
-                    if _cusum > _max_cusum:
-                        logger.debug(
+                    # Cusum: 6.0 no G4, -0.25/step, piso 3.0 (safety net p/ regime extremo)
+                    _max_cusum = max(6.0 - (_step - 4) * 0.25, 3.0)
+                    if _ind_valid("cusum_score") and _cusum > _max_cusum:
+                        logger.info(
                             "🎯 SNIPER G%d: cusum=%.2f > %.2f — aguardando regime calmo.",
                             _step, _cusum, _max_cusum,
                         )
                         return
-                    # Hurst: 0.55 no G4, -0.01/step, piso 0.45
-                    _max_hurst = max(0.55 - (_step - 4) * 0.01, 0.45)
-                    if _hurst > _max_hurst:
-                        logger.debug(
+                    # Hurst: 0.60 no G4, -0.01/step, piso 0.48
+                    _max_hurst = max(0.60 - (_step - 4) * 0.01, 0.48)
+                    if _ind_valid("hurst_exponent") and _hurst > _max_hurst:
+                        logger.info(
                             "🎯 SNIPER G%d: hurst=%.3f > %.3f — aguardando mercado lateral.",
                             _step, _hurst, _max_hurst,
                         )
                         return
-                    # Bayesian: 0.58 no G4, +0.01/step, teto 0.68
-                    _min_bayes = min(0.58 + (_step - 4) * 0.01, 0.68)
-                    _bayes_ok = (_bayes > _min_bayes and signal == "CALL") or (_bayes < (1.0 - _min_bayes) and signal == "PUT")
-                    if not _bayes_ok:
-                        logger.debug(
-                            "🎯 SNIPER G%d: bayes=%.3f não confirma %s (precisa >%.2f/<%.2f) — aguardando.",
-                            _step, _bayes, signal, _min_bayes, 1.0 - _min_bayes,
+                    # Bayesian: contra-direction safety — só bloqueia se bayes
+                    # contradiz FORTEMENTE o sinal (não exige confirmação).
+                    # G4: bloqueia CALL se bayes < 0.30, PUT se bayes > 0.70
+                    _bayes_contra = max(0.30 - (_step - 4) * 0.01, 0.20)
+                    if _ind_valid("bayesian_prob_up"):
+                        _bayes_block = (
+                            (_bayes < _bayes_contra and signal == "CALL")
+                            or (_bayes > (1.0 - _bayes_contra) and signal == "PUT")
                         )
-                        return
+                        if _bayes_block:
+                            logger.info(
+                                "🎯 SNIPER G%d: bayes=%.3f contra %s (limite %.2f/%.2f) — aguardando.",
+                                _step, _bayes, signal, _bayes_contra, 1.0 - _bayes_contra,
+                            )
+                            return
                 elif _step >= 3:
-                    if _cusum > 5.5:
-                        logger.debug(
-                            "GALE %d/%d: cusum=%.2f > 5.5 — aguardando estabilizar.",
+                    if _ind_valid("cusum_score") and _cusum > 7.0:
+                        logger.info(
+                            "GALE %d/%d: cusum=%.2f > 7.0 — aguardando estabilizar.",
                             _step, self.risk.martingale_max_gales, _cusum,
                         )
                         return
-                    if _hurst > 0.60:
-                        logger.debug(
-                            "GALE %d/%d: hurst=%.3f > 0.60 — aguardando.",
+                    if _ind_valid("hurst_exponent") and _hurst > 0.65:
+                        logger.info(
+                            "GALE %d/%d: hurst=%.3f > 0.65 — aguardando.",
                             _step, self.risk.martingale_max_gales, _hurst,
                         )
                         return
 
                 # ── DEEP GALE G8+: validadores extras de qualidade ──
                 if _step >= 8:
-                    _wavelet = _ind("wavelet_energy_ratio", 0.5)
+                    _wavelet = _ind("wavelet_energy_ratio", 0.0)
                     _mi = _ind("mi_flow", 0.0)
-                    # Wavelet SNR: sinal limpo (>0.50)
-                    if _wavelet < 0.50:
-                        logger.debug(
-                            "🔬 DEEP G%d: wavelet=%.3f < 0.50 — sinal ruidoso, aguardando.",
+                    # Wavelet SNR: sinal limpo — skip se indicador retorna 0 (inativo)
+                    if _ind_valid("wavelet_energy_ratio") and _wavelet > 0.0 and _wavelet < 0.30:
+                        logger.info(
+                            "🔬 DEEP G%d: wavelet=%.3f < 0.30 — sinal ruidoso, aguardando.",
                             _step, _wavelet,
                         )
                         return
-                    # MI: estrutura previsível (>0.02)
-                    if _mi < 0.02:
-                        logger.debug(
-                            "🔬 DEEP G%d: mi_flow=%.4f < 0.02 — sem estrutura, aguardando.",
+                    # MI: estrutura previsível (>0.01)
+                    if _ind_valid("mi_flow") and _mi < 0.01:
+                        logger.info(
+                            "🔬 DEEP G%d: mi_flow=%.4f < 0.01 — sem estrutura, aguardando.",
                             _step, _mi,
                         )
                         return
@@ -538,16 +559,16 @@ class DerivBot:
                     _shannon = _ind("shannon_entropy", 1.0)
                     _fisher = _ind("fisher_information", 0.0)
                     # Shannon baixo = retornos concentrados = previsível
-                    if _shannon > 0.80:
-                        logger.debug(
-                            "🔬 ULTRA G%d: shannon=%.3f > 0.80 — mercado disperso, aguardando.",
+                    if _ind_valid("shannon_entropy") and _shannon > 0.95:
+                        logger.info(
+                            "🔬 ULTRA G%d: shannon=%.3f > 0.95 — mercado disperso, aguardando.",
                             _step, _shannon,
                         )
                         return
                     # Fisher alto = distribuição apertada = confiável
-                    if _fisher < 0.03:
-                        logger.debug(
-                            "🔬 ULTRA G%d: fisher=%.4f < 0.03 — distribuição frouxa, aguardando.",
+                    if _ind_valid("fisher_information") and _fisher < 0.01:
+                        logger.info(
+                            "🔬 ULTRA G%d: fisher=%.4f < 0.01 — distribuição frouxa, aguardando.",
                             _step, _fisher,
                         )
                         return
@@ -555,9 +576,9 @@ class DerivBot:
                 # ── EXTREME GALE G12+: Lyapunov estável ──
                 if _step >= 12:
                     _lyap = _ind("lyapunov_exponent", 0.0)
-                    if _lyap > 0.5:
-                        logger.debug(
-                            "🔬 EXTREME G%d: lyapunov=%.3f > 0.50 — mercado caótico, aguardando.",
+                    if _ind_valid("lyapunov_exponent") and _lyap > 1.0:
+                        logger.info(
+                            "🔬 EXTREME G%d: lyapunov=%.3f > 1.00 — mercado caótico, aguardando.",
                             _step, _lyap,
                         )
                         return
