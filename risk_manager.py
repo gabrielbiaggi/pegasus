@@ -522,11 +522,7 @@ class RiskManager:
                 self._log_ts_trailing = _now
             return False
 
-        if self.trades_today >= self.max_trades_day:
-            if _now - self._log_ts_trades >= 60:
-                logger.warning("Limite diario de operacoes atingido: %s", self.trades_today)
-                self._log_ts_trades = _now
-            return False
+        # max_trades_day limit removed — bot runs unlimited trades per day
 
         if self.consecutive_losses >= self.max_consecutive_losses:
             # Never block during martingale recovery — the gale MUST continue
