@@ -399,19 +399,7 @@ class RiskManager:
         else:
             raw_stake = self.fixed_stake
 
-        # Gale-safe cap: limita a stake BASE (sem Soros) para que G(max_gales) caiba em max_stake.
-        # Aplicado ANTES do Soros para que a progressão Soros cresça corretamente.
-        # Se um bet Soros perder, o gale recovery pode exceder max_stake → partial recovery trata.
         _in_gale = self.use_martingale and self.martingale_step > 0
-        if (
-            self.use_martingale
-            and self.martingale_step == 0
-            and self.max_stake > 0
-            and self.martingale_payout_rate > 0
-        ):
-            safe_gales = min(self.martingale_max_gales, 3)
-            gale_factor = (1.0 + 1.0 / self.martingale_payout_rate) ** safe_gales
-            raw_stake = min(raw_stake, self.max_stake / gale_factor)
 
         # Soros: reinveste lucro acumulado de wins consecutivos (limpos, não gale)
         # Posicionado APÓS gale-safe cap para que cada step Soros cresça progressivamente.
@@ -436,13 +424,11 @@ class RiskManager:
         else:
             # Cap = banca inteira (sem pct_cap). Proteção real via can_trade() e remaining_budget.
             caps = [raw_stake, remaining_budget, self.balance]
-        if self.max_stake > 0:
-            caps.append(self.max_stake)
-
-        # PROTEÇÃO: nunca apostar mais que X% do saldo (evita all-in em gales altos)
-        if self.martingale_max_balance_pct > 0 and self.balance > 0:
-            balance_cap = round(self.balance * self.martingale_max_balance_pct, 2)
-            caps.append(balance_cap)
+        # CAP DINÂMICO: calcula o maior cap que faz TODOS os gales restantes
+        # caberem no saldo atual. Ajusta automaticamente conforme banca sobe/desce.
+        if _in_gale:
+            dynamic_cap = self._dynamic_gale_cap()
+            caps.append(dynamic_cap)
 
         stake = min(caps)
 
@@ -450,6 +436,65 @@ class RiskManager:
             return 0.0
 
         return round(stake, 2)
+
+    def _simulate_gale_cost(self, cap: float) -> float:
+        """Simulate total cost of all remaining gales if ALL LOSE, with given cap.
+
+        Starts from current martingale state (step, accumulated_loss) and
+        simulates forward to max_gales, capping each stake at `cap`.
+        Returns total amount that would be spent.
+        """
+        sim_accum = self.martingale_accumulated_loss
+        base = self.martingale_base_stake or self.fixed_stake
+        payout = self.martingale_payout_rate
+        total = 0.0
+        for _ in range(self.martingale_step, self.martingale_max_gales):
+            formula = sim_accum / payout + base
+            stake = min(formula, cap)
+            total += stake
+            sim_accum += stake
+        return total
+
+    def _dynamic_gale_cap(self) -> float:
+        """Compute the maximum per-trade gale cap so ALL remaining gales
+        (worst case: all LOSS) fit within current balance.
+
+        Uses binary search: simulate the full martingale progression for
+        each candidate cap, find the highest cap that keeps total ≤ available.
+        As balance grows from wins, the cap automatically increases.
+        As balance shrinks from losses, the cap automatically decreases.
+        """
+        if not self.use_martingale or self.martingale_step <= 0:
+            return float('inf')
+
+        remaining = self.martingale_max_gales - self.martingale_step
+        if remaining <= 0:
+            return self.min_stake
+
+        floor = max(self.martingale_min_balance_floor, 0)
+        available = self.balance - floor
+        if available <= 0:
+            return 0.0
+
+        lo = self.min_stake
+        hi = available
+        # Respect configured MAX_STAKE as absolute ceiling (if set)
+        if self.max_stake > 0:
+            hi = min(hi, self.max_stake)
+
+        best = lo
+        for _ in range(50):
+            if hi - lo < 0.005:
+                break
+            mid = (lo + hi) / 2
+            cost = self._simulate_gale_cost(mid)
+            if cost <= available:
+                best = mid
+                lo = mid
+            else:
+                hi = mid
+
+        return round(best, 2)
 
     def get_gale_raw_stake(self) -> float:
         """Returns the uncapped martingale recovery stake (may exceed max_stake API limit).

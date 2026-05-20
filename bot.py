@@ -454,38 +454,53 @@ class DerivBot:
                 return
 
             if _in_gale:
-                # --- REGIME GUARD: aguardar condições ideais ---
-                _cusum = df["cusum_score"].iloc[-1] if "cusum_score" in df.columns and len(df) > 0 else 0.0
-                _hurst = df["hurst_exponent"].iloc[-1] if "hurst_exponent" in df.columns and len(df) > 0 else 0.5
-                _bayes = df["bayesian_prob_up"].iloc[-1] if "bayesian_prob_up" in df.columns and len(df) > 0 else 0.5
+                # --- REGIME GUARD + PROGRESSIVE VOTE INTELLIGENCE ---
+                # Quanto mais fundo no gale, mais rigoroso o filtro.
+                # G1-3: warm-up, G4-6: sniper, G7-9: deep, G10-15: ultra.
                 _step = self.risk.martingale_step
 
-                # --- G4+ = SNIPER MODE: todas condições precisam estar perfeitas ---
+                def _ind(name: str, default: float = 0.0) -> float:
+                    if name in df.columns and len(df) > 0:
+                        v = df[name].iloc[-1]
+                        try:
+                            f = float(v if v is not None else default)
+                        except (TypeError, ValueError):
+                            f = default
+                        return default if f != f else f
+                    return default
+
+                _cusum = _ind("cusum_score")
+                _hurst = _ind("hurst_exponent", 0.5)
+                _bayes = _ind("bayesian_prob_up", 0.5)
+
+                # ── REGIME GUARD: thresholds progressivos por profundidade ──
                 if _step >= 4:
-                    # Cusum baixo = regime estável (< 4.0 pra sniper)
-                    if _cusum > 4.0:
+                    # Cusum: 4.0 no G4, -0.25/step, piso 2.0
+                    _max_cusum = max(4.0 - (_step - 4) * 0.25, 2.0)
+                    if _cusum > _max_cusum:
                         logger.debug(
-                            "🎯 SNIPER G%d: cusum=%.2f > 4.0 — aguardando regime calmo.",
-                            _step, _cusum,
+                            "🎯 SNIPER G%d: cusum=%.2f > %.2f — aguardando regime calmo.",
+                            _step, _cusum, _max_cusum,
                         )
                         return
-                    # Hurst < 0.55 = mercado mean-reverting (ideal pra Rise/Fall)
-                    if _hurst > 0.55:
+                    # Hurst: 0.55 no G4, -0.01/step, piso 0.45
+                    _max_hurst = max(0.55 - (_step - 4) * 0.01, 0.45)
+                    if _hurst > _max_hurst:
                         logger.debug(
-                            "🎯 SNIPER G%d: hurst=%.3f > 0.55 — aguardando mercado lateral.",
-                            _step, _hurst,
+                            "🎯 SNIPER G%d: hurst=%.3f > %.3f — aguardando mercado lateral.",
+                            _step, _hurst, _max_hurst,
                         )
                         return
-                    # Bayesian deve concordar com a direção (>0.58 pra CALL, <0.42 pra PUT)
-                    _bayes_ok = (_bayes > 0.58 and signal == "CALL") or (_bayes < 0.42 and signal == "PUT")
+                    # Bayesian: 0.58 no G4, +0.01/step, teto 0.68
+                    _min_bayes = min(0.58 + (_step - 4) * 0.01, 0.68)
+                    _bayes_ok = (_bayes > _min_bayes and signal == "CALL") or (_bayes < (1.0 - _min_bayes) and signal == "PUT")
                     if not _bayes_ok:
                         logger.debug(
-                            "🎯 SNIPER G%d: bayes=%.3f não confirma %s — aguardando alinhamento.",
-                            _step, _bayes, signal,
+                            "🎯 SNIPER G%d: bayes=%.3f não confirma %s (precisa >%.2f/<%.2f) — aguardando.",
+                            _step, _bayes, signal, _min_bayes, 1.0 - _min_bayes,
                         )
                         return
                 elif _step >= 3:
-                    # G3: regime guard moderado
                     if _cusum > 5.5:
                         logger.debug(
                             "GALE %d/%d: cusum=%.2f > 5.5 — aguardando estabilizar.",
@@ -499,20 +514,61 @@ class DerivBot:
                         )
                         return
 
-                # Confiança mínima: G1-3=65-74%, G4=80%, G5=85%, G6=90%
-                if _step >= 4:
-                    _gale_min_conf = min(0.75 + (_step - 4) * 0.05, 0.90)
-                else:
-                    _gale_min_conf = min(0.65 + _step * 0.03, 0.74)
-                # Score mínimo: G1-2=base+1, G3=base+2, G4=base+3, G5-6=base+4
-                if _step >= 5:
-                    _gale_min_score = self.config.rise_fall_min_votes + 4
-                elif _step >= 4:
-                    _gale_min_score = self.config.rise_fall_min_votes + 3
-                elif _step >= 3:
-                    _gale_min_score = self.config.rise_fall_min_votes + 2
-                else:
-                    _gale_min_score = self.config.rise_fall_min_votes + 1
+                # ── DEEP GALE G8+: validadores extras de qualidade ──
+                if _step >= 8:
+                    _wavelet = _ind("wavelet_energy_ratio", 0.5)
+                    _mi = _ind("mi_flow", 0.0)
+                    # Wavelet SNR: sinal limpo (>0.50)
+                    if _wavelet < 0.50:
+                        logger.debug(
+                            "🔬 DEEP G%d: wavelet=%.3f < 0.50 — sinal ruidoso, aguardando.",
+                            _step, _wavelet,
+                        )
+                        return
+                    # MI: estrutura previsível (>0.02)
+                    if _mi < 0.02:
+                        logger.debug(
+                            "🔬 DEEP G%d: mi_flow=%.4f < 0.02 — sem estrutura, aguardando.",
+                            _step, _mi,
+                        )
+                        return
+
+                # ── ULTRA GALE G10+: condições quase perfeitas ──
+                if _step >= 10:
+                    _shannon = _ind("shannon_entropy", 1.0)
+                    _fisher = _ind("fisher_information", 0.0)
+                    # Shannon baixo = retornos concentrados = previsível
+                    if _shannon > 0.80:
+                        logger.debug(
+                            "🔬 ULTRA G%d: shannon=%.3f > 0.80 — mercado disperso, aguardando.",
+                            _step, _shannon,
+                        )
+                        return
+                    # Fisher alto = distribuição apertada = confiável
+                    if _fisher < 0.03:
+                        logger.debug(
+                            "🔬 ULTRA G%d: fisher=%.4f < 0.03 — distribuição frouxa, aguardando.",
+                            _step, _fisher,
+                        )
+                        return
+
+                # ── EXTREME GALE G12+: Lyapunov estável ──
+                if _step >= 12:
+                    _lyap = _ind("lyapunov_exponent", 0.0)
+                    if _lyap > 0.5:
+                        logger.debug(
+                            "🔬 EXTREME G%d: lyapunov=%.3f > 0.50 — mercado caótico, aguardando.",
+                            _step, _lyap,
+                        )
+                        return
+
+                # ── VOTOS + CONFIANÇA: escalamento progressivo ──
+                # Confiança: 0.62 + step*0.02, teto 0.95 (de 21 validadores)
+                _gale_min_conf = min(0.62 + _step * 0.02, 0.95)
+                # Score: base + 1 + step//2, teto base+8
+                _base = self.config.rise_fall_min_votes
+                _gale_min_score = min(_base + 1 + _step // 2, _base + 8)
+
                 if confidence is not None and confidence < _gale_min_conf:
                     logger.debug(
                         "GALE %d/%d: conf=%.0f%% < min=%.0f%% — aguardando sinal mais forte.",
@@ -527,32 +583,32 @@ class DerivBot:
                         score, _gale_min_score,
                     )
                     return
-                # Travar na direção do último sinal que perdeu (não ficar flipando)
+
+                # ── DIRECTION LOCK: inversão precisa conf >= lock threshold ──
+                # G1-6: 80%, G7-9: 85%, G10+: 90% (mais fundo = mais difícil inverter)
+                _invert_min_conf = 0.80 if _step < 7 else (0.85 if _step < 10 else 0.90)
                 if self._gale_locked_direction is not None and signal != self._gale_locked_direction:
-                    # Só aceitar inversão se confiança for MUITO alta (>80%)
-                    if confidence is not None and confidence >= 0.80:
+                    if confidence is not None and confidence >= _invert_min_conf:
                         logger.info(
-                            "GALE %d/%d: invertendo %s→%s (conf=%.0f%% alta o suficiente)",
+                            "GALE %d/%d: invertendo %s→%s (conf=%.0f%% >= %.0f%%)",
                             self.risk.martingale_step, self.risk.martingale_max_gales,
-                            self._gale_locked_direction, signal, confidence * 100,
+                            self._gale_locked_direction, signal, confidence * 100, _invert_min_conf * 100,
                         )
                         self._gale_locked_direction = signal
                     else:
                         logger.debug(
-                            "GALE %d/%d: sinal %s != lock %s e conf=%.0f%% < 80%% — ignorando.",
+                            "GALE %d/%d: sinal %s != lock %s e conf=%.0f%% < %.0f%% — ignorando.",
                             self.risk.martingale_step, self.risk.martingale_max_gales,
                             signal, self._gale_locked_direction,
-                            (confidence or 0) * 100,
+                            (confidence or 0) * 100, _invert_min_conf * 100,
                         )
                         return
                 elif self._gale_locked_direction is None:
-                    # Primeiro gale sem lock herdado: travar na direção do sinal atual
                     self._gale_locked_direction = signal
                     logger.info(
                         "GALE %d/%d: travando direção=%s para sequência de gale.",
                         self.risk.martingale_step, self.risk.martingale_max_gales, signal,
                     )
-                # Usar a direção travada para a entrada (mesmo se signal diferente)
                 signal = self._gale_locked_direction
             else:
                 # Fora de gale: limpar lock
