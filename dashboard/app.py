@@ -321,16 +321,16 @@ def api_status(response: Response):
     wins = int((df["result"] == "WIN").sum()) if not df.empty else 0
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
     total = wins + losses
-    pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
     risk_state = _read_risk_state()
-    # P&L total: current balance vs initial capital
+    # P&L = balance - session start balance (from risk_state.json)
+    pnl = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
     bal_str = _read_balance_fast()
     try:
         bal_float = float(bal_str)
     except (ValueError, TypeError):
         bal_float = 0.0
-    ini_bal = _initial_balance()
+    ini_bal = float(risk_state.get("start_of_day_balance", 0)) or _initial_balance()
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     signal = _last_jump_signal()
     return {
@@ -389,7 +389,8 @@ def api_balance(response: Response):
         bal_float = float(bal)
     except (ValueError, TypeError):
         bal_float = 0.0
-    ini_bal = _initial_balance()
+    risk_state = _read_risk_state()
+    ini_bal = float(risk_state.get("start_of_day_balance", 0)) or _initial_balance()
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     return {"balance": bal, "pnl_total": pnl_total, "initial_balance": ini_bal}
 

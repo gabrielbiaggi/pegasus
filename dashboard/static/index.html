@@ -210,7 +210,7 @@ header{padding:8px 12px}
 <main>
 <div class="metrics">
   <div class="card"><div class="card-label" id="balance-label">Saldo</div><div class="card-value blue" id="balance">&mdash;</div><div class="card-sub" id="balance-sub">&mdash;</div><div class="card-sub2" id="balance-pnl-total" style="color:var(--muted)">&mdash;</div></div>
-  <div class="card"><div class="card-label">P&amp;L Hoje</div><div class="card-value" id="pnl">&mdash;</div><div class="card-sub" id="pnl-sub">&mdash;</div><div class="card-sub2" id="pnl-avg"></div><div class="card-sub2" id="pnl-risk" style="color:var(--muted)"></div><svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="spark-zero" x1="0" y1="15" x2="100" y2="15"/><polyline class="spark-line" id="spark-path" points=""/></svg></div>
+  <div class="card"><div class="card-label">P&amp;L Sess&atilde;o</div><div class="card-value" id="pnl">&mdash;</div><div class="card-sub" id="pnl-sub">&mdash;</div><div class="card-sub2" id="pnl-avg"></div><div class="card-sub2" id="pnl-risk" style="color:var(--muted)"></div><svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none"><line class="spark-zero" x1="0" y1="15" x2="100" y2="15"/><polyline class="spark-line" id="spark-path" points=""/></svg></div>
   <div class="card"><div class="card-label">Wins / Losses</div><div class="card-value green" id="wl">&mdash;</div><div class="card-sub" id="wr">&mdash;</div></div>
   <div class="card">
     <div class="card-label">Modo Atual</div>
@@ -676,7 +676,7 @@ setInterval(function(){fetchTrades();fetchLogs()},5000);
 setInterval(fetchIndicators,5000);/* indicators every 5s for live feel */
 setInterval(fetchSessions,30000);
 setInterval(fetchHistory30d,60000);
-setInterval(async function(){try{var d=await fetch('/api/balance').then(function(r){return r.json()});if(d.balance&&d.balance!=='\u2014'){$('balance').textContent='$'+d.balance;var bp=$('balance-pnl-total');if(bp&&d.pnl_total!=null){var pt=d.pnl_total,ib=d.initial_balance||10000;bp.textContent='vs $'+ib.toFixed(0)+': '+(pt>=0?'+':'')+pt.toFixed(2);bp.style.color=pt>=0?'var(--green)':'var(--red)'}if(_forecastBalance===0){var fb=parseFloat(String(d.balance).replace(/[^0-9.]/g,''));if(fb>0){_forecastBalance=fb;var h30=document.getElementById('inp-hist30d-balance');if(h30&&document.activeElement!==h30)h30.value=fb.toFixed(2)}}}}catch(e){}},500);
+setInterval(async function(){try{var d=await fetch('/api/balance').then(function(r){return r.json()});if(d.balance&&d.balance!=='\u2014'){$('balance').textContent='$'+d.balance;var bp=$('balance-pnl-total');if(bp&&d.pnl_total!=null){var pt=d.pnl_total,ib=d.initial_balance||10000;bp.textContent='in\u00edcio $'+ib.toFixed(2)+': '+(pt>=0?'+':'')+pt.toFixed(2);bp.style.color=pt>=0?'var(--green)':'var(--red)'}if(_forecastBalance===0){var fb=parseFloat(String(d.balance).replace(/[^0-9.]/g,''));if(fb>0){_forecastBalance=fb;var h30=document.getElementById('inp-hist30d-balance');if(h30&&document.activeElement!==h30)h30.value=fb.toFixed(2)}}}}catch(e){}},500);
 </script>
 </body>
 </html>
