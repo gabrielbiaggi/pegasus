@@ -547,10 +547,18 @@ class RiskManager:
             return float('inf')
 
         remaining = self.martingale_max_gales - self.martingale_step
-        if remaining <= 0:
-            return self.min_stake
-
         floor = max(self.martingale_min_balance_floor, 0)
+
+        if remaining <= 0:
+            # Last gale step: no future gales to reserve for — allow full stake
+            available = self.balance - floor
+            if available <= 0:
+                return 0.0
+            cap = available
+            if self.max_stake > 0:
+                cap = min(cap, self.max_stake)
+            return round(max(cap, self.min_stake), 2)
+
         available = self.balance - floor
         if available <= 0:
             return 0.0
