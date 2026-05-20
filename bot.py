@@ -74,6 +74,7 @@ class DerivBot:
         self._gale_wait_log_ts: float = 0.0  # throttle log para aguardo do último gale
         self._gale_wait_ticks: int = 0  # contador de ticks em modo wait do último gale
         self._gale_locked_direction = None  # Lock direction during gale
+        self._gale_exhaustion_epoch: int = 0  # epoch when last gale sequence exhausted (cooldown)
         # Rise/Fall specific state
         self._rf_ensemble_scorer: EnsembleScorerRF | None = None
         if config.rise_fall_use_ensemble:
@@ -399,6 +400,18 @@ class DerivBot:
             # --- GALE DIRECTION LOCK + CONFIDENCE FILTER ---
             _in_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
 
+            # Cooldown after gale exhaustion: wait 30 ticks before new sequence
+            if not _in_gale and self._gale_exhaustion_epoch > 0:
+                ticks_since_exhaust = tick_epoch - self._gale_exhaustion_epoch
+                if ticks_since_exhaust < 30:
+                    logger.debug(
+                        "Gale cooldown: %d/30 ticks desde exaustão — aguardando.",
+                        ticks_since_exhaust,
+                    )
+                    return
+                else:
+                    self._gale_exhaustion_epoch = 0
+
             if signal not in {"CALL", "PUT"}:
                 if _in_gale:
                     logger.debug("GALE %d/%d: sem sinal JumpRF — aguardando.", self.risk.martingale_step, self.risk.martingale_max_gales)
@@ -443,12 +456,14 @@ class DerivBot:
                         )
                         return
                 elif self._gale_locked_direction is None:
-                    # Primeiro gale: travar na direção do sinal atual
+                    # Primeiro gale sem lock herdado: travar na direção do sinal atual
                     self._gale_locked_direction = signal
                     logger.info(
                         "GALE %d/%d: travando direção=%s para sequência de gale.",
                         self.risk.martingale_step, self.risk.martingale_max_gales, signal,
                     )
+                # Usar a direção travada para a entrada (mesmo se signal diferente)
+                signal = self._gale_locked_direction
             else:
                 # Fora de gale: limpar lock
                 if self._gale_locked_direction is not None:
@@ -1075,6 +1090,9 @@ class DerivBot:
             gale_step=_pre_gale_step,
         )
         _prev_m_step = _pre_gale_step
+        # Lock gale direction at LOSS time — inherit from the trade that just lost
+        if profit < 0 and getattr(self.risk, 'use_martingale', False) and order.direction in {"CALL", "PUT"}:
+            self._gale_locked_direction = order.direction
         self.risk.update(profit=profit, buy_price=buy_price)
         # Log gale state transitions
         if getattr(self.risk, 'use_martingale', False):
@@ -1082,14 +1100,21 @@ class DerivBot:
                 _raw = self.risk.get_gale_raw_stake()
                 _acum = self.risk.martingale_accumulated_loss
                 logger.warning(
-                    "\u26a0 GALE %d/%d ativado | acum_loss=%.2f | pr\u00f3xima stake bruta=%.2f",
+                    "\u26a0 GALE %d/%d ativado | acum_loss=%.2f | pr\u00f3xima stake bruta=%.2f | dir_lock=%s",
                     self.risk.martingale_step,
                     self.risk.martingale_max_gales,
                     _acum,
                     _raw,
+                    self._gale_locked_direction,
                 )
             elif profit > 0 and _prev_m_step > 0:
                 logger.info("\u2705 GALE %d recuperado \u2014 stake volta ao normal", _prev_m_step)
+                self._gale_locked_direction = None
+            elif profit < 0 and self.risk.martingale_step == 0 and _prev_m_step > 0:
+                # Gale sequence exhausted — set cooldown
+                self._gale_exhaustion_epoch = order.entry_epoch
+                self._gale_locked_direction = None
+                logger.warning("GALE EXHAUSTED — cooldown ativado por 30 ticks")
         logger.info(self.risk.stats())
 
         self.waiting_for_result = False

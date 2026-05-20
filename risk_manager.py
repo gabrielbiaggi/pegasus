@@ -639,8 +639,10 @@ class RiskManager:
             if self.use_soros and self.soros_max_steps > 0 and not _was_gale_win:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
-                    # Acumula o lucro de todos os wins da sequência Soros (não sobrescreve)
-                    self.soros_profit = round(self.soros_profit + profit * self.soros_profit_factor, 2)
+                    # Decay factor: reinveste menos a cada step (S1=100%, S2=75%, S3=50%)
+                    _soros_decay = max(0.5, 1.0 - (self.soros_step - 1) * 0.25)
+                    _reinvest = round(profit * self.soros_profit_factor * _soros_decay, 2)
+                    self.soros_profit = round(self.soros_profit + _reinvest, 2)
                 else:
                     self.soros_step = 0
                     self.soros_profit = 0.0
