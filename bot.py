@@ -989,6 +989,7 @@ class DerivBot:
                 if abs(new_bal - self.risk.balance) > 0.01:
                     logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
                     self.risk.balance = new_bal
+                    self.risk.sync_pnl_from_balance()
                     self._flush_balance(new_bal)
 
         if self._gale_expected > 0:
@@ -1343,6 +1344,7 @@ class DerivBot:
                 if abs(new_bal - self.risk.balance) > 0.01:
                     logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
                     self.risk.balance = new_bal
+                    self.risk.sync_pnl_from_balance()
                     self._flush_balance(new_bal)
         elif msg_type == "sell":
             sell = data.get("sell", {})
@@ -1355,6 +1357,7 @@ class DerivBot:
                     if abs(new_bal - self.risk.balance) > 0.01:
                         logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
                         self.risk.balance = new_bal
+                        self.risk.sync_pnl_from_balance()
                         self._flush_balance(new_bal)
         elif msg_type == "portfolio":
             await self.handle_portfolio(ws, data)

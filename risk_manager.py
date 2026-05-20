@@ -67,6 +67,7 @@ class RiskManager:
         self.stop_gain_pct = float(stop_gain_pct)
 
         self.day = date.today().isoformat()
+        self.start_of_day_balance = float(balance)  # fixed reference for P&L
         self.daily_loss = 0.0
         self.daily_net_profit = 0.0
         self.daily_peak_profit = 0.0
@@ -133,19 +134,20 @@ class RiskManager:
             self.consecutive_losses = new_consec
 
         # Reconcile trigger: when "reconcile" flag is set in risk_state.json,
-        # reload ALL P&L fields from file and clear the flag.
+        # reload counters from file and sync P&L from balance.
         if data.get("reconcile"):
             self.daily_loss = float(data.get("daily_loss", self.daily_loss))
-            self.daily_net_profit = float(data.get("daily_net_profit", self.daily_net_profit))
-            self.daily_peak_profit = float(data.get("daily_peak_profit", max(0.0, self.daily_net_profit)))
             self.trades_today = int(data.get("trades_today", self.trades_today))
             self.wins = int(data.get("wins", self.wins))
             self.losses = int(data.get("losses", self.losses))
+            if "start_of_day_balance" in data:
+                self.start_of_day_balance = float(data["start_of_day_balance"])
+            self.sync_pnl_from_balance()
             logger.info(
-                "♻ P&L reconciliado do disco: trades=%d, wins=%d, losses=%d, "
-                "net_profit=%.2f, daily_loss=%.2f",
+                "♻ Reconciliado do disco: trades=%d, W=%d, L=%d, "
+                "net_profit=%.2f, daily_loss=%.2f, saldo_inicio=%.2f",
                 self.trades_today, self.wins, self.losses,
-                self.daily_net_profit, self.daily_loss,
+                self.daily_net_profit, self.daily_loss, self.start_of_day_balance,
             )
             # Clear reconcile flag from file so it doesn't re-trigger
             data.pop("reconcile", None)
@@ -304,6 +306,8 @@ class RiskManager:
         self.daily_loss = float(data.get("daily_loss", 0.0))
         self.daily_net_profit = float(data.get("daily_net_profit", data.get("daily_profit", 0.0)))
         self.daily_peak_profit = float(data.get("daily_peak_profit", max(0.0, self.daily_net_profit)))
+        # Restore fixed start-of-day balance; fallback to derived value for legacy state
+        self.start_of_day_balance = float(data.get("start_of_day_balance", self.balance - self.daily_net_profit))
         self.daily_trailing_active = bool(data.get("daily_trailing_active", False))
         self.trades_today = int(data.get("trades_today", 0))
         self.wins = int(data.get("wins", 0))
@@ -337,6 +341,7 @@ class RiskManager:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "day": self.day,
+            "start_of_day_balance": self.start_of_day_balance,
             "daily_loss": self.daily_loss,
             "daily_net_profit": self.daily_net_profit,
             "daily_peak_profit": self.daily_peak_profit,
@@ -356,29 +361,33 @@ class RiskManager:
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def reconcile_pnl(self, db_summary: dict[str, float | int]) -> None:
-        """Reconcile in-memory P&L counters with actual DB values.
+        """Reconcile in-memory trade counters with actual DB values.
 
-        Called on startup (after _load_state) and can be triggered at runtime
-        via the 'reconcile' flag in risk_state.json.
+        daily_net_profit is NOT overwritten here — it comes from
+        balance - start_of_day_balance (synced via sync_pnl_from_balance).
         """
-        old = (self.trades_today, self.wins, self.losses, self.daily_net_profit, self.daily_loss)
+        old = (self.trades_today, self.wins, self.losses, self.daily_loss)
         self.trades_today = int(db_summary["trades"])
         self.wins = int(db_summary["wins"])
         self.losses = int(db_summary["losses"])
-        self.daily_net_profit = float(db_summary["net_profit"])
         self.daily_loss = float(db_summary["total_loss"])
+        # Sync net_profit from balance (the single source of truth)
+        self.daily_net_profit = round(self.balance - self.start_of_day_balance, 2)
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
-        new = (self.trades_today, self.wins, self.losses, self.daily_net_profit, self.daily_loss)
+        new = (self.trades_today, self.wins, self.losses, self.daily_loss)
         if old != new:
             logger.info(
-                "♻ P&L reconciliado com DB: trades %d→%d | W %d→%d | L %d→%d | "
-                "net %.2f→%.2f | loss %.2f→%.2f",
+                "♻ Reconciliado com DB: trades %d→%d | W %d→%d | L %d→%d | "
+                "loss %.2f→%.2f | net_profit(saldo)=%.2f | saldo_inicio_dia=%.2f",
                 old[0], new[0], old[1], new[1], old[2], new[2],
-                old[3], new[3], old[4], new[4],
+                old[3], new[3], self.daily_net_profit, self.start_of_day_balance,
             )
             self._save_state()
         else:
-            logger.info("♻ P&L do DB confere — sem divergência.")
+            logger.info(
+                "♻ DB confere | net_profit(saldo)=%.2f | saldo_inicio_dia=%.2f",
+                self.daily_net_profit, self.start_of_day_balance,
+            )
 
     def _reset_if_new_day(self) -> None:
         today = date.today().isoformat()
@@ -387,6 +396,7 @@ class RiskManager:
 
         logger.info("Novo dia detectado. Zerando contadores diarios de risco.")
         self.day = today
+        self.start_of_day_balance = self.balance
         self.daily_loss = 0.0
         self.daily_net_profit = 0.0
         self.daily_peak_profit = 0.0
@@ -417,10 +427,24 @@ class RiskManager:
         self.martingale_base_stake = 0.0
         self._save_state()
 
+    def sync_pnl_from_balance(self) -> None:
+        """Recompute daily_net_profit from actual balance vs start-of-day.
+
+        Called every time Deriv sends a new balance — makes P&L always match
+        the real balance change, eliminating drift from restarts or timeouts.
+        """
+        new_pnl = round(self.balance - self.start_of_day_balance, 2)
+        if abs(new_pnl - self.daily_net_profit) > 0.005:
+            self.daily_net_profit = new_pnl
+            self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+            if self.daily_trailing_start > 0 and self.daily_peak_profit >= self.daily_trailing_start:
+                self.daily_trailing_active = True
+            self._save_state()
+
     @property
     def _start_of_day_balance(self) -> float:
         """Balance at the start of the trading day (before any trades)."""
-        return self.balance - self.daily_net_profit
+        return self.start_of_day_balance
 
     def _effective_loss_limit(self) -> float:
         """Dynamic loss limit: uses % of start-of-day balance when stop_loss_pct > 0."""
@@ -689,10 +713,10 @@ class RiskManager:
         profit = float(profit)
         buy_price = float(buy_price)
         self.trades_today += 1
-        # NOTE: self.balance is updated exclusively by the Deriv balance stream
-        # (bot.py balance message handler). Do NOT add profit here — Deriv already
-        # sends the confirmed post-trade balance via the balance subscription,
-        # so incrementing here would double-count every win/loss.
+        # NOTE: daily_net_profit is synced from real balance in sync_pnl_from_balance().
+        # We still do an immediate += here so that risk checks within update()
+        # reflect the trade before the balance stream arrives (~100ms later).
+        # The next balance stream event will overwrite this with the truth.
         self.daily_net_profit += profit
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
 
