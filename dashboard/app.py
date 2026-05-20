@@ -128,14 +128,29 @@ def _last_jump_signal() -> dict:
     line = _search_log_backward(b"JumpMom ")
     if not line:
         return {}
-    m = re.search(r"JumpMom (\w+): up=(\d+) dn=(\d+) conf=([\d.]+)", line)
+    # Format: "JumpMom PUT: ↑1 ↓5 (conf=83%, 5/6 votes)"
+    m = re.search(
+        r"JumpMom (\w+):\s*\S*?(\d+)\s*\S*?(\d+)\s*\(conf=(\d+)%,\s*(\d+)/(\d+)\s*votes\)",
+        line,
+    )
     if not m:
-        return {}
+        # Fallback: old format "JumpMom CALL: up=7 dn=0 conf=100.0"
+        m = re.search(r"JumpMom (\w+): up=(\d+) dn=(\d+) conf=([\d.]+)", line)
+        if not m:
+            return {}
+        return {
+            "direction": m.group(1),
+            "votes_up": int(m.group(2)),
+            "votes_down": int(m.group(3)),
+            "confidence": float(m.group(4)),
+        }
     return {
         "direction": m.group(1),
         "votes_up": int(m.group(2)),
         "votes_down": int(m.group(3)),
         "confidence": float(m.group(4)),
+        "votes_for": int(m.group(5)),
+        "votes_total": int(m.group(6)),
     }
 
 
