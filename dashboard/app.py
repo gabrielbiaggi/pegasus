@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -354,10 +355,10 @@ def api_status(response: Response):
         "signal": signal,
         "stop_loss_pct": float(_get_env("STOP_LOSS_PCT") or "0"),
         "stop_gain_pct": float(_get_env("STOP_GAIN_PCT") or "0"),
-        "stake_pct": round(float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0.02") * 100, 2),
+        "stake_pct": round(float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0") * 100, 2),
         "stake_value": float(_get_env("STAKE") or "0"),
-        "stop_loss_value": float(_get_env("MAX_LOSS_PER_DAY") or "0"),
-        "stop_gain_value": float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
+        "stop_loss_value": round(bal_float * float(_get_env("STOP_LOSS_PCT") or "0") / 100, 2) if float(_get_env("STOP_LOSS_PCT") or "0") > 0 else float(_get_env("MAX_LOSS_PER_DAY") or "0"),
+        "stop_gain_value": round(bal_float * float(_get_env("STOP_GAIN_PCT") or "0") / 100, 2) if float(_get_env("STOP_GAIN_PCT") or "0") > 0 else float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
         "account_mode": _get_env("ACCOUNT_MODE") or "demo",
     }
 
@@ -374,6 +375,42 @@ def api_balance(response: Response):
     ini_bal = _initial_balance()
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     return {"balance": bal, "pnl_total": pnl_total, "initial_balance": ini_bal}
+
+
+@app.post("/api/fetch-balance")
+async def fetch_balance_from_deriv():
+    """Connect to Deriv API with current DERIV_TOKEN, authorize, fetch live balance.
+    Writes to balance.json so dashboard updates immediately."""
+    import websockets
+
+    token = _get_env("DERIV_TOKEN")
+    if not token:
+        raise HTTPException(status_code=400, detail="DERIV_TOKEN não configurado")
+    app_id = _get_env("DERIV_APP_ID") or "1089"
+    uri = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+    try:
+        async with websockets.connect(uri) as conn:
+            await conn.send(json.dumps({"authorize": token}))
+            resp = json.loads(await conn.recv())
+            if "error" in resp:
+                raise HTTPException(status_code=400, detail=resp["error"].get("message", "Auth failed"))
+            auth = resp.get("authorize", {})
+            bal = auth.get("balance", 0)
+            # Persist to balance.json
+            BALANCE_JSON.write_text(json.dumps({"balance": bal}))
+            # Invalidate fast cache
+            global _balance_fast_cache
+            _balance_fast_cache = (0.0, "—")
+            return {
+                "balance": bal,
+                "currency": auth.get("currency", "USD"),
+                "account_type": auth.get("is_virtual") and "demo" or "real",
+                "loginid": auth.get("loginid", ""),
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deriv API error: {e}")
 
 
 @app.get("/api/sessions")
@@ -599,6 +636,9 @@ def update_env(body: EnvUpdate):
                 raise HTTPException(status_code=400, detail="DERIV_DEMO_TOKEN não configurado no .env")
             _set_env("DERIV_TOKEN", demo_token)
             _set_env("ALLOW_REAL_TRADING", "false")
+        # Auto-restart bot so it connects with the new token
+        if _bot_running():
+            _restart_bot()
     return {"ok": True, "key": body.key, "value": body.value}
 
 
