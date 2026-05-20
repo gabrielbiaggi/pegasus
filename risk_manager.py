@@ -29,6 +29,9 @@ class RiskManager:
         martingale_max_gales: int = 3,
         martingale_multiplier: float = 2.0,  # deprecated: formula now usa payout_rate
         martingale_payout_rate: float = 0.15,
+        martingale_max_balance_pct: float = 0.7,
+        martingale_min_balance_floor: float = 0.0,
+        martingale_lock_config: bool = True,
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -54,6 +57,9 @@ class RiskManager:
         self.martingale_max_gales = int(martingale_max_gales)
         self.martingale_multiplier = float(martingale_multiplier)
         self.martingale_payout_rate = max(0.001, float(martingale_payout_rate))
+        self.martingale_max_balance_pct = float(martingale_max_balance_pct)
+        self.martingale_min_balance_floor = float(martingale_min_balance_floor)
+        self.martingale_lock_config = bool(martingale_lock_config)
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -145,40 +151,102 @@ class RiskManager:
                 if "=" in line and not line.startswith("#"):
                     k, v = line.split("=", 1)
                     env_data[k.strip()] = v.strip()
+
+            # PROTEÇÃO: bloqueia alteração de config crítica durante gale ativo
+            _gale_active = self.use_martingale and self.martingale_step > 0
+            _config_locked = _gale_active and self.martingale_lock_config
+
             # Update stop loss — MAX_LOSS_PER_DAY is the sole source (pct logic only at startup)
             new_loss = float(env_data.get("MAX_LOSS_PER_DAY", str(self.max_loss_day)))
             if new_loss != self.max_loss_day:
-                logger.info("Stop Loss atualizado via dashboard: %.2f → %.2f", self.max_loss_day, new_loss)
-                self.max_loss_day = new_loss
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Stop Loss BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
+                        self.martingale_step, self.martingale_max_gales, self.max_loss_day, new_loss,
+                    )
+                else:
+                    logger.info("Stop Loss atualizado via dashboard: %.2f → %.2f", self.max_loss_day, new_loss)
+                    self.max_loss_day = new_loss
             # Update stop gain
             new_profit = float(env_data.get("MAX_PROFIT_PER_DAY", str(self.max_profit_day)))
             if new_profit != self.max_profit_day:
-                logger.info("Stop Gain atualizado via dashboard: %.2f → %.2f", self.max_profit_day, new_profit)
-                self.max_profit_day = new_profit
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Stop Gain BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
+                        self.martingale_step, self.martingale_max_gales, self.max_profit_day, new_profit,
+                    )
+                else:
+                    logger.info("Stop Gain atualizado via dashboard: %.2f → %.2f", self.max_profit_day, new_profit)
+                    self.max_profit_day = new_profit
             # Update stake
             new_stake = float(env_data.get("STAKE", str(self.fixed_stake)))
             if new_stake != self.fixed_stake:
-                logger.info("Stake atualizado via dashboard: %.2f → %.2f", self.fixed_stake, new_stake)
-                self.fixed_stake = new_stake
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Stake BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
+                        self.martingale_step, self.martingale_max_gales, self.fixed_stake, new_stake,
+                    )
+                else:
+                    logger.info("Stake atualizado via dashboard: %.2f → %.2f", self.fixed_stake, new_stake)
+                    self.fixed_stake = new_stake
             # Update max_stake
             new_max_stake = float(env_data.get("MAX_STAKE", str(self.max_stake)))
             if new_max_stake != self.max_stake:
-                logger.info("Max Stake atualizado via dashboard: %.2f → %.2f", self.max_stake, new_max_stake)
-                self.max_stake = new_max_stake
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Max Stake BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
+                        self.martingale_step, self.martingale_max_gales, self.max_stake, new_max_stake,
+                    )
+                else:
+                    logger.info("Max Stake atualizado via dashboard: %.2f → %.2f", self.max_stake, new_max_stake)
+                    self.max_stake = new_max_stake
             # Update stop loss/gain percentages
             new_sl_pct = float(env_data.get("STOP_LOSS_PCT", str(self.stop_loss_pct)))
             if new_sl_pct != self.stop_loss_pct:
-                logger.info("Stop Loss %% atualizado: %.1f%% → %.1f%%", self.stop_loss_pct, new_sl_pct)
-                self.stop_loss_pct = new_sl_pct
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Stop Loss %% BLOQUEADO durante gale %d/%d",
+                        self.martingale_step, self.martingale_max_gales,
+                    )
+                else:
+                    logger.info("Stop Loss %% atualizado: %.1f%% → %.1f%%", self.stop_loss_pct, new_sl_pct)
+                    self.stop_loss_pct = new_sl_pct
             new_sg_pct = float(env_data.get("STOP_GAIN_PCT", str(self.stop_gain_pct)))
             if new_sg_pct != self.stop_gain_pct:
-                logger.info("Stop Gain %% atualizado: %.1f%% → %.1f%%", self.stop_gain_pct, new_sg_pct)
-                self.stop_gain_pct = new_sg_pct
-            # Update stake percentage
+                if _config_locked:
+                    logger.warning(
+                        "🔒 Stop Gain %% BLOQUEADO durante gale %d/%d",
+                        self.martingale_step, self.martingale_max_gales,
+                    )
+                else:
+                    logger.info("Stop Gain %% atualizado: %.1f%% → %.1f%%", self.stop_gain_pct, new_sg_pct)
+                    self.stop_gain_pct = new_sg_pct
+            # Update stake percentage (not locked — doesn't affect active gale calc)
             new_base_pct = float(env_data.get("DYNAMIC_STAKE_BASE_PCT", str(self.dynamic_stake_base_pct)))
             if new_base_pct != self.dynamic_stake_base_pct:
                 logger.info("Stake base pct atualizado: %.4f → %.4f", self.dynamic_stake_base_pct, new_base_pct)
                 self.dynamic_stake_base_pct = new_base_pct
+            # Live-reload martingale/soros toggles (sem restart)
+            new_use_mg = env_data.get("USE_MARTINGALE", "").strip().lower() == "true"
+            if new_use_mg != self.use_martingale:
+                if _config_locked:
+                    logger.warning("U0001f512 USE_MARTINGALE BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                else:
+                    logger.info("Martingale toggle atualizado: %s → %s", self.use_martingale, new_use_mg)
+                    self.use_martingale = new_use_mg
+            new_use_soros = env_data.get("USE_SOROS", "").strip().lower() == "true"
+            if new_use_soros != self.use_soros:
+                logger.info("Soros toggle atualizado: %s → %s", self.use_soros, new_use_soros)
+                self.use_soros = new_use_soros
+            new_max_gales = int(env_data.get("MARTINGALE_MAX_GALES", str(self.martingale_max_gales)))
+            if new_max_gales != self.martingale_max_gales:
+                if _config_locked:
+                    logger.warning("U0001f512 MARTINGALE_MAX_GALES BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                else:
+                    logger.info("Max gales atualizado: %d → %d", self.martingale_max_gales, new_max_gales)
+                    self.martingale_max_gales = new_max_gales
+            # BLOCK_WEEKENDS live-reload
+            self.block_weekends = env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
         except (OSError, ValueError):
             pass
 
@@ -351,6 +419,12 @@ class RiskManager:
             caps = [raw_stake, remaining_budget, self.balance]
         if self.max_stake > 0:
             caps.append(self.max_stake)
+
+        # PROTEÇÃO: nunca apostar mais que X% do saldo (evita all-in em gales altos)
+        if self.martingale_max_balance_pct > 0 and self.balance > 0:
+            balance_cap = round(self.balance * self.martingale_max_balance_pct, 2)
+            caps.append(balance_cap)
+
         stake = min(caps)
 
         if stake < self.min_stake:
@@ -376,6 +450,47 @@ class RiskManager:
         self._reload_overrides()
 
         _now = time.monotonic()
+
+        # PROTEÇÃO: balance floor — se saldo abaixo do mínimo, para tudo (inclusive gale)
+        if self.martingale_min_balance_floor > 0 and self.balance < self.martingale_min_balance_floor:
+            if _now - self._log_ts_loss >= 60:
+                logger.warning(
+                    "⛔ Balance floor atingido: saldo=%.2f < floor=%.2f — PARANDO operacoes (inclusive gale)",
+                    self.balance,
+                    self.martingale_min_balance_floor,
+                )
+                self._log_ts_loss = _now
+            # Se estiver em gale, absorve e reseta para evitar aposta suicida
+            if self.use_martingale and self.martingale_step > 0:
+                logger.warning(
+                    "⛔ Gale %d/%d ABORTADO por balance floor — perdas=%.2f absorvidas",
+                    self.martingale_step, self.martingale_max_gales, self.martingale_accumulated_loss,
+                )
+                self.martingale_step = 0
+                self.martingale_accumulated_loss = 0.0
+                self.martingale_base_stake = 0.0
+                self._save_state()
+            return False
+
+        # PROTEÇÃO: dynamic gale cap — aborta gale se próximo step exige mais que saldo disponível
+        if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
+            next_gale_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+            usable_balance = self.balance * self.martingale_max_balance_pct if self.martingale_max_balance_pct > 0 else self.balance
+            if next_gale_stake > usable_balance:
+                logger.warning(
+                    "⛔ Gale %d/%d ABORTADO: stake_necessaria=%.2f > saldo_disponivel=%.2f (%.0f%% de %.2f)",
+                    self.martingale_step, self.martingale_max_gales,
+                    next_gale_stake, usable_balance,
+                    self.martingale_max_balance_pct * 100, self.balance,
+                )
+                logger.warning(
+                    "   Perdas acumuladas=%.2f absorvidas — resetando para G0",
+                    self.martingale_accumulated_loss,
+                )
+                self.martingale_step = 0
+                self.martingale_accumulated_loss = 0.0
+                self.martingale_base_stake = 0.0
+                self._save_state()
 
         _loss_limit = self._effective_loss_limit()
         if self.daily_net_profit <= -_loss_limit and not self.loss_block_override:

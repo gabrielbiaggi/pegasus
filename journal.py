@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
 import logging
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 try:
@@ -118,9 +121,23 @@ INSERT INTO trades (
 
 
 class TradeJournal:
-    def __init__(self, pg_dsn: str = ""):
+    _SIGNAL_CSV_COLS = [
+        "timestamp", "symbol", "contract_mode", "entry_epoch", "direction",
+        "score", "stake", "dry_run", "bb_width_percent", "tick_atr_percent",
+        "recent_move_percent", "hurst_exponent", "tick_imbalance",
+        "hawkes_intensity", "velocity_zscore", "acceleration_zscore",
+        "pmi_distance_percent", "markov_p_up_given_up",
+        "markov_p_down_given_down", "shannon_entropy",
+        "kalman_residual_zscore", "bayesian_prob_up", "renyi_entropy",
+        "fisher_information", "wavelet_energy_ratio", "cusum_score",
+        "tail_dependence", "mi_flow",
+    ]
+
+    def __init__(self, pg_dsn: str = "", journal_dir: str = "logs"):
         self._pg_dsn = pg_dsn
         self._schema_ready = False
+        self._journal_dir = Path(journal_dir)
+        self._journal_dir.mkdir(parents=True, exist_ok=True)
         if pg_dsn and _HAS_PSYCOPG2:
             self._ensure_schema()
         elif pg_dsn and not _HAS_PSYCOPG2:
@@ -162,12 +179,9 @@ class TradeJournal:
         dry_run: bool,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        if not self._pg_dsn or not _HAS_PSYCOPG2:
-            return
-        self._ensure_schema()
         m = metrics
-        row = (
-            datetime.now(UTC),
+        row_values = [
+            datetime.now(UTC).isoformat(),
             symbol, contract_mode, entry_epoch, direction, score, stake, dry_run,
             self._metric(m, "bb_width_percent"),
             self._metric(m, "tick_atr_percent"),
@@ -189,13 +203,48 @@ class TradeJournal:
             self._metric(m, "cusum_score"),
             self._metric(m, "tail_dependence"),
             self._metric(m, "mi_flow"),
-        )
+        ]
+
+        # Primary: PostgreSQL
+        pg_ok = False
+        if self._pg_dsn and _HAS_PSYCOPG2:
+            self._ensure_schema()
+            try:
+                with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(_SQL_INSERT_SIGNAL, tuple(row_values))
+                pg_ok = True
+            except Exception as exc:
+                _log.error("log_signal PG error: %s", exc)
+
+        # Fallback: CSV (when PG unavailable or failed)
+        if not pg_ok:
+            self._append_signal_csv(row_values)
+
+    def _append_signal_csv(self, row_values: list) -> None:
+        csv_path = self._journal_dir / "signals.csv"
+        write_header = not csv_path.exists() or csv_path.stat().st_size == 0
         try:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(_SQL_INSERT_SIGNAL, row)
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(self._SIGNAL_CSV_COLS)
+                writer.writerow(v if v is not None else "" for v in row_values)
         except Exception as exc:
-            _log.error("log_signal PG error: %s", exc)
+            _log.error("log_signal CSV error: %s", exc)
+
+    _TRADE_CSV_COLS = [
+        "timestamp", "symbol", "contract_mode", "contract_id", "entry_epoch",
+        "exit_epoch", "held_ticks", "direction", "score", "soros_step",
+        "gale_step", "stake", "buy_price", "profit", "result",
+        "bb_width_percent", "tick_atr_percent", "recent_move_percent",
+        "hurst_exponent", "tick_imbalance", "hawkes_intensity",
+        "velocity_zscore", "acceleration_zscore", "pmi_distance_percent",
+        "markov_p_up_given_up", "markov_p_down_given_down",
+        "shannon_entropy", "kalman_residual_zscore", "bayesian_prob_up",
+        "renyi_entropy", "fisher_information", "wavelet_energy_ratio",
+        "cusum_score", "tail_dependence", "mi_flow",
+    ]
 
     def log_trade(
         self,
@@ -214,13 +263,10 @@ class TradeJournal:
         soros_step: int = 0,
         gale_step: int = 0,
     ) -> None:
-        if not self._pg_dsn or not _HAS_PSYCOPG2:
-            return
-        self._ensure_schema()
         result = "WIN" if profit > 0 else "LOSS"
         m = metrics
-        row = (
-            datetime.now(UTC),
+        row_values = [
+            datetime.now(UTC).isoformat(),
             symbol, contract_mode, contract_id, entry_epoch, exit_epoch, held_ticks,
             direction, score, soros_step, gale_step, stake, buy_price, profit, result,
             self._metric(m, "bb_width_percent"),
@@ -243,10 +289,32 @@ class TradeJournal:
             self._metric(m, "cusum_score"),
             self._metric(m, "tail_dependence"),
             self._metric(m, "mi_flow"),
-        )
+        ]
+
+        # Primary: PostgreSQL
+        pg_ok = False
+        if self._pg_dsn and _HAS_PSYCOPG2:
+            self._ensure_schema()
+            try:
+                with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(_SQL_INSERT_TRADE, tuple(row_values))
+                pg_ok = True
+            except Exception as exc:
+                _log.error("log_trade PG error: %s", exc)
+
+        # Fallback: CSV (when PG unavailable or failed)
+        if not pg_ok:
+            self._append_trade_csv(row_values)
+
+    def _append_trade_csv(self, row_values: list) -> None:
+        csv_path = self._journal_dir / "trades.csv"
+        write_header = not csv_path.exists() or csv_path.stat().st_size == 0
         try:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(_SQL_INSERT_TRADE, row)
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(self._TRADE_CSV_COLS)
+                writer.writerow(v if v is not None else "" for v in row_values)
         except Exception as exc:
-            _log.error("log_trade PG error: %s", exc)
+            _log.error("log_trade CSV error: %s", exc)

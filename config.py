@@ -79,6 +79,9 @@ class BotConfig:
     martingale_max_gales: int
     martingale_multiplier: float
     martingale_payout_rate: float
+    martingale_max_balance_pct: float  # max % of balance per single bet (0=disabled, e.g. 0.7 = 70%)
+    martingale_min_balance_floor: float  # stop trading if balance drops below this (0=disabled)
+    martingale_lock_config: bool  # lock SL/SG/stake changes while gale is active
     martingale_last_gale_max_ploss: float
     martingale_last_gale_max_wait_ticks: int  # max ticks to wait in last-gale mode; 0 = wait forever
     dynamic_stake_base_pct: float
@@ -133,6 +136,7 @@ class BotConfig:
     # Rise/Fall (binary options) config
     rise_fall_duration_ticks: int
     rise_fall_min_votes: int
+    rise_fall_min_confidence: float
     rise_fall_min_imbalance: float
     rise_fall_use_ensemble: bool
     rise_fall_ensemble_min_prob: float
@@ -231,6 +235,9 @@ def load_config() -> BotConfig:
         martingale_max_gales=_int_env("MARTINGALE_MAX_GALES", 6),
         martingale_multiplier=_float_env("MARTINGALE_MULTIPLIER", 2.0),
         martingale_payout_rate=_float_env("MARTINGALE_PAYOUT_RATE", 0.15),
+        martingale_max_balance_pct=_float_env("MARTINGALE_MAX_BALANCE_PCT", 0.7),
+        martingale_min_balance_floor=_float_env("MARTINGALE_MIN_BALANCE_FLOOR", 0.0),
+        martingale_lock_config=_bool_env("MARTINGALE_LOCK_CONFIG", True),
         martingale_last_gale_max_ploss=_float_env("MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05),
         martingale_last_gale_max_wait_ticks=_int_env("MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
@@ -284,7 +291,8 @@ def load_config() -> BotConfig:
         accumulator_min_barrier_distance_pct=_float_env("ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0),
         # Rise/Fall
         rise_fall_duration_ticks=_int_env("RISE_FALL_DURATION_TICKS", 5),
-        rise_fall_min_votes=_int_env("RISE_FALL_MIN_VOTES", 3),
+        rise_fall_min_votes=_int_env("RISE_FALL_MIN_VOTES", 7),
+        rise_fall_min_confidence=_float_env("JUMP_MIN_CONFIDENCE", 0.60),
         rise_fall_min_imbalance=_float_env("RISE_FALL_MIN_IMBALANCE", 1.0),
         rise_fall_use_ensemble=_bool_env("RISE_FALL_USE_ENSEMBLE", False),
         rise_fall_ensemble_min_prob=_float_env("RISE_FALL_ENSEMBLE_MIN_PROB", 0.52),

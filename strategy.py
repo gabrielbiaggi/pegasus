@@ -1251,35 +1251,45 @@ class EnsembleScorerRF:
 
 @dataclass(frozen=True)
 class JumpMomentumConfig:
-    """Configuration for Jump Index momentum signal generation."""
+    """Configuration for Jump Index momentum signal generation.
+
+    21-vote system: each validator casts 1 vote (UP or DOWN or abstains).
+    Signal fires when winning side has >= min_score votes AND confidence >= min_confidence.
+    """
 
     # Momentum continuation: N consecutive ticks → bet continuation
     mom_lookback: int = 5       # how many consecutive same-direction ticks needed
     mom_horizon: int = 5        # bet duration in ticks (Rise/Fall)
+    # Short momentum
+    short_mom_lookback: int = 3 # short-term momentum window
     # EMA crossover
     ema_fast: int = 5           # fast EMA period
     ema_slow: int = 20          # slow EMA period
     # Reversal after long streak
     rev_lookback: int = 7       # streak length to trigger reversal bet
-    # Minimum combined score to trigger signal (out of max ~10)
-    min_score: int = 2          # 2 = at least 2 strategies agree
+    # Minimum votes to trigger signal (out of 21 validators)
+    min_score: int = 7          # needs at least 7 validators agreeing
+    # Minimum confidence ratio to trigger (winning_votes / total_votes)
+    min_confidence: float = 0.60  # at least 60% of voting validators must agree
     # Minimum ticks in buffer before generating signals
     min_ticks: int = 30
-    # Advanced calculus thresholds
+    # Hard block thresholds (return None immediately)
+    lyapunov_chaos: float = 2.0         # positive lyapunov above this → too chaotic to trade
+    return_z_extreme: float = 3.0       # |return_zscore| above this = extreme move
+    cusum_regime_alert: float = 8.0     # CUSUM above this = regime shift in progress
+    jerk_regime_z: float = 3.0          # jerk z-score → regime transition, block
+    tail_dep_danger: float = 0.6        # tail dependence above this = extreme clustering, block
+    # Validator thresholds
     curvature_reversal_z: float = 2.0   # curvature z-score → high = inflection
-    jerk_regime_z: float = 2.5          # jerk z-score → regime transition
     energy_calm_pctile: float = 30.0    # derivative energy below this pctile = calm
     exhaustion_extreme: float = 0.02    # |trend_exhaustion| above this = overbought/oversold
-    lyapunov_chaos: float = 1.5         # positive lyapunov above this → too chaotic to trade
-    return_z_extreme: float = 2.5       # |return_zscore| above this = extreme move
-    # Advanced intelligence filter thresholds
-    bayesian_strong_prob: float = 0.65  # P(up) above this or below (1-this) = strong signal
-    renyi_low_entropy: float = 0.3      # Rényi below this = highly concentrated → predictable
-    fisher_info_min: float = 0.1        # Fisher info above this = tight distribution → reliable
-    wavelet_snr_min: float = 0.55       # wavelet ratio above this = clean signal
-    cusum_regime_alert: float = 3.5     # CUSUM above this = regime shift in progress
-    tail_dep_danger: float = 0.3        # tail dependence above this = extreme clustering
-    mi_flow_min: float = 0.05           # MI above this = exploitable predictability
+    bayesian_strong_prob: float = 0.55  # P(up) above/below this = directional signal
+    renyi_low_entropy: float = 0.4      # Rényi below this = concentrated → predictable
+    fisher_info_min: float = 0.05       # Fisher info above this = tight distribution
+    wavelet_snr_min: float = 0.50       # wavelet ratio above this = clean signal
+    mi_flow_min: float = 0.03           # MI above this = exploitable predictability
+    hurst_trending: float = 0.55        # hurst above this = trending market
+    hurst_reverting: float = 0.40       # hurst below this = mean-reverting market
 
 
 def _ema_series(prices: list[float], period: int) -> list[float]:
@@ -1298,24 +1308,29 @@ def generate_jump_momentum_signal(
 ) -> tuple[Optional[str], int, Optional[float]]:
     """Return ("CALL"/"PUT"/None, score, confidence).
 
-    Enhanced signal generator that combines:
-      Core (original 3 strategies):
-        1. Momentum continuation (5 consecutive ticks → same direction, weight=2)
-        2. EMA crossover (fast/slow cross → direction, weight=1-2)
-        3. Reversal (7+ consecutive ticks → opposite direction, weight=2)
+    21-vote universal validation system.
+    Each validator independently casts exactly 1 vote (UP or DOWN) or abstains.
+    Signal fires only when:
+      - winning_votes >= min_score (default 7)
+      - winning_votes / total_votes >= min_confidence (default 0.60)
 
-      Advanced calculus layer (4 new strategies):
-        4. Curvature inflection (high κ + deceleration → reversal imminent, weight=1)
-        5. Integral momentum divergence (sustained divergence from EMA → continuation, weight=1)
-        6. Trend exhaustion reversal (accumulated deviation extreme → mean-revert, weight=1)
-        7. Kalman + derivative energy filter (calm + low residual → higher confidence, weight=1)
+    Hard safety blocks (return None immediately):
+      - Lyapunov exponent > threshold → chaotic market
+      - |return_zscore| > threshold → extreme spike
+      - CUSUM > threshold → regime shift in progress
+      - |jerk_zscore| > threshold → regime transition
+      - tail_dependence > threshold → extreme clustering
 
-      Safety filters (block/reduce score):
-        - Lyapunov chaos filter: too chaotic → skip signal entirely
-        - Jerk regime transition: regime changing → reduce confidence
-        - Extreme return z-score: just had a spike → skip (don't chase)
-
-    Score range: 0-10. Confidence adjusted by filter penalties.
+    Validators (21 total):
+      Price Action:  1-Momentum, 2-EMA crossover, 3-EMA alignment,
+                     4-Short momentum, 5-Reversal streak
+      Velocity:      6-Velocity direction, 7-Acceleration confirms,
+                     8-Curvature inflection, 9-Integral divergence
+      Statistical:   10-Bayesian posterior, 11-Kalman residual,
+                     12-Hurst regime, 13-Markov transition, 14-Tick imbalance
+      Info Theory:   15-Shannon entropy gate, 16-Rényi concentration,
+                     17-MI flow structure, 18-Wavelet SNR
+      Quality:       19-Fisher precision, 20-Calm market, 21-Trend exhaustion
     """
     config = config or JumpMomentumConfig()
     n = len(tick_buffer)
@@ -1327,45 +1342,9 @@ def generate_jump_momentum_signal(
     up_votes = 0
     dn_votes = 0
 
-    # ── Strategy 1: Momentum continuation ─────────────────────────────────
-    lb = config.mom_lookback
-    if n > lb:
-        tick_dirs = [quotes[i] > quotes[i - 1] for i in range(n - lb, n)]
-        if all(tick_dirs):
-            up_votes += 2
-        elif not any(tick_dirs):
-            dn_votes += 2
-
-    # ── Strategy 2: EMA crossover ─────────────────────────────────────────
-    if n > config.ema_slow + 1:
-        ema_f = _ema_series(quotes, config.ema_fast)
-        ema_s = _ema_series(quotes, config.ema_slow)
-        fast_above_now = ema_f[-1] > ema_s[-1]
-        fast_above_prev = ema_f[-2] > ema_s[-2]
-        if fast_above_now and not fast_above_prev:
-            up_votes += 2
-        elif not fast_above_now and fast_above_prev:
-            dn_votes += 2
-        elif fast_above_now:
-            up_votes += 1
-        else:
-            dn_votes += 1
-
-    # ── Strategy 3: Reversal after long streak ────────────────────────────
-    rl = config.rev_lookback
-    if n > rl:
-        streak_dirs = [quotes[i] > quotes[i - 1] for i in range(n - rl, n)]
-        if all(streak_dirs):
-            dn_votes += 2
-        elif not any(streak_dirs):
-            up_votes += 2
-
     # ══════════════════════════════════════════════════════════════════════
-    # Advanced calculus layer — only fires if DataFrame with indicators is
-    # available. When df is None, falls back to original 3-strategy mode.
+    # HARD SAFETY BLOCKS — return None immediately if any triggered
     # ══════════════════════════════════════════════════════════════════════
-    confidence_penalty = 0.0
-
     if df is not None and len(df) >= config.min_ticks:
         last = df.iloc[-1]
 
@@ -1377,180 +1356,298 @@ def generate_jump_momentum_signal(
                 f = default
             return default if f != f else f  # NaN guard
 
-        curv_z   = _g("curvature_zscore")
-        jerk_z   = _g("jerk_zscore")
-        int_div  = _g("integral_momentum_div")
-        energy   = _g("derivative_energy")
-        exhaust  = _g("trend_exhaustion")
-        ret_z    = _g("return_zscore")
         lyap     = _g("lyapunov_exponent")
-        vel      = _g("price_velocity")
-        accel    = _g("price_acceleration", 0.0)
-        kalman_z = _g("kalman_residual_zscore")
-        hurst    = _g("hurst_exponent", 0.5)
+        ret_z    = _g("return_zscore")
+        cusum    = _g("cusum_score", 0.0)
+        jerk_z   = _g("jerk_zscore")
+        tail_dep = _g("tail_dependence", 0.0)
 
-        # ── Safety filter: Lyapunov chaos gate ────────────────────────
         if lyap > config.lyapunov_chaos:
             logger.debug(
-                "JumpMom: Lyapunov=%.3f > %.3f → mercado caotico, sinal bloqueado.",
+                "JumpMom BLOCK: Lyapunov=%.3f > %.3f → chaotic.",
                 lyap, config.lyapunov_chaos,
             )
             return None, 0, None
 
-        # ── Safety filter: extreme return → don't chase the spike ─────
         if abs(ret_z) > config.return_z_extreme:
             logger.debug(
-                "JumpMom: return_z=%.2f → movimento extremo, nao entrar agora.",
+                "JumpMom BLOCK: return_z=%.2f → extreme spike.",
                 ret_z,
             )
             return None, 0, None
 
-        # ── Confidence penalty: jerk regime transition ────────────────
-        if jerk_z > config.jerk_regime_z:
-            confidence_penalty += 0.15
-            logger.debug(
-                "JumpMom: jerk_z=%.2f → regime em transicao, confianca reduzida.",
-                jerk_z,
-            )
-
-        # ══════════════════════════════════════════════════════════════
-        # S4-S7: Confirmation-only layer.
-        # These do NOT add independent votes — they only adjust
-        # confidence when they AGREE or DISAGREE with S1-S3 direction.
-        # This prevents the advanced math from overriding proven core
-        # strategies with un-backtested noise.
-        # ══════════════════════════════════════════════════════════════
-
-        # Determine tentative direction from core S1-S3
-        _core_dir = 0  # +1=bullish, -1=bearish, 0=no consensus
-        if up_votes > dn_votes:
-            _core_dir = 1
-        elif dn_votes > up_votes:
-            _core_dir = -1
-
-        # ── S4: Curvature inflection confirmation ────────────────────
-        if curv_z > config.curvature_reversal_z and _core_dir != 0:
-            if accel > 0 and vel <= 0 and _core_dir == 1:
-                confidence_penalty -= 0.10  # boost: curvature agrees with CALL
-            elif accel < 0 and vel >= 0 and _core_dir == -1:
-                confidence_penalty -= 0.10  # boost: curvature agrees with PUT
-            elif (accel > 0 and vel <= 0 and _core_dir == -1) or \
-                 (accel < 0 and vel >= 0 and _core_dir == 1):
-                confidence_penalty += 0.10  # penalize: curvature contradicts
-
-        # ── S5: Integral momentum divergence confirmation ────────────
-        if abs(int_div) > 0:
-            norm_div = int_div / max(energy, 1e-10)
-            if norm_div > 1.0 and _core_dir == 1:
-                confidence_penalty -= 0.10  # bullish pressure confirms CALL
-            elif norm_div < -1.0 and _core_dir == -1:
-                confidence_penalty -= 0.10  # bearish pressure confirms PUT
-            elif (norm_div > 1.0 and _core_dir == -1) or \
-                 (norm_div < -1.0 and _core_dir == 1):
-                confidence_penalty += 0.10  # pressure contradicts direction
-
-        # ── S6: Trend exhaustion confirmation ────────────────────────
-        if abs(exhaust) > config.exhaustion_extreme:
-            if exhaust > config.exhaustion_extreme and _core_dir == -1:
-                confidence_penalty -= 0.05  # overbought + PUT = good
-            elif exhaust < -config.exhaustion_extreme and _core_dir == 1:
-                confidence_penalty -= 0.05  # oversold + CALL = good
-            elif (exhaust > config.exhaustion_extreme and _core_dir == 1) or \
-                 (exhaust < -config.exhaustion_extreme and _core_dir == -1):
-                confidence_penalty += 0.15  # chasing exhausted trend = bad
-
-        # ── S7: Calm market boost ────────────────────────────────────
-        if kalman_z < 1.0 and hurst < 0.45 and _core_dir != 0:
-            confidence_penalty -= 0.10  # calm + predictable = reliable signal
-
-        # ══════════════════════════════════════════════════════════════
-        # S8-S14: Advanced Intelligence Filters
-        # Bayesian, Information-theoretic, Wavelet & Regime detection
-        # These further adjust confidence based on deep math analysis.
-        # ══════════════════════════════════════════════════════════════
-
-        bayes_up  = _g("bayesian_prob_up", 0.5)
-        renyi     = _g("renyi_entropy", 0.5)
-        fisher    = _g("fisher_information", 0.0)
-        wavelet   = _g("wavelet_energy_ratio", 0.5)
-        cusum     = _g("cusum_score", 0.0)
-        tail_dep  = _g("tail_dependence", 0.0)
-        mi        = _g("mi_flow", 0.0)
-
-        # ── S8: Bayesian directional confirmation ────────────────────
-        # If Bayesian posterior strongly agrees with core direction, boost.
-        # If it strongly disagrees, penalize.
-        if _core_dir != 0:
-            if _core_dir == 1 and bayes_up > config.bayesian_strong_prob:
-                confidence_penalty -= 0.10  # Bayesian agrees: high P(up) + CALL
-            elif _core_dir == -1 and bayes_up < (1.0 - config.bayesian_strong_prob):
-                confidence_penalty -= 0.10  # Bayesian agrees: low P(up) + PUT
-            elif _core_dir == 1 and bayes_up < (1.0 - config.bayesian_strong_prob):
-                confidence_penalty += 0.12  # Bayesian disagrees: low P(up) + CALL
-            elif _core_dir == -1 and bayes_up > config.bayesian_strong_prob:
-                confidence_penalty += 0.12  # Bayesian disagrees: high P(up) + PUT
-
-        # ── S9: Rényi entropy — rare event sensitivity ───────────────
-        # Low Rényi entropy = returns are highly concentrated → predictable
-        if renyi < config.renyi_low_entropy and _core_dir != 0:
-            confidence_penalty -= 0.08  # predictable regime → boost
-
-        # ── S10: Fisher information — tight distribution ─────────────
-        # High Fisher info = returns are tightly clustered → reliable signals
-        if fisher > config.fisher_info_min and _core_dir != 0:
-            confidence_penalty -= 0.05  # well-determined parameters → boost
-
-        # ── S11: Wavelet energy — signal vs noise ────────────────────
-        # High wavelet energy ratio = clean trend signal (low noise)
-        if wavelet > config.wavelet_snr_min and _core_dir != 0:
-            confidence_penalty -= 0.08  # clean signal → boost
-        elif wavelet < 0.3:
-            confidence_penalty += 0.10  # noise-dominated → penalize
-
-        # ── S12: CUSUM regime change — block during transitions ──────
-        # High CUSUM = regime is shifting, signals unreliable
         if cusum > config.cusum_regime_alert:
-            confidence_penalty += 0.15
             logger.debug(
-                "JumpMom: CUSUM=%.2f → regime shift detected, confidence reduced.",
+                "JumpMom BLOCK: CUSUM=%.2f → regime shift.",
                 cusum,
             )
+            return None, 0, None
 
-        # ── S13: Tail dependence — extreme clustering danger ─────────
-        # High tail dependence = velocity and acceleration extremes cluster
-        if tail_dep > config.tail_dep_danger:
-            confidence_penalty += 0.10
+        if abs(jerk_z) > config.jerk_regime_z:
             logger.debug(
-                "JumpMom: tail_dep=%.3f → extreme clustering, confidence reduced.",
+                "JumpMom BLOCK: jerk_z=%.2f → regime transition.",
+                jerk_z,
+            )
+            return None, 0, None
+
+        if tail_dep > config.tail_dep_danger:
+            logger.debug(
+                "JumpMom BLOCK: tail_dep=%.3f → extreme clustering.",
                 tail_dep,
             )
+            return None, 0, None
 
-        # ── S14: Mutual information flow — predictability gate ───────
-        # If MI is high, the market has exploitable structure
-        if mi > config.mi_flow_min and _core_dir != 0:
-            confidence_penalty -= 0.05  # predictable structure → boost
-        # If MI is near zero, the market is IID random → no edge
-        if mi < 0.01 and _core_dir != 0:
-            confidence_penalty += 0.05  # no predictability → penalize
+    # ══════════════════════════════════════════════════════════════════════
+    # PRICE ACTION VALIDATORS (1-5) — tick buffer only
+    # ══════════════════════════════════════════════════════════════════════
 
-    # ── Combine votes ─────────────────────────────────────────────────────
+    # ── V1: Momentum majority (majority of last N ticks same direction) ─
+    lb = config.mom_lookback
+    if n > lb:
+        tick_dirs = [quotes[i] > quotes[i - 1] for i in range(n - lb, n)]
+        up_count = sum(tick_dirs)
+        dn_count = sum(not d for d in tick_dirs)
+        # Majority (>=60%) in one direction votes
+        if up_count >= lb * 0.6:
+            up_votes += 1
+        elif dn_count >= lb * 0.6:
+            dn_votes += 1
+
+    # ── V2: EMA crossover or strong gap ────────────────────────────────
+    if n > config.ema_slow + 1:
+        ema_f = _ema_series(quotes, config.ema_fast)
+        ema_s = _ema_series(quotes, config.ema_slow)
+        fast_above_now = ema_f[-1] > ema_s[-1]
+        fast_above_prev = ema_f[-2] > ema_s[-2]
+        if fast_above_now and not fast_above_prev:
+            up_votes += 1
+        elif not fast_above_now and fast_above_prev:
+            dn_votes += 1
+        else:
+            # Also vote on strong EMA gap (>0.005% of price)
+            gap_pct = abs(ema_f[-1] - ema_s[-1]) / ema_s[-1] * 100
+            if gap_pct > 0.005:
+                if ema_f[-1] > ema_s[-1]:
+                    up_votes += 1
+                else:
+                    dn_votes += 1
+
+    # ── V3: EMA alignment (price positioning relative to slow EMA) ─────
+    if n > config.ema_slow + 1:
+        ema_s = _ema_series(quotes, config.ema_slow)
+        if quotes[-1] > ema_s[-1]:
+            up_votes += 1
+        elif quotes[-1] < ema_s[-1]:
+            dn_votes += 1
+
+    # ── V4: Short momentum majority (last 3 ticks) ────────────────────
+    slb = config.short_mom_lookback
+    if n > slb:
+        short_dirs = [quotes[i] > quotes[i - 1] for i in range(n - slb, n)]
+        up_short = sum(short_dirs)
+        dn_short = sum(not d for d in short_dirs)
+        # Majority (>=2/3) votes
+        if up_short >= 2:
+            up_votes += 1
+        elif dn_short >= 2:
+            dn_votes += 1
+
+    # ── V5: Reversal after streak (counter-trend, shorter threshold) ───
+    rl = config.rev_lookback
+    if n > rl:
+        streak_dirs = [quotes[i] > quotes[i - 1] for i in range(n - rl, n)]
+        up_streak = sum(streak_dirs)
+        dn_streak = sum(not d for d in streak_dirs)
+        # 5+ out of 7 in one direction → expect reversal
+        if up_streak >= rl - 2:
+            dn_votes += 1  # overbought → expect pullback
+        elif dn_streak >= rl - 2:
+            up_votes += 1  # oversold → expect bounce
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ADVANCED VALIDATORS (6-21) — require DataFrame with indicators
+    # ══════════════════════════════════════════════════════════════════════
+    if df is not None and len(df) >= config.min_ticks:
+        last = df.iloc[-1]
+
+        def _g(name: str, default: float = 0.0) -> float:
+            v = last.get(name, default)
+            try:
+                f = float(v if v is not None else default)
+            except (TypeError, ValueError):
+                f = default
+            return default if f != f else f  # NaN guard
+
+        vel      = _g("price_velocity")
+        accel    = _g("price_acceleration", 0.0)
+        curv_z   = _g("curvature_zscore")
+        int_div  = _g("integral_momentum_div")
+        energy   = _g("derivative_energy")
+        bayes_up = _g("bayesian_prob_up", 0.5)
+        kalman_z = _g("kalman_residual_zscore")
+        hurst    = _g("hurst_exponent", 0.5)
+        markov_up   = _g("markov_p_up_given_up", 0.5)
+        markov_dn   = _g("markov_p_down_given_down", 0.5)
+        imbalance   = _g("tick_imbalance", 0.0)
+        shannon     = _g("shannon_entropy", 1.0)
+        renyi       = _g("renyi_entropy", 0.5)
+        mi          = _g("mi_flow", 0.0)
+        wavelet     = _g("wavelet_energy_ratio", 0.5)
+        fisher      = _g("fisher_information", 0.0)
+        exhaust     = _g("trend_exhaustion")
+        vel_z       = _g("velocity_zscore", 0.0)
+        accel_z     = _g("acceleration_zscore", 0.0)
+
+        # ── V6: Velocity direction ─────────────────────────────────────
+        if vel > 0:
+            up_votes += 1
+        elif vel < 0:
+            dn_votes += 1
+
+        # ── V7: Acceleration confirms velocity (same sign) ─────────────
+        if vel > 0 and accel > 0:
+            up_votes += 1
+        elif vel < 0 and accel < 0:
+            dn_votes += 1
+
+        # ── V8: Curvature inflection (high curvature = turning point) ──
+        if curv_z > config.curvature_reversal_z:
+            # Inflection: if decelerating upward motion → turning down
+            if vel > 0 and accel < 0:
+                dn_votes += 1
+            elif vel < 0 and accel > 0:
+                up_votes += 1
+
+        # ── V9: Integral momentum divergence direction ─────────────────
+        if energy > 1e-10:
+            norm_div = int_div / energy
+            if norm_div > 1.0:
+                up_votes += 1
+            elif norm_div < -1.0:
+                dn_votes += 1
+
+        # ── V10: Bayesian posterior probability ────────────────────────
+        if bayes_up > config.bayesian_strong_prob:
+            up_votes += 1
+        elif bayes_up < (1.0 - config.bayesian_strong_prob):
+            dn_votes += 1
+
+        # ── V11: Kalman residual direction (filter sees trend) ─────────
+        if kalman_z > 1.0:
+            up_votes += 1
+        elif kalman_z < -1.0:
+            dn_votes += 1
+
+        # ── V12: Hurst exponent regime ─────────────────────────────────
+        # Trending market (hurst > 0.55): trust momentum direction
+        # Mean-reverting (hurst < 0.40): trust reversal direction
+        if hurst > config.hurst_trending:
+            # Trending → agree with velocity
+            if vel > 0:
+                up_votes += 1
+            elif vel < 0:
+                dn_votes += 1
+        elif hurst < config.hurst_reverting:
+            # Mean-reverting → counter velocity
+            if vel > 0:
+                dn_votes += 1
+            elif vel < 0:
+                up_votes += 1
+
+        # ── V13: Markov transition probabilities ───────────────────────
+        if markov_up > 0.55 and markov_up > markov_dn:
+            up_votes += 1
+        elif markov_dn > 0.55 and markov_dn > markov_up:
+            dn_votes += 1
+
+        # ── V14: Tick imbalance (buy/sell pressure) ────────────────────
+        if imbalance > 0.1:
+            up_votes += 1
+        elif imbalance < -0.1:
+            dn_votes += 1
+
+        # ── V15: Shannon entropy gate (low = predictable → trust dir) ──
+        if shannon < 0.7:
+            # Low entropy = concentrated returns → trust dominant direction
+            if vel > 0:
+                up_votes += 1
+            elif vel < 0:
+                dn_votes += 1
+
+        # ── V16: Rényi concentration (low = strong pattern) ────────────
+        if renyi < config.renyi_low_entropy:
+            if vel > 0:
+                up_votes += 1
+            elif vel < 0:
+                dn_votes += 1
+
+        # ── V17: Mutual information flow (high = structure exists) ─────
+        if mi > config.mi_flow_min:
+            # Predictable structure → trust direction from velocity z-score
+            if vel_z > 0.5:
+                up_votes += 1
+            elif vel_z < -0.5:
+                dn_votes += 1
+
+        # ── V18: Wavelet signal-to-noise (clean trend signal) ──────────
+        if wavelet > config.wavelet_snr_min:
+            if vel > 0:
+                up_votes += 1
+            elif vel < 0:
+                dn_votes += 1
+
+        # ── V19: Fisher information (tight params = reliable) ──────────
+        if fisher > config.fisher_info_min:
+            # Tight distribution → trust acceleration z-score direction
+            if accel_z > 0.5:
+                up_votes += 1
+            elif accel_z < -0.5:
+                dn_votes += 1
+
+        # ── V20: Calm market (low energy + low hurst) ──────────────────
+        if energy < config.energy_calm_pctile and hurst < 0.50:
+            # Calm and predictable → trust EMA alignment
+            if n > config.ema_slow:
+                ema_s_local = _ema_series(quotes, config.ema_slow)
+                if quotes[-1] > ema_s_local[-1]:
+                    up_votes += 1
+                elif quotes[-1] < ema_s_local[-1]:
+                    dn_votes += 1
+
+        # ── V21: Trend exhaustion (overbought/oversold reversal) ───────
+        if abs(exhaust) > config.exhaustion_extreme:
+            if exhaust > config.exhaustion_extreme:
+                dn_votes += 1  # overbought → expect fall
+            else:
+                up_votes += 1  # oversold → expect rise
+
+    # ══════════════════════════════════════════════════════════════════════
+    # DECISION: require min_score votes AND min_confidence ratio
+    # ══════════════════════════════════════════════════════════════════════
     total_votes = up_votes + dn_votes
     if total_votes == 0:
         return None, 0, None
 
-    if up_votes >= config.min_score and up_votes > dn_votes:
-        confidence = max(0.0, up_votes / max(total_votes, 1) - confidence_penalty)
-        logger.info(
-            "JumpMom CALL: up=%d dn=%d conf=%.2f",
-            up_votes, dn_votes, confidence,
-        )
-        return "CALL", up_votes, confidence
-    if dn_votes >= config.min_score and dn_votes > up_votes:
-        confidence = max(0.0, dn_votes / max(total_votes, 1) - confidence_penalty)
-        logger.info(
-            "JumpMom PUT: up=%d dn=%d conf=%.2f",
-            up_votes, dn_votes, confidence,
-        )
-        return "PUT", dn_votes, confidence
+    winning_votes = max(up_votes, dn_votes)
+    confidence = winning_votes / total_votes
 
+    if winning_votes >= config.min_score and confidence >= config.min_confidence:
+        if up_votes > dn_votes:
+            logger.info(
+                "JumpMom CALL: ↑%d ↓%d (conf=%.0f%%, %d/%d votes)",
+                up_votes, dn_votes, confidence * 100, winning_votes, total_votes,
+            )
+            return "CALL", up_votes, confidence
+        else:
+            logger.info(
+                "JumpMom PUT: ↑%d ↓%d (conf=%.0f%%, %d/%d votes)",
+                up_votes, dn_votes, confidence * 100, winning_votes, total_votes,
+            )
+            return "PUT", dn_votes, confidence
+
+    logger.debug(
+        "JumpMom NO SIGNAL: ↑%d ↓%d (need %d votes @ %.0f%% conf, got %d @ %.0f%%)",
+        up_votes, dn_votes, config.min_score, config.min_confidence * 100,
+        winning_votes, confidence * 100,
+    )
     return None, 0, None

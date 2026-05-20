@@ -27,9 +27,9 @@ from strategy import (
 )
 
 #: Maximum acceptable tick age in seconds before an entry is skipped.
-#: Configurable via MAX_TICK_LATENCY_MS env var (default 500ms to handle
+#: Configurable via MAX_TICK_LATENCY_MS env var (default 2000ms to handle
 #: real-world network latency between Deriv servers and the bot host).
-MAX_TICK_LATENCY_SECONDS: float = float(os.getenv("MAX_TICK_LATENCY_MS", "500")) / 1000.0
+MAX_TICK_LATENCY_SECONDS: float = float(os.getenv("MAX_TICK_LATENCY_MS", "2000")) / 1000.0
 
 
 class FatalBotError(RuntimeError):
@@ -60,7 +60,7 @@ class DerivBot:
         # Saved on disconnect so portfolio-empty handler can account for a trade
         # that settled while the WebSocket was down.
         self._stale_pending_order: Optional[PendingOrder] = None
-        self.journal = TradeJournal(config.pg_dsn)
+        self.journal = TradeJournal(config.pg_dsn, journal_dir=config.journal_dir)
         # Load XGBoost ensemble scorer if enabled
         self._ensemble_scorer: EnsembleScorer | None = None
         if config.accumulator_use_ensemble:
@@ -73,6 +73,7 @@ class DerivBot:
         self._waiting_since: float = 0.0
         self._gale_wait_log_ts: float = 0.0  # throttle log para aguardo do último gale
         self._gale_wait_ticks: int = 0  # contador de ticks em modo wait do último gale
+        self._gale_locked_direction = None  # Lock direction during gale
         # Rise/Fall specific state
         self._rf_ensemble_scorer: EnsembleScorerRF | None = None
         if config.rise_fall_use_ensemble:
@@ -284,11 +285,32 @@ class DerivBot:
 
         if self.waiting_for_result:
             stuck_sec = time.monotonic() - self._waiting_since
-            if stuck_sec > 120:
+            if stuck_sec > 30:
                 logger.warning(
                     "waiting_for_result timeout (%.0fs sem resposta) — resetando estado e retomando operacoes.",
                     stuck_sec,
                 )
+                # CORREÇÃO: timeout = trade perdido. Tratar como LOSS para manter contabilidade correta.
+                if self.risk and self.pending_order:
+                    buy_price = self.pending_order.stake
+                    logger.warning(
+                        "⚠️ Trade timeout contabilizado como LOSS de %.2f (contrato pode ter liquidado sem resposta)",
+                        buy_price,
+                    )
+                    self.risk.update(profit=-buy_price, buy_price=buy_price)
+                    logger.info(self.risk.stats())
+                elif self.risk:
+                    # Sem pending_order mas em gale — reseta martingale para evitar step fantasma
+                    if self.risk.use_martingale and self.risk.martingale_step > 0:
+                        logger.warning(
+                            "⚠️ Timeout sem pending_order durante gale %d/%d — resetando martingale (perdas=%.2f absorvidas)",
+                            self.risk.martingale_step, self.risk.martingale_max_gales,
+                            self.risk.martingale_accumulated_loss,
+                        )
+                        self.risk.martingale_step = 0
+                        self.risk.martingale_accumulated_loss = 0.0
+                        self.risk.martingale_base_stake = 0.0
+                        self.risk._save_state()
                 self._reset_gale_state()
                 self.waiting_for_result = False
                 self.pending_order = None
@@ -315,7 +337,7 @@ class DerivBot:
             return
 
         # Block weekends: Friday 21:00 UTC → Sunday 21:00 UTC
-        if self.config.block_weekends:
+        if getattr(self.risk, "block_weekends", self.config.block_weekends):
             dow = tick_dt.weekday()  # 0=Mon … 4=Fri, 5=Sat, 6=Sun
             is_blocked_period = (
                 dow == 6  # all Sunday
@@ -344,7 +366,10 @@ class DerivBot:
                 self._pause_log_ts = now
             return
 
-        df = calculate_tick_indicators(list(self.tick_buffer), config=self.config.accumulator_strategy_config)
+        _tick_snapshot = list(self.tick_buffer)
+        df = await asyncio.to_thread(
+            calculate_tick_indicators, _tick_snapshot, config=self.config.accumulator_strategy_config
+        )
 
         # ---- Jump Rise/Fall mode (JD10, JD25, JD50, JD75, JD100) ----
         if self.config.contract_mode == "jump_rise_fall":
@@ -357,23 +382,77 @@ class DerivBot:
                     )
                     return
 
-            signal, score, confidence = generate_jump_momentum_signal(
-                list(self.tick_buffer),
-                config=JumpMomentumConfig(
-                    mom_lookback=5,
-                    mom_horizon=self.config.rise_fall_duration_ticks,
-                    ema_fast=5,
-                    ema_slow=20,
-                    rev_lookback=7,
-                    min_score=self.config.rise_fall_min_votes,
-                    min_ticks=30,
-                ),
-                df=df,
+            _jm_config = JumpMomentumConfig(
+                mom_lookback=5,
+                mom_horizon=self.config.rise_fall_duration_ticks,
+                ema_fast=5,
+                ema_slow=20,
+                rev_lookback=7,
+                min_score=self.config.rise_fall_min_votes,
+                min_confidence=self.config.rise_fall_min_confidence,
+                min_ticks=30,
+            )
+            signal, score, confidence = await asyncio.to_thread(
+                generate_jump_momentum_signal, _tick_snapshot, config=_jm_config, df=df,
             )
 
+            # --- GALE DIRECTION LOCK + CONFIDENCE FILTER ---
+            _in_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+
             if signal not in {"CALL", "PUT"}:
-                logger.debug("Sem setup JumpRF no tick %s.", tick_epoch)
+                if _in_gale:
+                    logger.debug("GALE %d/%d: sem sinal JumpRF — aguardando.", self.risk.martingale_step, self.risk.martingale_max_gales)
+                else:
+                    logger.debug("Sem setup JumpRF no tick %s.", tick_epoch)
                 return
+
+            if _in_gale:
+                # Exigir confiança mínima proporcional ao gale step
+                _gale_min_conf = min(0.65 + self.risk.martingale_step * 0.03, 0.85)
+                _gale_min_score = self.config.rise_fall_min_votes + min(self.risk.martingale_step, 2)
+                if confidence is not None and confidence < _gale_min_conf:
+                    logger.debug(
+                        "GALE %d/%d: conf=%.0f%% < min=%.0f%% — aguardando sinal mais forte.",
+                        self.risk.martingale_step, self.risk.martingale_max_gales,
+                        confidence * 100, _gale_min_conf * 100,
+                    )
+                    return
+                if score < _gale_min_score:
+                    logger.debug(
+                        "GALE %d/%d: score=%d < min=%d — aguardando sinal mais forte.",
+                        self.risk.martingale_step, self.risk.martingale_max_gales,
+                        score, _gale_min_score,
+                    )
+                    return
+                # Travar na direção do último sinal que perdeu (não ficar flipando)
+                if self._gale_locked_direction is not None and signal != self._gale_locked_direction:
+                    # Só aceitar inversão se confiança for MUITO alta (>80%)
+                    if confidence is not None and confidence >= 0.80:
+                        logger.info(
+                            "GALE %d/%d: invertendo %s→%s (conf=%.0f%% alta o suficiente)",
+                            self.risk.martingale_step, self.risk.martingale_max_gales,
+                            self._gale_locked_direction, signal, confidence * 100,
+                        )
+                        self._gale_locked_direction = signal
+                    else:
+                        logger.debug(
+                            "GALE %d/%d: sinal %s != lock %s e conf=%.0f%% < 80%% — ignorando.",
+                            self.risk.martingale_step, self.risk.martingale_max_gales,
+                            signal, self._gale_locked_direction,
+                            (confidence or 0) * 100,
+                        )
+                        return
+                elif self._gale_locked_direction is None:
+                    # Primeiro gale: travar na direção do sinal atual
+                    self._gale_locked_direction = signal
+                    logger.info(
+                        "GALE %d/%d: travando direção=%s para sequência de gale.",
+                        self.risk.martingale_step, self.risk.martingale_max_gales, signal,
+                    )
+            else:
+                # Fora de gale: limpar lock
+                if self._gale_locked_direction is not None:
+                    self._gale_locked_direction = None
 
             stake = self.risk.get_stake()
             if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
@@ -417,7 +496,8 @@ class DerivBot:
                     )
                     return
 
-            signal, score, p_dir = generate_rise_fall_signal(
+            signal, score, p_dir = await asyncio.to_thread(
+                generate_rise_fall_signal,
                 df,
                 config=self.config.rise_fall_strategy_config,
                 ensemble_scorer=self._rf_ensemble_scorer,
@@ -457,7 +537,8 @@ class DerivBot:
             return
 
         # ---- Accumulator mode (default) ----
-        signal, score, p_loss = generate_accumulator_signal(
+        signal, score, p_loss = await asyncio.to_thread(
+            generate_accumulator_signal,
             df,
             config=self.config.accumulator_strategy_config,
             ensemble_scorer=self._ensemble_scorer,
@@ -664,6 +745,9 @@ class DerivBot:
             martingale_max_gales=self.config.martingale_max_gales,
             martingale_multiplier=self.config.martingale_multiplier,
             martingale_payout_rate=self.config.martingale_payout_rate,
+            martingale_max_balance_pct=self.config.martingale_max_balance_pct,
+            martingale_min_balance_floor=self.config.martingale_min_balance_floor,
+            martingale_lock_config=self.config.martingale_lock_config,
             max_losses_in_window=_loss_pause_window,
             stop_loss_pct=self.config.stop_loss_pct,
             stop_gain_pct=self.config.stop_gain_pct,
