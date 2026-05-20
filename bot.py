@@ -108,6 +108,37 @@ class DerivBot:
         except Exception:
             pass
 
+    _LIVE_IND_KEYS = (
+        "bb_width_percent", "tick_atr_percent", "recent_move_percent",
+        "hurst_exponent", "tick_imbalance", "hawkes_intensity",
+        "velocity_zscore", "acceleration_zscore", "pmi_distance_percent",
+        "markov_p_up_given_up", "markov_p_down_given_down",
+        "shannon_entropy", "kalman_residual_zscore",
+        "bayesian_prob_up", "renyi_entropy", "fisher_information",
+        "wavelet_energy_ratio", "cusum_score", "tail_dependence", "mi_flow",
+    )
+
+    def _write_live_indicators(self, df) -> None:
+        """Write latest indicator values to JSON for real-time dashboard display."""
+        if df is None or df.empty:
+            return
+        try:
+            row = df.iloc[-1]
+            data = {"timestamp": datetime.now(UTC).isoformat()}
+            for k in self._LIVE_IND_KEYS:
+                v = row.get(k)
+                if v is not None and v == v:  # skip NaN
+                    data[k] = round(float(v), 6)
+                else:
+                    data[k] = None
+            path = os.path.join(self.config.journal_dir, "live_indicators.json")
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
     async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
         await ws.send(json.dumps(payload))
 
@@ -371,6 +402,9 @@ class DerivBot:
         df = await asyncio.to_thread(
             calculate_tick_indicators, _tick_snapshot, config=self.config.accumulator_strategy_config
         )
+
+        # Publish live indicators for the dashboard (lightweight JSON, every tick)
+        self._write_live_indicators(df)
 
         # ---- Jump Rise/Fall mode (JD10, JD25, JD50, JD75, JD100) ----
         if self.config.contract_mode == "jump_rise_fall":

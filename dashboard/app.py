@@ -691,9 +691,22 @@ def api_logs():
 
 @app.get("/api/indicators")
 def api_indicators(response: Response):
-    """Return latest signal indicators from PostgreSQL."""
+    """Return latest signal indicators — prefer live file from bot, fallback to DB."""
     response.headers["Cache-Control"] = "no-store"
     result = {"signal": _last_jump_signal()}
+
+    # 1) Try live_indicators.json (updated every tick by the bot)
+    live_path = BASE / "logs" / "live_indicators.json"
+    try:
+        if live_path.exists():
+            data = json.loads(live_path.read_text())
+            if data:
+                result["latest_signal_indicators"] = data
+                return result
+    except Exception:
+        pass
+
+    # 2) Fallback: last signal row from PostgreSQL
     try:
         conn = psycopg2.connect(_pg_dsn_str())
         cur = conn.cursor()
