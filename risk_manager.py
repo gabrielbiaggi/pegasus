@@ -6,6 +6,8 @@ from pathlib import Path
 
 from logger import logger
 
+FIB_SEQUENCE = [1, 1, 2, 3, 5, 8, 13, 21]
+
 
 class RiskManager:
     def __init__(
@@ -32,6 +34,7 @@ class RiskManager:
         martingale_max_balance_pct: float = 0.7,
         martingale_min_balance_floor: float = 0.0,
         martingale_lock_config: bool = True,
+        martingale_mode: str = "classic",
         state_path: str = "logs/risk_state.json",
         max_losses_in_window: int = 2,
         loss_window_seconds: float = 300.0,
@@ -60,6 +63,7 @@ class RiskManager:
         self.martingale_max_balance_pct = float(martingale_max_balance_pct)
         self.martingale_min_balance_floor = float(martingale_min_balance_floor)
         self.martingale_lock_config = bool(martingale_lock_config)
+        self.martingale_mode = martingale_mode
         self.state_path = Path(state_path)
         self.max_losses_in_window = int(max_losses_in_window)
         self.loss_window_seconds = float(loss_window_seconds)
@@ -475,12 +479,14 @@ class RiskManager:
         if self.use_soros and not _in_gale and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
             raw_stake = raw_stake + self.soros_profit
 
-        # Martingale: calcula stake de recuperacao matematicamente correta para o payout atual.
-        # Formula: G = perdas_acumuladas / payout_rate + stake_base
-        # Garante que WIN no proximo gale recupera todas as perdas anteriores + lucro original.
-        # Exemplo com payout=15%: gale1 = loss0/0.15 + loss0 ≈ 7.67× (NAO 2×!)
+        # Martingale/Fibonacci: calcula stake de recuperação para o gale atual.
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
-            raw_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+            if self.martingale_mode == "fibonacci":
+                fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
+                raw_stake = self.fixed_stake * FIB_SEQUENCE[fib_idx]
+            else:
+                # Classic: G = perdas_acumuladas / payout_rate + stake_base
+                raw_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
 
         remaining_budget = max(0.0, self._effective_loss_limit() + self.daily_net_profit)
 
@@ -517,8 +523,12 @@ class RiskManager:
         base = self.martingale_base_stake or self.fixed_stake
         payout = self.martingale_payout_rate
         total = 0.0
-        for _ in range(self.martingale_step, self.martingale_max_gales):
-            formula = sim_accum / payout + base
+        for step_i in range(self.martingale_step, self.martingale_max_gales):
+            if self.martingale_mode == "fibonacci":
+                fib_idx = min(step_i, len(FIB_SEQUENCE) - 1)
+                formula = self.fixed_stake * FIB_SEQUENCE[fib_idx]
+            else:
+                formula = sim_accum / payout + base
             stake = min(formula, cap)
             total += stake
             sim_accum += stake
@@ -574,7 +584,11 @@ class RiskManager:
         """
         if not (self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0):
             return 0.0
-        raw = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+        if self.martingale_mode == "fibonacci":
+            fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
+            raw = self.fixed_stake * FIB_SEQUENCE[fib_idx]
+        else:
+            raw = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
         return round(min(raw, self.balance), 2)
 
     def can_trade(self) -> bool:
@@ -607,7 +621,11 @@ class RiskManager:
 
         # PROTEÇÃO: dynamic gale cap — aborta gale se próximo step exige mais que saldo disponível
         if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
-            next_gale_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+            if self.martingale_mode == "fibonacci":
+                fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
+                next_gale_stake = self.fixed_stake * FIB_SEQUENCE[fib_idx]
+            else:
+                next_gale_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
             usable_balance = self.balance * self.martingale_max_balance_pct if self.martingale_max_balance_pct > 0 else self.balance
             if next_gale_stake > usable_balance:
                 logger.warning(
@@ -729,36 +747,52 @@ class RiskManager:
             self.consecutive_losses = 0
             _was_gale_win = self.use_martingale and self.martingale_step > 0
             if self.use_martingale and self.martingale_step > 0:
-                # Partial recovery: reduce accumulated_loss by this WIN's profit.
-                # The gale stake may have been capped by MAX_STAKE so a single WIN
-                # might not cover all previous losses. Keep gale active until fully covered.
-                self.martingale_accumulated_loss = round(
-                    max(0.0, self.martingale_accumulated_loss - profit), 2
-                )
-                if self.martingale_accumulated_loss <= 0.0:
-                    logger.info(
-                        "\u2705 Martingale recuperado | step=%d \u2192 0 | todas perdas cobertas",
-                        self.martingale_step,
-                    )
-                    self.martingale_step = 0
-                    self.martingale_accumulated_loss = 0.0
-                    self.martingale_base_stake = 0.0
-                elif self.martingale_step >= self.martingale_max_gales:
-                    # Circuit breaker: reached max_gales — absorb residual and reset.
-                    logger.warning(
-                        "\u26a0 Martingale max_gales=%d atingido com residuo=%.2f — absorvido como perda aceita",
-                        self.martingale_max_gales, self.martingale_accumulated_loss,
-                    )
-                    self.martingale_step = 0
-                    self.martingale_accumulated_loss = 0.0
-                    self.martingale_base_stake = 0.0
+                if self.martingale_mode == "fibonacci":
+                    # Fibonacci: on WIN, step back 2 positions. If step reaches 0, fully reset.
+                    prev_step = self.martingale_step
+                    self.martingale_step = max(0, self.martingale_step - 2)
+                    if self.martingale_step == 0:
+                        logger.info(
+                            "✅ Fibonacci recuperado | step=%d → 0 | sequência encerrada",
+                            prev_step,
+                        )
+                        self.martingale_accumulated_loss = 0.0
+                        self.martingale_base_stake = 0.0
+                    else:
+                        fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
+                        next_stake = round(self.fixed_stake * FIB_SEQUENCE[fib_idx], 2)
+                        logger.info(
+                            "⚡ Fibonacci parcial: step=%d → %d | stake_prox=%.2f",
+                            prev_step, self.martingale_step, next_stake,
+                        )
                 else:
-                    logger.info(
-                        "\u26a1 Martingale parcial: +%.2f recuperado | residual=%.2f | stake_prox=%.2f",
-                        profit,
-                        self.martingale_accumulated_loss,
-                        round(self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake, 2),
+                    # Classic: reduce accumulated_loss by this WIN's profit.
+                    self.martingale_accumulated_loss = round(
+                        max(0.0, self.martingale_accumulated_loss - profit), 2
                     )
+                    if self.martingale_accumulated_loss <= 0.0:
+                        logger.info(
+                            "✅ Martingale recuperado | step=%d → 0 | todas perdas cobertas",
+                            self.martingale_step,
+                        )
+                        self.martingale_step = 0
+                        self.martingale_accumulated_loss = 0.0
+                        self.martingale_base_stake = 0.0
+                    elif self.martingale_step >= self.martingale_max_gales:
+                        logger.warning(
+                            "⚠ Martingale max_gales=%d atingido com residuo=%.2f — absorvido como perda aceita",
+                            self.martingale_max_gales, self.martingale_accumulated_loss,
+                        )
+                        self.martingale_step = 0
+                        self.martingale_accumulated_loss = 0.0
+                        self.martingale_base_stake = 0.0
+                    else:
+                        logger.info(
+                            "⚡ Martingale parcial: +%.2f recuperado | residual=%.2f | stake_prox=%.2f",
+                            profit,
+                            self.martingale_accumulated_loss,
+                            round(self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake, 2),
+                        )
             else:
                 self.martingale_step = 0
                 self.martingale_accumulated_loss = 0.0
@@ -794,7 +828,11 @@ class RiskManager:
                     # Gale subsequente: buy_price É o stake do gale (calculado
                     # corretamente a partir do base_stake), então rastreia perda real.
                     self.martingale_accumulated_loss += buy_price
-                if self.martingale_step >= self.martingale_max_gales:
+                # Fibonacci: cap at len(FIB_SEQUENCE) - 1 in addition to max_gales
+                _effective_max = self.martingale_max_gales
+                if self.martingale_mode == "fibonacci":
+                    _effective_max = min(_effective_max, len(FIB_SEQUENCE) - 1)
+                if self.martingale_step >= _effective_max:
                     # Último gale esgotado — perdas absorvidas, reseta sequência para G0
                     logger.warning(
                         "⛔ Gale %d/%d ESGOTADO — perdas totais=%.2f absorvidas, iniciando nova sequência",

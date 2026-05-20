@@ -951,6 +951,7 @@ class DerivBot:
             martingale_max_balance_pct=self.config.martingale_max_balance_pct,
             martingale_min_balance_floor=self.config.martingale_min_balance_floor,
             martingale_lock_config=self.config.martingale_lock_config,
+            martingale_mode=self.config.martingale_mode,
             max_losses_in_window=_loss_pause_window,
             stop_loss_pct=self.config.stop_loss_pct,
             stop_gain_pct=self.config.stop_gain_pct,

@@ -325,6 +325,99 @@ class RiskManagerTest(unittest.TestCase):
             # start_of_day_balance = 1101 - 101 = 1000 → effective target = 100
             self.assertFalse(risk.can_trade())   # net=101, target=100 → BLOCKED
 
+    def test_fibonacci_stake_sequence(self) -> None:
+        """Fibonacci mode uses FIB_SEQUENCE multipliers instead of classic martingale formula."""
+        from risk_manager import FIB_SEQUENCE
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=100_000,
+                max_loss_day=50_000,
+                max_profit_day=0,
+                max_trades_day=50,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=0.5,
+                fixed_stake=0.35,
+                min_stake=0.35,
+                max_stake=0,
+                max_consecutive_losses=20,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=7,
+                martingale_payout_rate=0.953,
+                martingale_mode="fibonacci",
+                dynamic_stake_base_pct=0,
+                max_losses_in_window=100,
+                state_path=str(Path(tmp) / "risk.json"),
+            )
+            # G0: base stake
+            self.assertEqual(risk.get_stake(), 0.35)
+
+            # Lose G0 → step=1, stake = 0.35 * FIB[1] = 0.35 * 1 = 0.35
+            risk.update(profit=-0.35, buy_price=0.35)
+            self.assertEqual(risk.martingale_step, 1)
+            self.assertAlmostEqual(risk.get_stake(), 0.35, places=2)
+
+            # Lose G1 → step=2, stake = 0.35 * FIB[2] = 0.35 * 2 = 0.70
+            risk.update(profit=-0.35, buy_price=0.35)
+            self.assertEqual(risk.martingale_step, 2)
+            self.assertAlmostEqual(risk.get_stake(), 0.70, places=2)
+
+            # Lose G2 → step=3, stake = 0.35 * FIB[3] = 0.35 * 3 = 1.05
+            risk.update(profit=-0.70, buy_price=0.70)
+            self.assertEqual(risk.martingale_step, 3)
+            self.assertAlmostEqual(risk.get_stake(), 1.05, places=2)
+
+            # Win at step 3 → step = max(0, 3-2) = 1
+            risk.update(profit=1.00, buy_price=1.05)
+            self.assertEqual(risk.martingale_step, 1)
+
+            # Win at step 1 → step = max(0, 1-2) = 0 → full reset
+            risk.update(profit=0.33, buy_price=0.35)
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.martingale_accumulated_loss, 0.0)
+            self.assertEqual(risk.martingale_base_stake, 0.0)
+
+    def test_fibonacci_absorbs_at_max(self) -> None:
+        """Fibonacci absorbs losses and resets when step >= min(max_gales, len(FIB)-1)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=100_000,
+                max_loss_day=50_000,
+                max_profit_day=0,
+                max_trades_day=50,
+                daily_trailing_start=0,
+                daily_trailing_lock=0,
+                max_stake_pct=0.5,
+                fixed_stake=0.35,
+                min_stake=0.35,
+                max_stake=0,
+                max_consecutive_losses=20,
+                use_soros=False,
+                soros_max_steps=1,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=3,  # max 3 gales
+                martingale_payout_rate=0.953,
+                martingale_mode="fibonacci",
+                dynamic_stake_base_pct=0,
+                max_losses_in_window=100,
+                state_path=str(Path(tmp) / "risk.json"),
+            )
+            # Lose 4 times: step reaches max_gales=3 on 3rd loss, 4th loss triggers absorb+reset
+            risk.update(profit=-0.35, buy_price=0.35)  # step 0→1
+            risk.update(profit=-0.35, buy_price=0.35)  # step 1→2
+            risk.update(profit=-0.70, buy_price=0.70)  # step 2→3
+            self.assertEqual(risk.martingale_step, 3)   # not yet absorbed
+            risk.update(profit=-1.05, buy_price=1.05)  # step 3 >= max_gales=3 → RESET
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.martingale_accumulated_loss, 0.0)
+            # Lose one more → should start fresh at step=1
+            risk.update(profit=-0.35, buy_price=0.35)
+            self.assertEqual(risk.martingale_step, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
