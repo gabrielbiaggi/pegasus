@@ -654,7 +654,13 @@ class RiskManager:
                     # Primeiro loss: base_stake é SEMPRE o valor base (sem Soros)
                     # para que gales não herdem a inflação do Soros.
                     self.martingale_base_stake = self.fixed_stake
-                self.martingale_accumulated_loss += buy_price
+                    # Acumula apenas o stake base, NÃO o buy_price inflado pelo Soros.
+                    # O prêmio Soros é risco aceito — gale recupera somente a perda base.
+                    self.martingale_accumulated_loss = self.fixed_stake
+                else:
+                    # Gale subsequente: buy_price É o stake do gale (calculado
+                    # corretamente a partir do base_stake), então rastreia perda real.
+                    self.martingale_accumulated_loss += buy_price
                 if self.martingale_step >= self.martingale_max_gales:
                     # Último gale esgotado — perdas absorvidas, reseta sequência para G0
                     logger.warning(
