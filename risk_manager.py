@@ -132,6 +132,25 @@ class RiskManager:
             self.loss_block_override = new_override
             self.consecutive_losses = new_consec
 
+        # Reconcile trigger: when "reconcile" flag is set in risk_state.json,
+        # reload ALL P&L fields from file and clear the flag.
+        if data.get("reconcile"):
+            self.daily_loss = float(data.get("daily_loss", self.daily_loss))
+            self.daily_net_profit = float(data.get("daily_net_profit", self.daily_net_profit))
+            self.daily_peak_profit = float(data.get("daily_peak_profit", max(0.0, self.daily_net_profit)))
+            self.trades_today = int(data.get("trades_today", self.trades_today))
+            self.wins = int(data.get("wins", self.wins))
+            self.losses = int(data.get("losses", self.losses))
+            logger.info(
+                "♻ P&L reconciliado do disco: trades=%d, wins=%d, losses=%d, "
+                "net_profit=%.2f, daily_loss=%.2f",
+                self.trades_today, self.wins, self.losses,
+                self.daily_net_profit, self.daily_loss,
+            )
+            # Clear reconcile flag from file so it doesn't re-trigger
+            data.pop("reconcile", None)
+            self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
     def _reload_env_settings(self) -> None:
         """Re-read .env file for dashboard-adjustable settings (stop loss/gain, stake, max_stake, etc.).
 
@@ -335,6 +354,31 @@ class RiskManager:
             "loss_block_override": self.loss_block_override,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def reconcile_pnl(self, db_summary: dict[str, float | int]) -> None:
+        """Reconcile in-memory P&L counters with actual DB values.
+
+        Called on startup (after _load_state) and can be triggered at runtime
+        via the 'reconcile' flag in risk_state.json.
+        """
+        old = (self.trades_today, self.wins, self.losses, self.daily_net_profit, self.daily_loss)
+        self.trades_today = int(db_summary["trades"])
+        self.wins = int(db_summary["wins"])
+        self.losses = int(db_summary["losses"])
+        self.daily_net_profit = float(db_summary["net_profit"])
+        self.daily_loss = float(db_summary["total_loss"])
+        self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+        new = (self.trades_today, self.wins, self.losses, self.daily_net_profit, self.daily_loss)
+        if old != new:
+            logger.info(
+                "♻ P&L reconciliado com DB: trades %d→%d | W %d→%d | L %d→%d | "
+                "net %.2f→%.2f | loss %.2f→%.2f",
+                old[0], new[0], old[1], new[1], old[2], new[2],
+                old[3], new[3], old[4], new[4],
+            )
+            self._save_state()
+        else:
+            logger.info("♻ P&L do DB confere — sem divergência.")
 
     def _reset_if_new_day(self) -> None:
         today = date.today().isoformat()
