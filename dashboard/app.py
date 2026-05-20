@@ -264,8 +264,9 @@ def _compute_max_loss_day(risk_state: dict) -> float:
 
 
 def _compute_risk_blocked(risk_state: dict) -> bool:
-    # Always reflect the raw monetary condition — independent of loss_block_override.
-    # The button exists precisely to let the user override a block, so we always show it.
+    # Check if loss_block_override is active — user unblocked via dashboard.
+    if risk_state.get("loss_block_override", False):
+        return False
     return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(risk_state)
 
 
