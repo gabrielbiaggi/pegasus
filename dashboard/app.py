@@ -906,7 +906,8 @@ def api_backtest(refresh: bool = False, balance: float = 10000.0):
         cur = conn.cursor()
         cur.execute(
             "SELECT timestamp, direction, result, profit, stake, gale_step, held_ticks"
-            " FROM trades ORDER BY timestamp ASC"
+            " FROM trades WHERE timestamp >= NOW() - interval '30 days'"
+            " ORDER BY timestamp ASC"
         )
         rows = cur.fetchall()
         cur.close()
@@ -982,6 +983,148 @@ def api_indicators(response: Response):
     except Exception:
         pass
     return result
+
+
+@app.get("/api/history30d")
+def api_history30d(balance: float = 10000.0):
+    """Return last 30 days of real trade history + forward projections."""
+    from datetime import timedelta
+    pg_dsn = _pg_dsn_str()
+    try:
+        conn = psycopg2.connect(pg_dsn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT timestamp, direction, result, profit, stake, gale_step"
+            " FROM trades WHERE timestamp >= NOW() - interval '30 days'"
+            " ORDER BY timestamp ASC"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as exc:
+        return {"error": f"DB error: {exc}"}
+
+    if not rows:
+        return {"error": "Sem trades nos últimos 30 dias."}
+
+    # Group by day
+    from collections import defaultdict
+    daily: dict[str, dict] = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0, "stakes": []})
+    for r in rows:
+        ts = r[0]
+        day = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+        d = daily[day]
+        d["trades"] += 1
+        profit = float(r[3] or 0)
+        d["pnl"] += profit
+        if r[2] == "WIN":
+            d["wins"] += 1
+        else:
+            d["losses"] += 1
+        d["stakes"].append(float(r[4] or 0))
+
+    # Sort days
+    sorted_days = sorted(daily.keys())
+    days_data = []
+    cumulative_pnl = 0.0
+    equity_curve = []
+    for day in sorted_days:
+        d = daily[day]
+        cumulative_pnl += d["pnl"]
+        wr = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] > 0 else 0
+        avg_stake = sum(d["stakes"]) / len(d["stakes"]) if d["stakes"] else 0
+        days_data.append({
+            "date": day,
+            "trades": d["trades"],
+            "wins": d["wins"],
+            "losses": d["losses"],
+            "pnl": round(d["pnl"], 2),
+            "cumulative_pnl": round(cumulative_pnl, 2),
+            "winrate": wr,
+            "avg_stake": round(avg_stake, 2),
+        })
+        equity_curve.append(round(cumulative_pnl, 2))
+
+    # Overall stats
+    total_trades = len(rows)
+    total_wins = sum(1 for r in rows if r[2] == "WIN")
+    total_pnl = sum(float(r[3] or 0) for r in rows)
+    active_days = len(sorted_days)
+    avg_trades_day = round(total_trades / active_days, 1) if active_days > 0 else 0
+    avg_pnl_day = round(total_pnl / active_days, 2) if active_days > 0 else 0
+    overall_wr = round(total_wins / total_trades * 100, 1) if total_trades > 0 else 0
+    best_day = max(days_data, key=lambda x: x["pnl"]) if days_data else None
+    worst_day = min(days_data, key=lambda x: x["pnl"]) if days_data else None
+
+    # Average stake across all trades
+    all_stakes = [float(r[4] or 0) for r in rows]
+    avg_stake_global = sum(all_stakes) / len(all_stakes) if all_stakes else 1.0
+
+    # Calculate return per dollar staked (pnl_per_unit_staked)
+    total_staked = sum(all_stakes)
+    pnl_per_dollar_staked = total_pnl / total_staked if total_staked > 0 else 0
+
+    # For projections: scale avg_pnl_day proportionally to chosen balance
+    # If user's balance is different from what was actually used, scale linearly
+    # Use stake as % of balance (from real data): avg_stake / avg_balance_during_period
+    # Simplification: use pnl_per_dollar_staked * trades_per_day * projected_stake
+    PAYOUT = float(_get_env("PAYOUT") or _get_env("MARTINGALE_PAYOUT_RATE") or "0.953")
+    STAKE_PCT = float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0")
+    if STAKE_PCT > 0:
+        projected_stake = balance * STAKE_PCT
+    else:
+        projected_stake = float(_get_env("STAKE") or "1.00")
+
+    # Projected daily PnL with chosen balance/stake
+    projected_daily_pnl = pnl_per_dollar_staked * projected_stake * avg_trades_day
+    daily_return_pct = (projected_daily_pnl / balance * 100) if balance > 0 else 0
+
+    # Forward projections (LINEAR — more realistic for fixed/semi-fixed stake)
+    projections = {}
+    for proj_days in [7, 15, 30, 60, 90]:
+        projected_pnl = round(projected_daily_pnl * proj_days, 2)
+        projected_balance = round(balance + projected_pnl, 2)
+        projected_roi = round(projected_pnl / balance * 100, 1) if balance > 0 else 0
+        projections[str(proj_days)] = {
+            "days": proj_days,
+            "balance": projected_balance,
+            "pnl": projected_pnl,
+            "roi": projected_roi,
+        }
+
+    # Worst drawdown in the 30D
+    peak = 0.0
+    max_dd = 0.0
+    for eq in equity_curve:
+        if eq > peak:
+            peak = eq
+        dd = peak - eq
+        if dd > max_dd:
+            max_dd = dd
+
+    return {
+        "days": days_data,
+        "equity_curve": equity_curve,
+        "stats": {
+            "total_trades": total_trades,
+            "total_wins": total_wins,
+            "total_losses": total_trades - total_wins,
+            "total_pnl": round(total_pnl, 2),
+            "winrate": overall_wr,
+            "active_days": active_days,
+            "avg_trades_day": avg_trades_day,
+            "avg_pnl_day": avg_pnl_day,
+            "avg_stake": round(avg_stake_global, 2),
+            "daily_return_pct": round(daily_return_pct, 3),
+            "projected_daily_pnl": round(projected_daily_pnl, 2),
+            "pnl_per_dollar_staked": round(pnl_per_dollar_staked, 4),
+            "max_drawdown": round(max_dd, 2),
+            "best_day": {"date": best_day["date"], "pnl": best_day["pnl"]} if best_day else None,
+            "worst_day": {"date": worst_day["date"], "pnl": worst_day["pnl"]} if worst_day else None,
+        },
+        "projections": projections,
+        "balance": balance,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)

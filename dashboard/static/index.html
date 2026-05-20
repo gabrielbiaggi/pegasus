@@ -240,6 +240,56 @@
 </section>
 <section>
   <div class="section-header">
+    <h2>Histórico 30D + Projeção Futura</h2>
+    <div class="tools">
+      <span style="font-size:.7rem;color:var(--muted)">Banca: $</span>
+      <input type="number" id="inp-hist30d-balance" min="100" step="100" value="10000" style="width:90px;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:4px;padding:2px 6px;font-size:.75rem"/>
+      <button class="btn btn-blue" onclick="fetchHistory30d()" style="padding:3px 10px;font-size:.75rem">↻ Calcular</button>
+    </div>
+  </div>
+  <div id="hist30d-loading" style="color:var(--muted);font-size:.8rem;padding:8px 0">Carregando histórico 30D...</div>
+  <div id="hist30d-body" style="display:none">
+    <!-- Stats cards -->
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="card" style="min-width:110px;flex:1"><div class="label">Trades 30D</div><div class="value blue" id="h30-trades">—</div><div class="sub" id="h30-days-active">—</div></div>
+      <div class="card" style="min-width:110px;flex:1"><div class="label">Win Rate 30D</div><div class="value green" id="h30-wr">—</div><div class="sub" id="h30-wl">—</div></div>
+      <div class="card" style="min-width:110px;flex:1"><div class="label">P&L Total 30D</div><div class="value" id="h30-pnl">—</div><div class="sub" id="h30-avg-day">—</div></div>
+      <div class="card" style="min-width:110px;flex:1"><div class="label">Média trades/dia</div><div class="value cyan" id="h30-avg-trades">—</div><div class="sub" id="h30-avg-stake">—</div></div>
+      <div class="card" style="min-width:110px;flex:1"><div class="label">Melhor dia</div><div class="value green" id="h30-best-pnl">—</div><div class="sub" id="h30-best-date">—</div></div>
+      <div class="card" style="min-width:110px;flex:1"><div class="label">Pior dia</div><div class="value red" id="h30-worst-pnl">—</div><div class="sub" id="h30-worst-date">—</div></div>
+    </div>
+    <!-- Equity curve SVG -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">P&L acumulado 30D (real)</div>
+      <svg id="h30-equity-svg" viewBox="0 0 600 120" preserveAspectRatio="none" style="width:100%;height:120px;display:block">
+        <line class="spark-zero" x1="0" y1="60" x2="600" y2="60"/>
+        <polyline id="h30-equity-line" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points=""/>
+        <g id="h30-equity-dots"></g>
+      </svg>
+      <div style="display:flex;justify-content:space-between;font-size:.65rem;color:var(--muted);margin-top:4px">
+        <span id="h30-eq-start">—</span>
+        <span id="h30-eq-end">—</span>
+      </div>
+    </div>
+    <!-- Projection table -->
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:4px;font-weight:600">PROJEÇÃO FUTURA (baseada nos 30D reais)</div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:8px">Se mantiver o ritmo atual com a banca selecionada</div>
+    <table>
+      <thead><tr><th>Período</th><th>Saldo projetado</th><th>Lucro estimado</th><th>Retorno</th></tr></thead>
+      <tbody id="h30-proj-body"></tbody>
+    </table>
+    <!-- Daily breakdown -->
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:.78rem;color:var(--muted);font-weight:600">DETALHAMENTO DIÁRIO (30D)</summary>
+      <table style="margin-top:8px">
+        <thead><tr><th>Data</th><th>Trades</th><th>W</th><th>L</th><th>WR</th><th>P&L</th><th>Acumulado</th></tr></thead>
+        <tbody id="h30-daily-body"></tbody>
+      </table>
+    </details>
+  </div>
+</section>
+<section>
+  <div class="section-header">
     <h2>Projeção de desempenho</h2>
     <div class="tools">
       <span style="font-size:.7rem;color:var(--muted)">Simular com banca de $</span>
@@ -260,7 +310,7 @@
 </section>
 <section>
   <div class="section-header">
-    <h2>Backtest — simulação Rise/Fall</h2>
+    <h2>Backtest — simulação Rise/Fall (30D)</h2>
     <div class="tools">
       <span id="bt-last-refresh" style="font-size:.7rem;color:var(--muted);margin-right:6px">—</span>
       <button class="btn btn-blue" id="btn-bt" onclick="fetchBacktest(true)" style="padding:3px 10px;font-size:.75rem">↻ Atualizar</button>
@@ -330,17 +380,23 @@ async function fetchIndicators(){try{var d=await fetch('/api/indicators').then(f
 async function resetHistory(scope){var labels={'day':'hoje','month':'o m\u00eas atual'};if(!confirm('Resetar hist\u00f3rico de '+labels[scope]+'?\nO bot ser\u00e1 reiniciado automaticamente.'))return;try{var d=await fetch('/api/reset?scope='+scope,{method:'POST'}).then(function(r){return r.json()});alert(d.msg||'Resetado.');fetchSessions();fetchStatus();fetchTrades();}catch(e){alert('Erro ao resetar: '+e);}}
 async function fetchSessions(){try{var d=await fetch('/api/sessions').then(function(r){return r.json()});var m=d.monthly||{};document.getElementById('sessions-month').textContent=(m.month||'');document.getElementById('m-trades').textContent=(m.trades||0).toLocaleString('pt-BR');document.getElementById('m-days').textContent=(m.active_days||0)+' dias ativos';var mwr=m.winrate||0;document.getElementById('m-wr').textContent=mwr+'%';document.getElementById('m-wr').className='value '+(mwr>=80?'green':mwr>=60?'yellow':'red');document.getElementById('m-wl').textContent=(m.wins||0)+'W / '+(m.losses||0)+'L';var mpnl=m.pnl||0;var mpnlEl=document.getElementById('m-pnl');mpnlEl.textContent=(mpnl>=0?'+':'')+mpnl.toFixed(2);mpnlEl.className='value '+(mpnl>=0?'green':'red');var bd=m.best_day||{};document.getElementById('m-best').textContent=bd.date?'melhor: '+bd.date+' (+'+bd.pnl.toFixed(2)+')':'\u2014';var wd=m.worst_day||{};var wpnl=wd.pnl||0;document.getElementById('m-worst-pnl').textContent=wd.date?(wpnl>=0?'+':'')+wpnl.toFixed(2):'\u2014';document.getElementById('m-worst-date').textContent=wd.date||'\u2014';var rows='';(d.days||[]).forEach(function(s){var pnlCls=s.pnl>=0?'win':'loss';var today=new Date().toISOString().slice(0,10);var isToday=s.date===today;rows+='<tr'+(isToday?' style="background:#1c2129"':'')+'>';rows+='<td>'+(isToday?'<b>'+s.date+' \u25b6</b>':s.date)+'</td>';rows+='<td>'+s.trades+'</td><td class="win">'+s.wins+'</td><td class="loss">'+s.losses+'</td>';rows+='<td>'+(s.winrate)+'%</td>';rows+='<td class="'+pnlCls+'">'+(s.pnl>=0?'+':'')+s.pnl.toFixed(2)+'</td></tr>';});document.getElementById('sessions-body').innerHTML=rows||'<tr><td colspan="6" style="color:var(--muted);text-align:center">Sem dados</td></tr>';}catch(e){document.getElementById('sessions-body').innerHTML='<tr><td colspan="6" style="color:var(--red)">Erro ao carregar sess\u00f5es</td></tr>';}}
 async function fetchBacktest(force){var bal=_forecastBalance>0?_forecastBalance:0;var qs=[];if(force)qs.push('refresh=true');if(bal>0)qs.push('balance='+bal);var url='/api/backtest'+(qs.length?'?'+qs.join('&'):'');document.getElementById('btn-bt').disabled=true;try{var d=await fetch(url).then(function(r){return r.json()});if(d.error){document.getElementById('bt-loading').textContent='Erro: '+d.error;return}document.getElementById('bt-loading').style.display='none';document.getElementById('bt-body').style.display='block';document.getElementById('bt-signals').textContent=(d.total_signals||0).toLocaleString('pt-BR');document.getElementById('bt-dataset').textContent=(d.effective_trades||0).toLocaleString('pt-BR')+' trades (WR real: '+(d.effective_winrate||d.winrate||0)+'%)';document.getElementById('bt-wr').textContent=(d.effective_winrate||d.winrate||0)+'%';document.getElementById('bt-dd').textContent='win bruto: '+(d.winrate||0)+'% | drawdown m\u00e1x: '+d.max_drawdown+'%';document.getElementById('bt-last-refresh').textContent='atualizado '+new Date().toLocaleTimeString('pt-BR');document.getElementById('bt-rate').textContent='~'+(d.signal_rate_per_hour||0)+' sinais/h';document.getElementById('bt-cap-h').textContent='ativo ~'+d.cap_hours_per_day+'h reais por dia';var capRows='',capData=d.cap_by_day||{};['1','2','3','4','5'].forEach(function(k){var r=capData[k];if(!r)return;var roi=r.roi>=0?'<span style="color:var(--green)">+'+r.roi+'%</span>':'<span style="color:var(--red)">'+r.roi+'%</span>';var periodLabel=k==='1'?'1 dia':k+' dias';capRows+='<tr><td>'+periodLabel+'</td><td>'+r.trades+'</td><td class="win">'+(r.wins||0)+'</td><td class="loss">'+(r.losses||0)+'</td><td style="color:var(--green)">+$'+(r.total_won||0).toFixed(2)+'</td><td style="color:var(--red)">-$'+(r.total_lost||0).toFixed(2)+'</td><td>$'+r.balance.toFixed(2)+'</td><td>'+roi+'</td></tr>'});document.getElementById('bt-cap-body').innerHTML=capRows||'<tr><td colspan="8" style="color:var(--muted)">sem dados</td></tr>';var tgtRows='',tgtData=d.targets||{};[10,20,25,30,50,100,200].forEach(function(pct){var t=tgtData[String(pct)];if(!t){tgtRows+='<tr><td style="color:var(--muted)">+'+pct+'%</td><td colspan="4" style="color:var(--muted)">ainda n\u00e3o atingido</td></tr>';return}var h=t.hours<1?(Math.round(t.hours*60)+'min'):(t.hours.toFixed(1)+'h');var dLabel=t.days_at_300<1?'< 1 dia':(t.days_at_300===1?'1 dia':t.days_at_300+' dias');tgtRows+='<tr><td><b style="color:var(--green)">+'+pct+'%</b></td><td>Entrada #'+t.trade+'</td><td>'+h+'</td><td>'+dLabel+'</td><td>$'+t.balance.toFixed(2)+'</td></tr>'});document.getElementById('bt-target-body').innerHTML=tgtRows;if(d.sessions){var s1h=d.sessions['1h'],ini=d.initial_balance||10000;if(s1h){var g1h=s1h.balance-ini;var fcGH=document.getElementById('fc-gain-hour');if(fcGH){fcGH.textContent=(g1h>=0?'+':'')+g1h.toFixed(2);fcGH.className='value '+(g1h>=0?'green':'red');}var fcOH=document.getElementById('fc-ops-hour');if(fcOH)fcOH.textContent=s1h.trades||'\u2014';var fcLH=document.getElementById('fc-loss-hour');if(fcLH)fcLH.textContent='-$'+(s1h.total_lost||0).toFixed(2);var fcNH=document.getElementById('fc-net-hour');if(fcNH){fcNH.textContent=(g1h>=0?'+':'')+g1h.toFixed(2);fcNH.className='value '+(g1h>=0?'green':'red');};}if(d.full_stats){var fcAL=document.getElementById('fc-avg-loss');if(fcAL)fcAL.textContent='$'+(d.full_stats.avg_loss||0).toFixed(2)+'/op';}['10','20','50'].forEach(function(pct){var t=d.targets&&d.targets[pct],el=document.getElementById('fc-t'+pct);if(el)el.textContent=t?(t.hours<1?Math.round(t.hours*60)+'min':t.hours.toFixed(1)+'h'):'\u221e';});}}catch(e){document.getElementById('bt-loading').textContent='Erro ao carregar proje\u00e7\u00e3o'}document.getElementById('btn-bt').disabled=false;}
-function onForecastBalanceChange(){var v=parseFloat(document.getElementById('inp-forecast-balance').value);if(v>=100){_forecastBalance=v;fetchBacktest(true);}}
+function onForecastBalanceChange(){var v=parseFloat(document.getElementById('inp-forecast-balance').value);if(v>=100){_forecastBalance=v;fetchBacktest(true);fetchHistory30d();}}
+async function fetchHistory30d(){var balEl=document.getElementById('inp-hist30d-balance');var bal=parseFloat(balEl.value);if(!(bal>=100)){bal=_forecastBalance>0?_forecastBalance:10000;balEl.value=bal;}try{var d=await fetch('/api/history30d?balance='+bal).then(function(r){return r.json()});if(d.error){document.getElementById('hist30d-loading').textContent=d.error;return}document.getElementById('hist30d-loading').style.display='none';document.getElementById('hist30d-body').style.display='block';var s=d.stats;document.getElementById('h30-trades').textContent=s.total_trades.toLocaleString('pt-BR');document.getElementById('h30-days-active').textContent=s.active_days+' dias ativos';document.getElementById('h30-wr').textContent=s.winrate+'%';document.getElementById('h30-wr').className='value '+(s.winrate>=70?'green':s.winrate>=55?'yellow':'red');document.getElementById('h30-wl').textContent=s.total_wins+'W / '+s.total_losses+'L';var pnlEl=document.getElementById('h30-pnl');pnlEl.textContent=(s.total_pnl>=0?'+':'')+s.total_pnl.toFixed(2);pnlEl.className='value '+(s.total_pnl>=0?'green':'red');document.getElementById('h30-avg-day').textContent='média: '+(s.avg_pnl_day>=0?'+':'')+s.avg_pnl_day.toFixed(2)+'/dia';document.getElementById('h30-avg-trades').textContent=s.avg_trades_day;document.getElementById('h30-avg-stake').textContent='stake médio: $'+s.avg_stake.toFixed(2);if(s.best_day){document.getElementById('h30-best-pnl').textContent='+'+s.best_day.pnl.toFixed(2);document.getElementById('h30-best-date').textContent=s.best_day.date;}if(s.worst_day){document.getElementById('h30-worst-pnl').textContent=s.worst_day.pnl.toFixed(2);document.getElementById('h30-worst-date').textContent=s.worst_day.date;}
+var eq=d.equity_curve||[];if(eq.length>1){var mn=Math.min.apply(null,eq),mx=Math.max.apply(null,eq),range=mx-mn||1;var pts=eq.map(function(v,i){return(i/(eq.length-1)*600).toFixed(1)+','+(110-((v-mn)/range)*100).toFixed(1)}).join(' ');var line=document.getElementById('h30-equity-line');line.setAttribute('points',pts);line.style.stroke=eq[eq.length-1]>=0?'#3fb950':'#f85149';var zero_y=mn<=0&&mx>=0?(110-((0-mn)/range)*100).toFixed(1):'60';document.getElementById('h30-equity-svg').querySelector('.spark-zero').setAttribute('y1',zero_y);document.getElementById('h30-equity-svg').querySelector('.spark-zero').setAttribute('y2',zero_y);}var days=d.days||[];if(days.length>0){document.getElementById('h30-eq-start').textContent=days[0].date;document.getElementById('h30-eq-end').textContent=days[days.length-1].date;}
+var proj=d.projections||{};var projRows='';['7','15','30','60','90'].forEach(function(k){var p=proj[k];if(!p)return;var roiCls=p.roi>=0?'win':'loss';var label=k+' dias';projRows+='<tr><td>'+label+'</td><td style="font-weight:600">$'+p.balance.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</td><td class="'+(p.pnl>=0?'win':'loss')+'">'+(p.pnl>=0?'+':'')+p.pnl.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</td><td class="'+roiCls+'">'+(p.roi>=0?'+':'')+p.roi+'%</td></tr>';});document.getElementById('h30-proj-body').innerHTML=projRows||'<tr><td colspan="4" style="color:var(--muted)">sem dados</td></tr>';
+var dailyRows='';days.forEach(function(dd){var cls=dd.pnl>=0?'win':'loss';dailyRows+='<tr><td>'+dd.date+'</td><td>'+dd.trades+'</td><td class="win">'+dd.wins+'</td><td class="loss">'+dd.losses+'</td><td>'+dd.winrate+'%</td><td class="'+cls+'">'+(dd.pnl>=0?'+':'')+dd.pnl.toFixed(2)+'</td><td>'+(dd.cumulative_pnl>=0?'+':'')+dd.cumulative_pnl.toFixed(2)+'</td></tr>';});document.getElementById('h30-daily-body').innerHTML=dailyRows;}catch(e){document.getElementById('hist30d-loading').textContent='Erro: '+e.message;}}
 function refresh(){fetchStatus();fetchTrades();fetchLogs();fetchIndicators()}
 refresh();
 fetchBacktest(false);
 fetchSessions();
+fetchHistory30d();
 setInterval(function(){fetchSessions()},30000);
 setInterval(function(){fetchBacktest(false)},30000);
+setInterval(function(){fetchHistory30d()},60000);
 setInterval(fetchStatus,3000);
 setInterval(function(){fetchTrades();fetchLogs()},5000);
 setInterval(fetchIndicators,10000);
-setInterval(async function(){try{var d=await fetch('/api/balance').then(function(r){return r.json()});if(d.balance&&d.balance!=='\u2014'){document.getElementById('balance').textContent='$'+d.balance;var _bptEl=document.getElementById('balance-pnl-total');if(_bptEl&&d.pnl_total!=null){var _pt=d.pnl_total,_ib=d.initial_balance||10000;var _sign=_pt>=0?'+':'';_bptEl.textContent='vs $'+_ib.toFixed(0)+' inicial: '+_sign+'$'+_pt.toFixed(2);_bptEl.style.color=_pt>=0?'var(--green)':'var(--red)';}if(_forecastBalance===0){var _fb=parseFloat(String(d.balance).replace(/[^0-9.]/g,''));if(_fb>0){_forecastBalance=_fb;var _fEl=document.getElementById('inp-forecast-balance');if(_fEl&&document.activeElement!==_fEl)_fEl.value=_fb.toFixed(2);}}}}catch(e){}},500);
+setInterval(async function(){try{var d=await fetch('/api/balance').then(function(r){return r.json()});if(d.balance&&d.balance!=='\u2014'){document.getElementById('balance').textContent='$'+d.balance;var _bptEl=document.getElementById('balance-pnl-total');if(_bptEl&&d.pnl_total!=null){var _pt=d.pnl_total,_ib=d.initial_balance||10000;var _sign=_pt>=0?'+':'';_bptEl.textContent='vs $'+_ib.toFixed(0)+' inicial: '+_sign+'$'+_pt.toFixed(2);_bptEl.style.color=_pt>=0?'var(--green)':'var(--red)';}if(_forecastBalance===0){var _fb=parseFloat(String(d.balance).replace(/[^0-9.]/g,''));if(_fb>0){_forecastBalance=_fb;var _fEl=document.getElementById('inp-forecast-balance');if(_fEl&&document.activeElement!==_fEl)_fEl.value=_fb.toFixed(2);var _h30El=document.getElementById('inp-hist30d-balance');if(_h30El&&document.activeElement!==_h30El)_h30El.value=_fb.toFixed(2);}}}}catch(e){}},500);
 </script>
 </body>
 </html>
