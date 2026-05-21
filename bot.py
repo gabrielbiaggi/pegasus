@@ -1294,13 +1294,15 @@ class DerivBot:
 
         order = self.pending_order
         if not order:
-            # No pending order from this session — stale settlement from a previous
-            # run. Skip journal AND risk update to avoid ghost P&L discrepancy.
+            # Zombie trade settled — no pending order but contract was real.
+            # Count profit/loss in risk manager to keep stats accurate.
             logger.warning(
-                "Liquidacao sem ordem pendente (contract_id=%s profit=%.2f) — ignorado.",
-                contract_id,
-                profit,
+                "Zombie trade liquidado (contract_id=%s profit=%.2f buy_price=%.2f) — contabilizando.",
+                contract_id, profit, buy_price,
             )
+            if self.risk:
+                self.risk.update(profit=profit, buy_price=buy_price)
+                logger.info(self.risk.stats())
             self.waiting_for_result = False
             self.current_contract_id = None
             self.accumulator_open_epoch = None
@@ -1379,6 +1381,8 @@ class DerivBot:
                     )
                     self.waiting_for_result = True
                     self.pending_order = None
+                    # Force cooldown to prevent rapid-fire re-entry after reconciliation
+                    self.last_accumulator_entry_epoch = int(time.time())
                     await self._reconcile_open_positions(ws)
                 else:
                     self._reset_gale_state()
