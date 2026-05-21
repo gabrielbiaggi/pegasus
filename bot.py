@@ -1293,6 +1293,8 @@ class DerivBot:
             self.pending_order = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
+            # Reset cooldown from settlement time so next entry waits full cooldown
+            self.last_accumulator_entry_epoch = int(time.time())
             return
 
         order = self.pending_order
@@ -1310,6 +1312,8 @@ class DerivBot:
             self.current_contract_id = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
+            # Reset cooldown from settlement time
+            self.last_accumulator_entry_epoch = int(time.time())
             return
         exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
         held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
@@ -1364,6 +1368,8 @@ class DerivBot:
         self.pending_order = None
         self.accumulator_open_epoch = None
         self.accumulator_sell_requested = False
+        # Reset cooldown from settlement epoch so next entry waits full cooldown window
+        self.last_accumulator_entry_epoch = exit_epoch or int(time.time())
 
     async def handle_message(self, ws: websockets.WebSocketClientProtocol, message: str) -> None:
         data = json.loads(message)
