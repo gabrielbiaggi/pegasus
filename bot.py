@@ -1393,9 +1393,10 @@ class DerivBot:
                     )
                     self.waiting_for_result = True
                     self.pending_order = None
-                    # Force extended cooldown: +5 offset so bot waits 11 ticks (cooldown+6)
-                    # before next entry — gives Deriv time to fully release the contract slot.
-                    self.last_accumulator_entry_epoch = int(time.time()) + 5
+                    # Force extended cooldown: +15 offset so bot waits ~21 ticks after error.
+                    # Deriv keeps the ACCU buy-lock for ~20-25s after settlement;
+                    # this ensures we don't retry until the slot is actually free.
+                    self.last_accumulator_entry_epoch = int(time.time()) + 15
                     await self._reconcile_open_positions(ws)
                 else:
                     self._reset_gale_state()
