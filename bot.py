@@ -1293,9 +1293,9 @@ class DerivBot:
             self.pending_order = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
-            # +5 offset: effective cooldown = cooldown_ticks + 6 ticks (11s) after settlement
-            # so Deriv has time to release the contract slot before next BUY attempt.
-            self.last_accumulator_entry_epoch = int(time.time()) + 5
+            # +15 offset: effective cooldown = cooldown_ticks + 16 ticks (~21s) after settlement
+            # Deriv holds the ACCU buy-lock for ~20s after any settlement.
+            self.last_accumulator_entry_epoch = int(time.time()) + 15
             return
 
         order = self.pending_order
@@ -1313,8 +1313,8 @@ class DerivBot:
             self.current_contract_id = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
-            # +5 offset: effective cooldown = cooldown_ticks + 6 ticks after settlement
-            self.last_accumulator_entry_epoch = int(time.time()) + 5
+            # +15 offset: effective cooldown = cooldown_ticks + 16 ticks (~21s) after settlement
+            self.last_accumulator_entry_epoch = int(time.time()) + 15
             return
         exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
         held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
@@ -1369,10 +1369,9 @@ class DerivBot:
         self.pending_order = None
         self.accumulator_open_epoch = None
         self.accumulator_sell_requested = False
-        # +5 offset: effective cooldown = cooldown_ticks + 6 ticks (11s) after settlement
-        # Deriv needs ~10s to fully release the contract slot after a WIN/LOSS.
-        _settle_epoch = exit_epoch or int(time.time())
-        self.last_accumulator_entry_epoch = _settle_epoch + 5
+        # +15 offset: effective cooldown = cooldown_ticks + 16 ticks (~21s) after settlement
+        # Deriv holds the ACCU buy-lock for ~20s after WIN/LOSS — must wait before next BUY.
+        self.last_accumulator_entry_epoch = int(time.time()) + 15
 
     async def handle_message(self, ws: websockets.WebSocketClientProtocol, message: str) -> None:
         data = json.loads(message)
