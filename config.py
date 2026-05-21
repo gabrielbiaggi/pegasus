@@ -346,8 +346,8 @@ def load_config() -> BotConfig:
         raise ValueError("MAX_STAKE nao pode ser menor que MIN_STAKE (use 0 para desativar o cap absoluto).")
     if config.soros_max_steps < 0:
         raise ValueError("SOROS_MAX_STEPS nao pode ser negativo.")
-    if not 0 <= config.soros_profit_factor <= 1:
-        raise ValueError("SOROS_PROFIT_FACTOR deve estar entre 0 e 1.")
+    if config.soros_profit_factor < 0:
+        raise ValueError("SOROS_PROFIT_FACTOR nao pode ser negativo.")
     if config.martingale_max_gales < 0:
         raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
     if config.martingale_multiplier < 1.0:
