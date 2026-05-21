@@ -1293,8 +1293,9 @@ class DerivBot:
             self.pending_order = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
-            # Reset cooldown from settlement time so next entry waits full cooldown
-            self.last_accumulator_entry_epoch = int(time.time())
+            # +5 offset: effective cooldown = cooldown_ticks + 6 ticks (11s) after settlement
+            # so Deriv has time to release the contract slot before next BUY attempt.
+            self.last_accumulator_entry_epoch = int(time.time()) + 5
             return
 
         order = self.pending_order
@@ -1312,8 +1313,8 @@ class DerivBot:
             self.current_contract_id = None
             self.accumulator_open_epoch = None
             self.accumulator_sell_requested = False
-            # Reset cooldown from settlement time
-            self.last_accumulator_entry_epoch = int(time.time())
+            # +5 offset: effective cooldown = cooldown_ticks + 6 ticks after settlement
+            self.last_accumulator_entry_epoch = int(time.time()) + 5
             return
         exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
         held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
@@ -1368,8 +1369,10 @@ class DerivBot:
         self.pending_order = None
         self.accumulator_open_epoch = None
         self.accumulator_sell_requested = False
-        # Reset cooldown from settlement epoch so next entry waits full cooldown window
-        self.last_accumulator_entry_epoch = exit_epoch or int(time.time())
+        # +5 offset: effective cooldown = cooldown_ticks + 6 ticks (11s) after settlement
+        # Deriv needs ~10s to fully release the contract slot after a WIN/LOSS.
+        _settle_epoch = exit_epoch or int(time.time())
+        self.last_accumulator_entry_epoch = _settle_epoch + 5
 
     async def handle_message(self, ws: websockets.WebSocketClientProtocol, message: str) -> None:
         data = json.loads(message)
@@ -1390,8 +1393,9 @@ class DerivBot:
                     )
                     self.waiting_for_result = True
                     self.pending_order = None
-                    # Force cooldown to prevent rapid-fire re-entry after reconciliation
-                    self.last_accumulator_entry_epoch = int(time.time())
+                    # Force extended cooldown: +5 offset so bot waits 11 ticks (cooldown+6)
+                    # before next entry — gives Deriv time to fully release the contract slot.
+                    self.last_accumulator_entry_epoch = int(time.time()) + 5
                     await self._reconcile_open_positions(ws)
                 else:
                     self._reset_gale_state()
