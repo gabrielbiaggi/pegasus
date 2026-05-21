@@ -383,6 +383,14 @@ class DerivBot:
                 logger.info("Fim de semana bloqueado (BLOCK_WEEKENDS=true): dow=%s hour=%s", dow, tick_hour)
                 return
 
+        # Compute indicators on EVERY tick for live dashboard
+        # (before cooldown/risk checks so indicators stay fresh)
+        _tick_snapshot = list(self.tick_buffer)
+        df = await asyncio.to_thread(
+            calculate_tick_indicators, _tick_snapshot, config=self.config.accumulator_strategy_config
+        )
+        self._write_live_indicators(df)
+
         # Accumulator cooldown — only applies to accumulator mode
         if not _is_rf_like and self.last_accumulator_entry_epoch is not None:
             ticks_since_entry = tick_epoch - self.last_accumulator_entry_epoch
@@ -400,14 +408,6 @@ class DerivBot:
                 logger.warning("Bot pausado por regra de risco.")
                 self._pause_log_ts = now
             return
-
-        _tick_snapshot = list(self.tick_buffer)
-        df = await asyncio.to_thread(
-            calculate_tick_indicators, _tick_snapshot, config=self.config.accumulator_strategy_config
-        )
-
-        # Publish live indicators for the dashboard (lightweight JSON, every tick)
-        self._write_live_indicators(df)
 
         # ---- Jump Rise/Fall mode (JD10, JD25, JD50, JD75, JD100) ----
         if self.config.contract_mode == "jump_rise_fall":
