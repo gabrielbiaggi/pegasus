@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -35,6 +36,8 @@ except ImportError:  # pragma: no cover
     _XGB_AVAILABLE = False
     xgb = None  # type: ignore[assignment]
 
+_calm_heartbeat_ts: float = 0.0  # throttle heartbeat log to every 30s
+
 
 @dataclass(frozen=True)
 class AccumulatorStrategyConfig:
@@ -69,7 +72,7 @@ class AccumulatorStrategyConfig:
     kalman_q: float = 1e-5
     kalman_r: float = 1e-2
     max_kalman_residual_zscore: float = 2.0
-    # Calm ACCU voting threshold (out of 27 max: 10 primary + 10 quant + 7 advanced)
+    # Calm ACCU voting threshold (out of 37 max: 10 primary + 10 quant + 7 stat + 10 calculus)
     calm_min_score: int = 15
     # HMM regime filter
     hmm_window: int = 200
@@ -1135,10 +1138,14 @@ def generate_calm_accu_signal(
     avg_abs_ret = sum(abs_returns) / len(abs_returns)
 
     if avg_abs_ret >= threshold:
-        logger.debug(
-            "CALM ACCU: avg_abs_ret=%.2e >= threshold=%.2e → skip",
-            avg_abs_ret, threshold,
-        )
+        global _calm_heartbeat_ts
+        now = time.monotonic()
+        if now - _calm_heartbeat_ts >= 30.0:
+            logger.info(
+                "CALM ACCU: volatilidade=%.2e >= limiar=%.2e — aguardando mercado calmo",
+                avg_abs_ret, threshold,
+            )
+            _calm_heartbeat_ts = now
         return None, 0, None
 
     # --- Full indicator voting system ---
@@ -1193,7 +1200,59 @@ def generate_calm_accu_signal(
         if mi < 0.15:
             score += 1
 
-        # max score = 27 (20 base + 7 advanced)
+        # Layer 4: Calculus & chaos indicator votes — 10 additional points
+        # Derivative energy (kinetic proxy): low = calm market = good for ACCU
+        deriv_energy = _val("derivative_energy", 0.0)
+        de_median = df["derivative_energy"].median() if "derivative_energy" in df.columns else 1.0
+        if de_median > 0 and deriv_energy <= de_median:
+            score += 1
+
+        # Jerk z-score < 2.0 = no regime transition happening
+        jerk_z = _val("jerk_zscore", 0.0)
+        if jerk_z < 2.0:
+            score += 1
+
+        # Curvature z-score < 2.0 = no sharp bends / inflection points
+        curv_z = _val("curvature_zscore", 0.0)
+        if curv_z < 2.0:
+            score += 1
+
+        # Return z-score |z| < 2.0 = no fat-tail / extreme moves
+        ret_z = _val("return_zscore", 0.0)
+        if abs(ret_z) < 2.0:
+            score += 1
+
+        # Lyapunov exponent < 0.5 = not chaotic = more predictable
+        lyap = _val("lyapunov_exponent", 0.0)
+        if lyap < 0.5:
+            score += 1
+
+        # Trend exhaustion |val| < 0.01 = fair value zone (not overbought/oversold)
+        trend_ex = _val("trend_exhaustion", 0.0)
+        if abs(trend_ex) < 0.01:
+            score += 1
+
+        # Integral momentum divergence |val| < 0.5 = price near EMA
+        int_mom = _val("integral_momentum_div", 0.0)
+        if abs(int_mom) < 0.5:
+            score += 1
+
+        # Return autocorrelation |lag1| < 0.3 = no strong momentum/mean-reversion
+        autocorr = _val("return_autocorr_lag1", 0.0)
+        if abs(autocorr) < 0.3:
+            score += 1
+
+        # Return skewness |s| < 1.0 = symmetric distribution = random
+        skew = _val("return_skewness", 0.0)
+        if abs(skew) < 1.0:
+            score += 1
+
+        # Run length |r| < 5 = no long consecutive same-direction runs
+        run_len = _val("run_length", 0.0)
+        if abs(run_len) < 5:
+            score += 1
+
+        # max score = 37 (20 base + 7 stat-advanced + 10 calculus-chaos)
 
         # --- Hard blocks: only extreme danger (very relaxed) ---
         hurst = _val("hurst_exponent", 0.5)
@@ -1223,7 +1282,7 @@ def generate_calm_accu_signal(
         min_score = config.calm_min_score
         if score < min_score:
             logger.info(
-                "CALM ACCU score=%d < min=%d/27 | H=%.3f cusum=%.2f → skip",
+                "CALM ACCU score=%d < min=%d/37 | H=%.3f cusum=%.2f → skip",
                 score, min_score, hurst, cusum,
             )
             return None, 0, None
@@ -1240,7 +1299,7 @@ def generate_calm_accu_signal(
             logger.info("CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓", p_loss, config.ensemble_min_prob)
 
         logger.info(
-            "CALM ACCU ENTRY: score=%d/27 | H=%.3f | cusum=%.2f | P(LOSS)=%s",
+            "CALM ACCU ENTRY: score=%d/37 | H=%.3f | cusum=%.2f | P(LOSS)=%s",
             score, hurst, cusum,
             f"{p_loss:.4f}" if p_loss is not None else "N/A",
         )
