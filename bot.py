@@ -751,6 +751,7 @@ class DerivBot:
                 prices,
                 threshold=self.config.calm_accu_threshold,
                 lookback=self.config.calm_accu_lookback,
+                df=df,
             )
             if signal != "ACCU":
                 logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)

@@ -507,6 +507,10 @@ class RiskManager:
 
         stake = min(caps)
 
+        # MAX_STAKE is an absolute ceiling for ALL modes (normal, Soros, gale)
+        if self.max_stake > 0 and stake > self.max_stake:
+            stake = self.max_stake
+
         if stake < self.min_stake:
             return 0.0
 

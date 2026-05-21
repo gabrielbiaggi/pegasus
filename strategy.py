@@ -1109,6 +1109,7 @@ def generate_calm_accu_signal(
     prices: list[float],
     threshold: float = 7.3e-7,
     lookback: int = 10,
+    df: pd.DataFrame | None = None,
 ) -> tuple[Optional[str], int, Optional[float]]:
     """Calm-entry accumulator signal for BOOM1000.
 
@@ -1116,8 +1117,10 @@ def generate_calm_accu_signal(
     the market is in a calm period where P(barrier breach) drops sharply,
     creating a positive-EV ACCU entry.
 
-    Returns ("ACCU", 20, None) on calm entry, (None, 0, None) otherwise.
-    The fixed score=20 bypasses any min_score gate.
+    When *df* is provided, applies indicator quality gates that reject entries
+    in adverse regimes (trending, structural breaks, high uncertainty).
+
+    Returns ("ACCU", score, None) on calm entry, (None, 0, None) otherwise.
     """
     if len(prices) < lookback + 1:
         return None, 0, None
@@ -1126,18 +1129,89 @@ def generate_calm_accu_signal(
     abs_returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent))]
     avg_abs_ret = sum(abs_returns) / len(abs_returns)
 
-    if avg_abs_ret < threshold:
-        logger.info(
-            "CALM ACCU: avg_abs_ret=%.2e < threshold=%.2e → ENTRY",
+    if avg_abs_ret >= threshold:
+        logger.debug(
+            "CALM ACCU: avg_abs_ret=%.2e >= threshold=%.2e → skip",
             avg_abs_ret, threshold,
         )
-        return "ACCU", 20, None
+        return None, 0, None
 
-    logger.debug(
-        "CALM ACCU: avg_abs_ret=%.2e >= threshold=%.2e → skip",
-        avg_abs_ret, threshold,
+    # --- Indicator quality gates (require df with computed indicators) ---
+    if df is not None and len(df) > 0:
+        last = df.iloc[-1]
+
+        def _val(name: str, default: float = 0.0) -> float:
+            v = last.get(name, default)
+            try:
+                f = float(v if v is not None else default)
+            except (TypeError, ValueError):
+                f = default
+            return default if f != f else f  # NaN → default
+
+        hurst = _val("hurst_exponent", 0.5)
+        cusum = _val("cusum_score", 0.0)
+        kalman_z = _val("kalman_residual_zscore", 0.0)
+        imbalance = _val("tick_imbalance", 0.0)
+        hawkes = _val("hawkes_intensity", 0.0)
+
+        # 1) Hurst > 0.55 = trending market → ACCU barrier breach more likely
+        if hurst > 0.55:
+            logger.info(
+                "CALM ACCU BLOCKED: hurst=%.3f > 0.55 — mercado trending, risco alto",
+                hurst,
+            )
+            return None, 0, None
+
+        # 2) CUSUM > 6 = structural break detected → avoid entry
+        if cusum > 6.0:
+            logger.info(
+                "CALM ACCU BLOCKED: cusum=%.2f > 6.0 — quebra estrutural detectada",
+                cusum,
+            )
+            return None, 0, None
+
+        # 3) Kalman Z > 2.0 = price deviating from trend → instability
+        if abs(kalman_z) > 2.0:
+            logger.info(
+                "CALM ACCU BLOCKED: |kalman_z|=%.2f > 2.0 — desvio do Kalman alto",
+                abs(kalman_z),
+            )
+            return None, 0, None
+
+        # 4) Tick imbalance too extreme = directional pressure → spike risk
+        if abs(imbalance) > 6.0:
+            logger.info(
+                "CALM ACCU BLOCKED: |imbalance|=%.1f > 6.0 — pressão direcional forte",
+                abs(imbalance),
+            )
+            return None, 0, None
+
+        # 5) Hawkes intensity > 0.5 = recent jump cluster → more jumps likely
+        if hawkes > 0.5:
+            logger.info(
+                "CALM ACCU BLOCKED: hawkes=%.3f > 0.5 — cluster de saltos ativo",
+                hawkes,
+            )
+            return None, 0, None
+
+        # Score based on indicator quality (higher = better conditions)
+        score = 20
+        if hurst < 0.40:
+            score += 2  # strong mean-reversion
+        if cusum < 3.0:
+            score += 2  # very stable regime
+        if abs(kalman_z) < 1.0:
+            score += 1  # price tracking well
+        if abs(imbalance) < 3.0:
+            score += 1  # balanced flow
+    else:
+        score = 20
+
+    logger.info(
+        "CALM ACCU: avg_abs_ret=%.2e < threshold=%.2e | score=%d → ENTRY",
+        avg_abs_ret, threshold, score,
     )
-    return None, 0, None
+    return "ACCU", score, None
 
 
 @dataclass(frozen=True)
