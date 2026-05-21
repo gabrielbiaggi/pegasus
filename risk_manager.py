@@ -820,6 +820,8 @@ class RiskManager:
                     self.soros_step = 0
                     self.soros_profit = 0.0
             _modo_win = f"SOROS {self.soros_step}/{self.soros_max_steps}" if self.use_soros and self.soros_step > 0 else "NORMAL"
+            # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
+            self.balance = round(self.balance + profit, 2)
             logger.info("WIN %+0.2f | saldo_estimado=%0.2f | modo=%s", profit, self.balance, _modo_win)
         else:
             self.losses += 1
@@ -861,6 +863,8 @@ class RiskManager:
             # Record timestamp for frequency-based MDD
             self._recent_loss_times.append(time.monotonic())
             _modo_loss = f"GALE {self.martingale_step}/{self.martingale_max_gales}" if self.use_martingale and self.martingale_step > 0 else "NORMAL"
+            # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
+            self.balance = round(self.balance - realized_loss, 2)
             logger.info(
                 "LOSS -%0.2f | saldo_estimado=%0.2f | perda_dia=%0.2f | modo=%s",
                 realized_loss,
