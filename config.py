@@ -138,6 +138,7 @@ class BotConfig:
     # Calm ACCU (BOOM1000 calm-entry mode)
     calm_accu_threshold: float
     calm_accu_lookback: int
+    calm_accu_min_score: int
     # Rise/Fall (binary options) config
     rise_fall_duration_ticks: int
     rise_fall_min_votes: int
@@ -189,6 +190,7 @@ class BotConfig:
             max_kalman_residual_zscore=self.accumulator_max_kalman_residual_zscore,
             use_ensemble=self.accumulator_use_ensemble,
             ensemble_min_prob=self.accumulator_ensemble_min_prob,
+            calm_min_score=self.calm_accu_min_score,
         )
 
 
@@ -304,6 +306,7 @@ def load_config() -> BotConfig:
         # Calm ACCU
         calm_accu_threshold=_float_env("CALM_ACCU_THRESHOLD", 7.3e-7),
         calm_accu_lookback=_int_env("CALM_ACCU_LOOKBACK", 10),
+        calm_accu_min_score=_int_env("CALM_ACCU_MIN_SCORE", 15),
         # Rise/Fall
         rise_fall_duration_ticks=_int_env("RISE_FALL_DURATION_TICKS", 5),
         rise_fall_min_votes=_int_env("RISE_FALL_MIN_VOTES", 7),

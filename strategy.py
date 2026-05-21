@@ -69,6 +69,8 @@ class AccumulatorStrategyConfig:
     kalman_q: float = 1e-5
     kalman_r: float = 1e-2
     max_kalman_residual_zscore: float = 2.0
+    # Calm ACCU voting threshold (out of 27 max: 10 primary + 10 quant + 7 advanced)
+    calm_min_score: int = 15
     # HMM regime filter
     hmm_window: int = 200
     hmm_n_states: int = 2
@@ -1110,18 +1112,21 @@ def generate_calm_accu_signal(
     threshold: float = 7.3e-7,
     lookback: int = 10,
     df: pd.DataFrame | None = None,
+    config: AccumulatorStrategyConfig | None = None,
+    ensemble_scorer: "EnsembleScorer | None" = None,
 ) -> tuple[Optional[str], int, Optional[float]]:
     """Calm-entry accumulator signal for BOOM1000.
 
-    Computes rolling mean |return| over *lookback* ticks. If below *threshold*
-    the market is in a calm period where P(barrier breach) drops sharply,
-    creating a positive-EV ACCU entry.
+    Uses a multi-layer filtering approach:
+    1. Calm filter: avg |return| below threshold (core BOOM1000 edge)
+    2. Full indicator voting (10 primary + 10 quant + 7 advanced = 27 max)
+    3. HMM regime detection (blocks high-variance regimes)
+    4. P(LOSS) XGBoost ensemble gate (probabilistic final check)
 
-    When *df* is provided, applies indicator quality gates that reject entries
-    in adverse regimes (trending, structural breaks, high uncertainty).
-
-    Returns ("ACCU", score, None) on calm entry, (None, 0, None) otherwise.
+    Returns ("ACCU", score, p_loss) on entry, (None, 0, None) otherwise.
     """
+    config = config or AccumulatorStrategyConfig()
+
     if len(prices) < lookback + 1:
         return None, 0, None
 
@@ -1136,10 +1141,15 @@ def generate_calm_accu_signal(
         )
         return None, 0, None
 
-    # --- Indicator quality gates (require df with computed indicators) ---
-    if df is not None and len(df) > 0:
+    # --- Full indicator voting system ---
+    p_loss: Optional[float] = None
+    if df is not None and len(df) >= config.minimum_ticks:
         last = df.iloc[-1]
 
+        # Layer 1+2: Base score from 13 indicators (3 primary + 10 quant) — max 20
+        score = score_accumulator_row(last, config)
+
+        # Layer 3: Advanced indicator votes — 7 additional points
         def _val(name: str, default: float = 0.0) -> float:
             v = last.get(name, default)
             try:
@@ -1148,70 +1158,96 @@ def generate_calm_accu_signal(
                 f = default
             return default if f != f else f  # NaN → default
 
-        hurst = _val("hurst_exponent", 0.5)
-        cusum = _val("cusum_score", 0.0)
-        kalman_z = _val("kalman_residual_zscore", 0.0)
-        imbalance = _val("tick_imbalance", 0.0)
-        hawkes = _val("hawkes_intensity", 0.0)
+        # Bayesian P(up) near 0.5 = uncertain direction = good for ACCU
+        bayesian = _val("bayesian_prob_up", 0.5)
+        if 0.30 <= bayesian <= 0.70:
+            score += 1
 
-        # 1) Hurst > 0.55 = trending market → ACCU barrier breach more likely
-        if hurst > 0.55:
+        # Rényi entropy >= 0.4 = dispersed returns = random = good
+        renyi = _val("renyi_entropy", 0.5)
+        if renyi >= 0.40:
+            score += 1
+
+        # Fisher information > 0 = returns concentrated = predictable
+        fisher = _val("fisher_information", 0.0)
+        if fisher > 0.0:
+            score += 1
+
+        # Wavelet SNR < 0.7 = noise-dominated = no clear trend
+        wavelet = _val("wavelet_energy_ratio", 0.5)
+        if wavelet < 0.70:
+            score += 1
+
+        # CUSUM < 5.0 = stable regime (no structural break)
+        cusum = _val("cusum_score", 0.0)
+        if cusum < 5.0:
+            score += 1
+
+        # Tail dependence < 0.3 = extremes independent = safer
+        tail_dep = _val("tail_dependence", 0.0)
+        if tail_dep < 0.30:
+            score += 1
+
+        # MI flow < 0.15 = low predictability = random walk = ACCU-friendly
+        mi = _val("mi_flow", 0.0)
+        if mi < 0.15:
+            score += 1
+
+        # max score = 27 (20 base + 7 advanced)
+
+        # --- Hard blocks: only extreme danger (very relaxed) ---
+        hurst = _val("hurst_exponent", 0.5)
+        if hurst > 0.70:
             logger.info(
-                "CALM ACCU BLOCKED: hurst=%.3f > 0.55 — mercado trending, risco alto",
+                "CALM ACCU HARD BLOCK: hurst=%.3f > 0.70 — trending extremo",
                 hurst,
             )
             return None, 0, None
 
-        # 2) CUSUM > 6 = structural break detected → avoid entry
-        if cusum > 6.0:
+        if cusum > 8.0:
             logger.info(
-                "CALM ACCU BLOCKED: cusum=%.2f > 6.0 — quebra estrutural detectada",
+                "CALM ACCU HARD BLOCK: cusum=%.2f > 8.0 — regime break severo",
                 cusum,
             )
             return None, 0, None
 
-        # 3) Kalman Z > 2.0 = price deviating from trend → instability
-        if abs(kalman_z) > 2.0:
+        # --- HMM regime gate ---
+        if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
+            if hmm_regime_is_high_variance(
+                df["close"], n_states=config.hmm_n_states, window=config.hmm_window,
+            ):
+                logger.info("CALM ACCU BLOCKED: HMM regime de alta variância")
+                return None, 0, None
+
+        # --- Minimum score gate (configurable via CALM_ACCU_MIN_SCORE) ---
+        min_score = config.calm_min_score
+        if score < min_score:
             logger.info(
-                "CALM ACCU BLOCKED: |kalman_z|=%.2f > 2.0 — desvio do Kalman alto",
-                abs(kalman_z),
+                "CALM ACCU score=%d < min=%d/27 | H=%.3f cusum=%.2f → skip",
+                score, min_score, hurst, cusum,
             )
             return None, 0, None
 
-        # 4) Tick imbalance too extreme = directional pressure → spike risk
-        if abs(imbalance) > 6.0:
-            logger.info(
-                "CALM ACCU BLOCKED: |imbalance|=%.1f > 6.0 — pressão direcional forte",
-                abs(imbalance),
-            )
-            return None, 0, None
+        # --- P(LOSS) XGBoost ensemble gate (final AI check) ---
+        if config.use_ensemble and ensemble_scorer is not None:
+            p_loss = ensemble_scorer.predict_loss_probability(last)
+            if p_loss >= config.ensemble_min_prob:
+                logger.warning(
+                    "⛔ CALM ACCU BLOCKED: P(LOSS)=%.4f >= %.4f — IA vetou",
+                    p_loss, config.ensemble_min_prob,
+                )
+                return None, 0, None
+            logger.info("CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓", p_loss, config.ensemble_min_prob)
 
-        # 5) Hawkes intensity > 0.5 = recent jump cluster → more jumps likely
-        if hawkes > 0.5:
-            logger.info(
-                "CALM ACCU BLOCKED: hawkes=%.3f > 0.5 — cluster de saltos ativo",
-                hawkes,
-            )
-            return None, 0, None
-
-        # Score based on indicator quality (higher = better conditions)
-        score = 20
-        if hurst < 0.40:
-            score += 2  # strong mean-reversion
-        if cusum < 3.0:
-            score += 2  # very stable regime
-        if abs(kalman_z) < 1.0:
-            score += 1  # price tracking well
-        if abs(imbalance) < 3.0:
-            score += 1  # balanced flow
+        logger.info(
+            "CALM ACCU ENTRY: score=%d/27 | H=%.3f | cusum=%.2f | P(LOSS)=%s",
+            score, hurst, cusum,
+            f"{p_loss:.4f}" if p_loss is not None else "N/A",
+        )
     else:
         score = 20
 
-    logger.info(
-        "CALM ACCU: avg_abs_ret=%.2e < threshold=%.2e | score=%d → ENTRY",
-        avg_abs_ret, threshold, score,
-    )
-    return "ACCU", score, None
+    return "ACCU", score, p_loss
 
 
 @dataclass(frozen=True)

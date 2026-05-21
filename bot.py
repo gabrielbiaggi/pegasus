@@ -752,6 +752,8 @@ class DerivBot:
                 threshold=self.config.calm_accu_threshold,
                 lookback=self.config.calm_accu_lookback,
                 df=df,
+                config=self.config.accumulator_strategy_config,
+                ensemble_scorer=self._ensemble_scorer,
             )
             if signal != "ACCU":
                 logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)

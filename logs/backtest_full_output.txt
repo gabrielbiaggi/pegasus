@@ -1,0 +1,232 @@
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  PEGASUS BACKTEST COMPLETO — JD50 JUMP RISE/FALL
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Saldo Inicial: $50.00
+  Stake Base: $0.35
+  Payout: 95.3%
+  Bust Floor: $0.35
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  0. DADOS REAIS DO DB
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Total trades: 259
+  G0 entries: 117 | G0 WR: 59/117 = 50.4%
+  All trades WR: 130/259 = 50.2%
+  Max consecutive losses: 8
+  Sequência: WLLWWLLWWWWLWWLWLWWWLLLWLWWLWWLWLLWWLWWLLWWLLLWWWWWLWLLWLWWWWLWLLWWLLWLLLLWLWWWL...
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  1. CUSTO DE 1 CASCATA COMPLETA (todos gales perdem)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Estratégia                     |    Custo |  Cascatas→Bust | % da Banca
+  -------------------------------+----------+----------------+-----------
+  Flat (sem gale)                | $  0.35 |            142 |       0.7%
+  Anti-Martingale                | $  0.35 |            142 |       0.7%
+  Fib 2 gales                    | $  1.40 |             35 |       2.8%
+  Fib 3 gales                    | $  2.45 |             20 |       4.9%
+  Fib 4 gales                    | $  4.20 |             11 |       8.4%
+  Fib 5 gales                    | $  7.00 |              7 |      14.0%
+  Fib 7 gales (ATUAL)            | $ 18.90 |              2 |      37.8%
+  Fib Capped 3g (5%bal)          | $  2.45 |             20 |       4.9%
+  Fib Capped 5g (5%bal)          | $  6.70 |              7 |      13.4%
+  Fib Conserv 3g [1,1,2,3]       | $  2.45 |             20 |       4.9%
+  Fib+%Bal Hybrid 3g (3%)        | $  2.45 |             20 |       4.9%
+  Fib+%Bal Hybrid 5g (3%)        | $  5.45 |              9 |      10.9%
+  Breakeven Recovery 3g          | $  4.04 |             12 |       8.1%
+  Breakeven Recovery 5g          | $ 11.75 |              4 |      23.5%
+  Martingale 2 gales             | $  2.45 |             20 |       4.9%
+  Martingale 3 gales             | $  5.25 |              9 |      10.5%
+  Martingale 4 gales             | $ 10.85 |              4 |      21.7%
+  Mart Capped 3g (10%bal)        | $  5.25 |              9 |      10.5%
+  Soft Mart 3 gales              | $  2.84 |             17 |       5.7%
+  Soft Mart 4 gales              | $  4.62 |             10 |       9.2%
+  Linear 3 gales                 | $  3.50 |             14 |       7.0%
+  Linear 4 gales                 | $  5.25 |              9 |      10.5%
+  D'Alembert 3 gales             | $  3.50 |             14 |       7.0%
+  D'Alembert 4 gales             | $  5.25 |              9 |      10.5%
+  1% Balance 3g                  | $  5.00 |             10 |      10.0%
+  0.5% Balance 3g                | $  2.60 |             19 |       5.2%
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  2. BACKTEST DADOS REAIS (259 trades — sequência exata do dia)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Estratégia                     |    Saldo |       PnL |    DD% |    Min$ | Trades |   WR% | Casc | Status
+  -------------------------------+----------+-----------+--------+---------+--------+-------+------+-------
+  Flat (sem gale)                | $  48.21 | PnL $  -1.79 | DD  14.5% | Min $ 48.21 | T:259 WR:50.2% | Casc: 0 | ✅VIVO
+  Anti-Martingale                | $  48.21 | PnL $  -1.79 | DD  14.5% | Min $ 48.21 | T:259 WR:50.2% | Casc: 0 | ✅VIVO
+  Fib 2 gales                    | $  48.60 | PnL $  -1.40 | DD  16.2% | Min $ 48.60 | T:259 WR:50.2% | Casc:17 | ✅VIVO
+  Fib 3 gales                    | $  42.57 | PnL $  -7.43 | DD  28.2% | Min $ 42.57 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Fib 4 gales                    | $  40.89 | PnL $  -9.11 | DD  32.6% | Min $ 40.89 | T:259 WR:50.2% | Casc: 6 | ✅VIVO
+  Fib 5 gales                    | $  45.01 | PnL $  -4.99 | DD  26.5% | Min $ 44.60 | T:259 WR:50.2% | Casc: 2 | ✅VIVO
+  Fib 7 gales (ATUAL)            | $  35.95 | PnL $ -14.05 | DD  42.0% | Min $ 35.20 | T:259 WR:50.2% | Casc: 1 | ✅VIVO
+  Fib Capped 3g (5%bal)          | $  42.57 | PnL $  -7.43 | DD  28.2% | Min $ 42.57 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Fib Capped 5g (5%bal)          | $  43.90 | PnL $  -6.10 | DD  27.6% | Min $ 43.90 | T:259 WR:50.2% | Casc: 2 | ✅VIVO
+  Fib Conserv 3g [1,1,2,3]       | $  42.57 | PnL $  -7.43 | DD  28.2% | Min $ 42.57 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Fib+%Bal Hybrid 3g (3%)        | $  42.57 | PnL $  -7.43 | DD  28.2% | Min $ 42.57 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Fib+%Bal Hybrid 5g (3%)        | $  42.73 | PnL $  -7.27 | DD  29.4% | Min $ 42.73 | T:259 WR:50.2% | Casc: 2 | ✅VIVO
+  Breakeven Recovery 3g          | $  38.54 | PnL $ -11.46 | DD  42.3% | Min $ 38.54 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Breakeven Recovery 5g          | $  40.95 | PnL $  -9.05 | DD  40.9% | Min $ 40.95 | T:259 WR:50.2% | Casc: 2 | ✅VIVO
+  Martingale 2 gales             | $  50.12 | PnL $  +0.12 | DD  23.3% | Min $ 50.12 | T:259 WR:50.2% | Casc:17 | ✅VIVO
+  Martingale 3 gales             | $  31.25 | PnL $ -18.75 | DD  55.1% | Min $ 31.25 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Martingale 4 gales             | $  22.93 | PnL $ -27.07 | DD  69.2% | Min $ 22.93 | T:259 WR:50.2% | Casc: 6 | ✅VIVO
+  Mart Capped 3g (10%bal)        | $  31.25 | PnL $ -18.75 | DD  55.1% | Min $ 31.25 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Soft Mart 3 gales              | $  42.51 | PnL $  -7.49 | DD  31.3% | Min $ 42.51 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Soft Mart 4 gales              | $  40.42 | PnL $  -9.58 | DD  36.1% | Min $ 40.42 | T:259 WR:50.2% | Casc: 6 | ✅VIVO
+  Linear 3 gales                 | $  41.26 | PnL $  -8.74 | DD  36.9% | Min $ 41.26 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  Linear 4 gales                 | $  39.28 | PnL $ -10.72 | DD  41.1% | Min $ 39.28 | T:259 WR:50.2% | Casc: 6 | ✅VIVO
+  D'Alembert 3 gales             | $  41.26 | PnL $  -8.74 | DD  36.9% | Min $ 41.26 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  D'Alembert 4 gales             | $  39.28 | PnL $ -10.72 | DD  41.1% | Min $ 39.28 | T:259 WR:50.2% | Casc: 6 | ✅VIVO
+  1% Balance 3g                  | $  37.20 | PnL $ -12.80 | DD  51.1% | Min $ 37.20 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+  0.5% Balance 3g                | $  43.87 | PnL $  -6.13 | DD  29.5% | Min $ 43.87 | T:259 WR:50.2% | Casc:11 | ✅VIVO
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  3. STRESS TEST: LOSSES CONSECUTIVAS ATÉ BUST
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Estratégia                     |  Trades→Bust
+  -------------------------------+-------------
+  Flat (sem gale)                |          142
+  Anti-Martingale                |          142
+  Fib 2 gales                    |          107
+  Fib 3 gales                    |           82
+  Fib 4 gales                    |           60
+  Fib 5 gales                    |           44
+  Fib 7 gales (ATUAL)            |           24
+  Fib Capped 3g (5%bal)          |           96
+  Fib Capped 5g (5%bal)          |           76
+  Fib Conserv 3g [1,1,2,3]       |           82
+  Fib+%Bal Hybrid 3g (3%)        |          105
+  Fib+%Bal Hybrid 5g (3%)        |           94
+  Breakeven Recovery 3g          |           75
+  Breakeven Recovery 5g          |           61
+  Martingale 2 gales             |           62
+  Martingale 3 gales             |           39
+  Martingale 4 gales             |           25
+  Mart Capped 3g (10%bal)        |           55
+  Soft Mart 3 gales              |           71
+  Soft Mart 4 gales              |           55
+  Linear 3 gales                 |           58
+  Linear 4 gales                 |           49
+  D'Alembert 3 gales             |           58
+  D'Alembert 4 gales             |           49
+  1% Balance 3g                  |           87
+  0.5% Balance 3g                |          120
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  4. STRESS TEST: PADRÕES ADVERSOS
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+  ─── Padrão W-L-L-L (25% WR, 800 trades) ───
+  Flat (sem gale)                | $   0.20 | PnL $ -49.80 | DD  99.6% | Min $  0.20 | T:279 WR:25.1% | Casc: 0 | 💀BUST
+  Anti-Martingale                | $   0.20 | PnL $ -49.80 | DD  99.6% | Min $  0.20 | T:279 WR:25.1% | Casc: 0 | 💀BUST
+  Fib 2 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:188 WR:25.0% | Casc:47 | 💀BUST
+  Fib 3 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:492 WR:25.0% | Casc: 0 | 💀BUST
+  Fib 4 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:492 WR:25.0% | Casc: 0 | 💀BUST
+  Fib 5 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:492 WR:25.0% | Casc: 0 | 💀BUST
+  Fib 7 gales (ATUAL)            | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:492 WR:25.0% | Casc: 0 | 💀BUST
+  Fib Capped 3g (5%bal)          | $   0.02 | PnL $ -49.98 | DD 100.0% | Min $  0.02 | T:415 WR:25.1% | Casc: 0 | 💀BUST
+  Fib Capped 5g (5%bal)          | $   0.02 | PnL $ -49.98 | DD 100.0% | Min $  0.02 | T:415 WR:25.1% | Casc: 0 | 💀BUST
+  Fib Conserv 3g [1,1,2,3]       | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:492 WR:25.0% | Casc: 0 | 💀BUST
+  Fib+%Bal Hybrid 3g (3%)        | $   0.31 | PnL $ -49.69 | DD  99.4% | Min $  0.31 | T:359 WR:25.1% | Casc: 0 | 💀BUST
+  Fib+%Bal Hybrid 5g (3%)        | $   0.31 | PnL $ -49.69 | DD  99.4% | Min $  0.31 | T:359 WR:25.1% | Casc: 0 | 💀BUST
+  Breakeven Recovery 3g          | $   0.35 | PnL $ -49.65 | DD  99.3% | Min $  0.35 | T:379 WR:25.1% | Casc: 0 | 💀BUST
+  Breakeven Recovery 5g          | $   0.35 | PnL $ -49.65 | DD  99.3% | Min $  0.35 | T:379 WR:25.1% | Casc: 0 | 💀BUST
+  Martingale 2 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 96 WR:25.0% | Casc:24 | 💀BUST
+  Martingale 3 gales             | $  91.35 | PnL $ +41.35 | DD   2.6% | Min $ 50.33 | T:800 WR:25.0% | Casc: 0 | ✅VIVO
+  Martingale 4 gales             | $  91.35 | PnL $ +41.35 | DD   2.6% | Min $ 50.33 | T:800 WR:25.0% | Casc: 0 | ✅VIVO
+  Mart Capped 3g (10%bal)        | $  91.35 | PnL $ +41.35 | DD   2.6% | Min $ 50.33 | T:800 WR:25.0% | Casc: 0 | ✅VIVO
+  Soft Mart 3 gales              | $   0.09 | PnL $ -49.91 | DD  99.8% | Min $  0.09 | T:364 WR:25.0% | Casc: 0 | 💀BUST
+  Soft Mart 4 gales              | $   0.09 | PnL $ -49.91 | DD  99.8% | Min $  0.09 | T:364 WR:25.0% | Casc: 0 | 💀BUST
+  Linear 3 gales                 | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:256 WR:25.0% | Casc: 0 | 💀BUST
+  Linear 4 gales                 | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:256 WR:25.0% | Casc: 0 | 💀BUST
+  D'Alembert 3 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:256 WR:25.0% | Casc: 0 | 💀BUST
+  D'Alembert 4 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:256 WR:25.0% | Casc: 0 | 💀BUST
+  1% Balance 3g                  | $   0.23 | PnL $ -49.77 | DD  99.5% | Min $  0.23 | T:267 WR:25.1% | Casc: 0 | 💀BUST
+  0.5% Balance 3g                | $   0.19 | PnL $ -49.81 | DD  99.6% | Min $  0.19 | T:308 WR:25.0% | Casc: 0 | 💀BUST
+
+  ─── Padrão W-L-L (33% WR, 900 trades) ───
+  Flat (sem gale)                | $   0.16 | PnL $ -49.84 | DD  99.7% | Min $  0.16 | T:408 WR:33.3% | Casc: 0 | 💀BUST
+  Anti-Martingale                | $   0.16 | PnL $ -49.84 | DD  99.7% | Min $  0.16 | T:408 WR:33.3% | Casc: 0 | 💀BUST
+  Fib 2 gales                    | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib 3 gales                    | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib 4 gales                    | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib 5 gales                    | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib 7 gales (ATUAL)            | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib Capped 3g (5%bal)          | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib Capped 5g (5%bal)          | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib Conserv 3g [1,1,2,3]       | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib+%Bal Hybrid 3g (3%)        | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Fib+%Bal Hybrid 5g (3%)        | $  39.80 | PnL $ -10.20 | DD  20.9% | Min $ 39.80 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Breakeven Recovery 3g          | $  33.76 | PnL $ -16.24 | DD  32.9% | Min $ 33.76 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Breakeven Recovery 5g          | $  33.76 | PnL $ -16.24 | DD  32.9% | Min $ 33.76 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Martingale 2 gales             | $ 134.26 | PnL $ +84.26 | DD   0.8% | Min $ 50.33 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Martingale 3 gales             | $ 134.26 | PnL $ +84.26 | DD   0.8% | Min $ 50.33 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Martingale 4 gales             | $ 134.26 | PnL $ +84.26 | DD   0.8% | Min $ 50.33 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Mart Capped 3g (10%bal)        | $ 134.26 | PnL $ +84.26 | DD   0.8% | Min $ 50.33 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Soft Mart 3 gales              | $  12.23 | PnL $ -37.77 | DD  75.7% | Min $ 12.23 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Soft Mart 4 gales              | $  12.23 | PnL $ -37.77 | DD  75.7% | Min $ 12.23 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Linear 3 gales                 | $  34.53 | PnL $ -15.47 | DD  31.4% | Min $ 34.53 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  Linear 4 gales                 | $  34.53 | PnL $ -15.47 | DD  31.4% | Min $ 34.53 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  D'Alembert 3 gales             | $  34.53 | PnL $ -15.47 | DD  31.4% | Min $ 34.53 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  D'Alembert 4 gales             | $  34.53 | PnL $ -15.47 | DD  31.4% | Min $ 34.53 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  1% Balance 3g                  | $  19.48 | PnL $ -30.52 | DD  61.4% | Min $ 19.48 | T:900 WR:33.3% | Casc: 0 | ✅VIVO
+  0.5% Balance 3g                | $   0.06 | PnL $ -49.94 | DD  99.9% | Min $  0.06 | T:579 WR:33.3% | Casc: 0 | 💀BUST
+
+  ─── Cascade Burst (3W + full cascade × 50 ciclos) ───
+  Flat (sem gale)                | $  82.53 | PnL $ +32.53 | DD   0.7% | Min $ 50.33 | T:200 WR:75.0% | Casc: 0 | ✅VIVO
+  Anti-Martingale                | $  82.53 | PnL $ +32.53 | DD   0.7% | Min $ 50.33 | T:200 WR:75.0% | Casc: 0 | ✅VIVO
+  Fib 2 gales                    | $  30.03 | PnL $ -19.97 | DD  41.1% | Min $ 30.03 | T:300 WR:50.0% | Casc:50 | ✅VIVO
+  Fib 3 gales                    | $   0.32 | PnL $ -49.68 | DD  99.4% | Min $  0.32 | T:244 WR:43.0% | Casc:34 | 💀BUST
+  Fib 4 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:128 WR:37.5% | Casc:16 | 💀BUST
+  Fib 5 gales                    | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 80 WR:33.8% | Casc: 8 | 💀BUST
+  Fib 7 gales (ATUAL)            | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 33 WR:27.3% | Casc: 3 | 💀BUST
+  Fib Capped 3g (5%bal)          | $   1.01 | PnL $ -48.99 | DD  98.0% | Min $  1.01 | T:350 WR:42.9% | Casc:50 | ✅VIVO
+  Fib Capped 5g (5%bal)          | $   0.08 | PnL $ -49.92 | DD  99.9% | Min $  0.08 | T:170 WR:33.5% | Casc:18 | 💀BUST
+  Fib Conserv 3g [1,1,2,3]       | $   0.32 | PnL $ -49.68 | DD  99.4% | Min $  0.32 | T:244 WR:43.0% | Casc:34 | 💀BUST
+  Fib+%Bal Hybrid 3g (3%)        | $   5.98 | PnL $ -44.02 | DD  88.3% | Min $  5.98 | T:350 WR:42.9% | Casc:50 | ✅VIVO
+  Fib+%Bal Hybrid 5g (3%)        | $   0.24 | PnL $ -49.76 | DD  99.5% | Min $  0.24 | T:224 WR:33.5% | Casc:24 | 💀BUST
+  Breakeven Recovery 3g          | $   0.34 | PnL $ -49.66 | DD  99.3% | Min $  0.34 | T:245 WR:42.9% | Casc:35 | 💀BUST
+  Breakeven Recovery 5g          | $   0.34 | PnL $ -49.66 | DD  99.3% | Min $  0.34 | T:132 WR:34.1% | Casc:14 | 💀BUST
+  Martingale 2 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:210 WR:50.0% | Casc:35 | 💀BUST
+  Martingale 3 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 84 WR:42.9% | Casc:12 | 💀BUST
+  Martingale 4 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 46 WR:39.1% | Casc: 5 | 💀BUST
+  Mart Capped 3g (10%bal)        | $   0.15 | PnL $ -49.85 | DD  99.7% | Min $  0.15 | T:168 WR:42.9% | Casc:24 | 💀BUST
+  Soft Mart 3 gales              | $   0.24 | PnL $ -49.76 | DD  99.5% | Min $  0.24 | T:189 WR:42.9% | Casc:27 | 💀BUST
+  Soft Mart 4 gales              | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T:112 WR:37.5% | Casc:14 | 💀BUST
+  Linear 3 gales                 | $   0.01 | PnL $ -49.99 | DD 100.0% | Min $  0.01 | T:140 WR:42.9% | Casc:20 | 💀BUST
+  Linear 4 gales                 | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 96 WR:37.5% | Casc:12 | 💀BUST
+  D'Alembert 3 gales             | $   0.01 | PnL $ -49.99 | DD 100.0% | Min $  0.01 | T:140 WR:42.9% | Casc:20 | 💀BUST
+  D'Alembert 4 gales             | $   0.00 | PnL $ -50.00 | DD 100.0% | Min $  0.00 | T: 96 WR:37.5% | Casc:12 | 💀BUST
+  1% Balance 3g                  | $   0.66 | PnL $ -49.34 | DD  98.7% | Min $  0.66 | T:350 WR:42.9% | Casc:50 | ✅VIVO
+  0.5% Balance 3g                | $  13.87 | PnL $ -36.13 | DD  72.8% | Min $ 13.87 | T:350 WR:42.9% | Casc:50 | ✅VIVO
+
+  ─── Worst Realistic (60%→45%→40%→50% WR, 300 trades) ───
+  Flat (sem gale)                | $  43.43 | PnL $  -6.57 | DD  22.7% | Min $ 42.28 | T:300 WR:48.0% | Casc: 0 | ✅VIVO
+  Anti-Martingale                | $  43.43 | PnL $  -6.57 | DD  22.7% | Min $ 42.28 | T:300 WR:48.0% | Casc: 0 | ✅VIVO
+  Fib 2 gales                    | $  43.72 | PnL $  -6.28 | DD  23.0% | Min $ 41.57 | T:300 WR:48.0% | Casc:23 | ✅VIVO
+  Fib 3 gales                    | $  41.69 | PnL $  -8.31 | DD  28.4% | Min $ 39.54 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Fib 4 gales                    | $  43.36 | PnL $  -6.64 | DD  26.8% | Min $ 40.92 | T:300 WR:48.0% | Casc: 5 | ✅VIVO
+  Fib 5 gales                    | $  45.47 | PnL $  -4.53 | DD  23.4% | Min $ 42.87 | T:300 WR:48.0% | Casc: 2 | ✅VIVO
+  Fib 7 gales (ATUAL)            | $  53.47 | PnL $  +3.47 | DD   9.9% | Min $ 49.98 | T:300 WR:48.0% | Casc: 0 | ✅VIVO
+  Fib Capped 3g (5%bal)          | $  41.69 | PnL $  -8.31 | DD  28.4% | Min $ 39.54 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Fib Capped 5g (5%bal)          | $  44.29 | PnL $  -5.71 | DD  24.7% | Min $ 42.14 | T:300 WR:48.0% | Casc: 2 | ✅VIVO
+  Fib Conserv 3g [1,1,2,3]       | $  41.69 | PnL $  -8.31 | DD  28.4% | Min $ 39.54 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Fib+%Bal Hybrid 3g (3%)        | $  41.69 | PnL $  -8.31 | DD  28.4% | Min $ 39.54 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Fib+%Bal Hybrid 5g (3%)        | $  43.24 | PnL $  -6.76 | DD  26.3% | Min $ 41.08 | T:300 WR:48.0% | Casc: 2 | ✅VIVO
+  Breakeven Recovery 3g          | $  34.13 | PnL $ -15.87 | DD  45.3% | Min $ 30.62 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Breakeven Recovery 5g          | $  37.68 | PnL $ -12.32 | DD  40.9% | Min $ 34.51 | T:300 WR:48.0% | Casc: 2 | ✅VIVO
+  Martingale 2 gales             | $  39.51 | PnL $ -10.49 | DD  35.8% | Min $ 34.53 | T:300 WR:48.0% | Casc:23 | ✅VIVO
+  Martingale 3 gales             | $  31.93 | PnL $ -18.07 | DD  54.2% | Min $ 26.08 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Martingale 4 gales             | $  39.07 | PnL $ -10.93 | DD  48.1% | Min $ 34.05 | T:300 WR:48.0% | Casc: 5 | ✅VIVO
+  Mart Capped 3g (10%bal)        | $  31.33 | PnL $ -18.67 | DD  54.2% | Min $ 26.08 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Soft Mart 3 gales              | $  38.87 | PnL $ -11.13 | DD  33.5% | Min $ 36.57 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Soft Mart 4 gales              | $  40.59 | PnL $  -9.41 | DD  32.4% | Min $ 38.11 | T:300 WR:48.0% | Casc: 5 | ✅VIVO
+  Linear 3 gales                 | $  36.07 | PnL $ -13.93 | DD  40.7% | Min $ 32.73 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  Linear 4 gales                 | $  37.44 | PnL $ -12.56 | DD  39.6% | Min $ 34.09 | T:300 WR:48.0% | Casc: 5 | ✅VIVO
+  D'Alembert 3 gales             | $  36.07 | PnL $ -13.93 | DD  40.7% | Min $ 32.73 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  D'Alembert 4 gales             | $  37.44 | PnL $ -12.56 | DD  39.6% | Min $ 34.09 | T:300 WR:48.0% | Casc: 5 | ✅VIVO
+  1% Balance 3g                  | $  31.42 | PnL $ -18.58 | DD  49.8% | Min $ 28.83 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+  0.5% Balance 3g                | $  39.72 | PnL $ -10.28 | DD  30.4% | Min $ 38.12 | T:300 WR:48.0% | Casc:12 | ✅VIVO
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  5. MONTE CARLO — 10.000 SIMULAÇÕES × 1.000 TRADES
