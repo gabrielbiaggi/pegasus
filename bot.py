@@ -1059,6 +1059,9 @@ class DerivBot:
                     self.risk.balance = new_bal
                     self.risk.sync_pnl_from_balance()
                     self._flush_balance(new_bal)
+            # Tell update() that the stake was already deducted, so it only needs
+            # to add back stake+profit on WIN and do nothing on LOSS.
+            self.risk._pending_stake_deduction = buy_price_actual
 
         if self._gale_expected > 0:
             # Sequential multi-contract gale: contracts are fired one at a time.

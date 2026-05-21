@@ -91,6 +91,10 @@ class RiskManager:
         self._recent_loss_times: deque[float] = deque()
         # Last time we re-read the state file to pick up external overrides (e.g. dashboard unblock)
         self._last_override_check: float = 0.0
+        # Set by handle_buy() to the stake amount already deducted from balance.
+        # update() consumes it to know whether to deduct the stake itself (unit tests)
+        # or just add it back on WIN (production with prior handle_buy).
+        self._pending_stake_deduction: float = 0.0
         # Throttle can_trade() warning logs (monotonic timestamps, one log per 60s per reason)
         self._log_ts_profit: float = 0.0
         self._log_ts_loss: float = 0.0
@@ -743,6 +747,11 @@ class RiskManager:
 
         profit = float(profit)
         buy_price = float(buy_price)
+        # Consume the stake already deducted by handle_buy() (production path).
+        # If 0, handle_buy was not called (unit tests) → update() is responsible for
+        # all balance changes.
+        _stake_deducted = self._pending_stake_deduction
+        self._pending_stake_deduction = 0.0
         self.trades_today += 1
         # NOTE: daily_net_profit is synced from real balance in sync_pnl_from_balance().
         # We still do an immediate += here so that risk checks within update()
@@ -821,7 +830,9 @@ class RiskManager:
                     self.soros_profit = 0.0
             _modo_win = f"SOROS {self.soros_step}/{self.soros_max_steps}" if self.use_soros and self.soros_step > 0 else "NORMAL"
             # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
-            self.balance = round(self.balance + profit, 2)
+            # Production (handle_buy deducted stake): add stake back + profit.
+            # Unit tests (no handle_buy): add only profit (stake was never deducted).
+            self.balance = round(self.balance + _stake_deducted + profit, 2)
             logger.info("WIN %+0.2f | saldo_estimado=%0.2f | modo=%s", profit, self.balance, _modo_win)
         else:
             self.losses += 1
@@ -864,7 +875,10 @@ class RiskManager:
             self._recent_loss_times.append(time.monotonic())
             _modo_loss = f"GALE {self.martingale_step}/{self.martingale_max_gales}" if self.use_martingale and self.martingale_step > 0 else "NORMAL"
             # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
-            self.balance = round(self.balance - realized_loss, 2)
+            # Production (handle_buy already deducted stake): balance is already correct, no change.
+            # Unit tests (no handle_buy): deduct the stake here.
+            if _stake_deducted == 0:
+                self.balance = round(self.balance - buy_price, 2)
             logger.info(
                 "LOSS -%0.2f | saldo_estimado=%0.2f | perda_dia=%0.2f | modo=%s",
                 realized_loss,
