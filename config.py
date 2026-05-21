@@ -135,6 +135,9 @@ class BotConfig:
     accumulator_use_ensemble: bool
     accumulator_ensemble_min_prob: float
     accumulator_min_barrier_distance_pct: float  # 0.0 = desativado; >0 = % minima da barreira (saida defensiva)
+    # Calm ACCU (BOOM1000 calm-entry mode)
+    calm_accu_threshold: float
+    calm_accu_lookback: int
     # Rise/Fall (binary options) config
     rise_fall_duration_ticks: int
     rise_fall_min_votes: int
@@ -143,6 +146,11 @@ class BotConfig:
     rise_fall_use_ensemble: bool
     rise_fall_ensemble_min_prob: float
     rise_fall_cooldown_ticks: int
+    # Quality gate filters (post-vote rejection for jump_rise_fall)
+    rise_fall_quality_gate: bool
+    rise_fall_qg_min_abs_imbalance: float
+    rise_fall_qg_bayes_strong: float
+    rise_fall_qg_hurst_max: float
 
     @property
     def ws_url(self) -> str:
@@ -293,6 +301,9 @@ def load_config() -> BotConfig:
         accumulator_use_ensemble=_bool_env("USE_ENSEMBLE", False),
         accumulator_ensemble_min_prob=_float_env("ENSEMBLE_MIN_PROB", 0.294),
         accumulator_min_barrier_distance_pct=_float_env("ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0),
+        # Calm ACCU
+        calm_accu_threshold=_float_env("CALM_ACCU_THRESHOLD", 7.3e-7),
+        calm_accu_lookback=_int_env("CALM_ACCU_LOOKBACK", 10),
         # Rise/Fall
         rise_fall_duration_ticks=_int_env("RISE_FALL_DURATION_TICKS", 5),
         rise_fall_min_votes=_int_env("RISE_FALL_MIN_VOTES", 7),
@@ -301,14 +312,19 @@ def load_config() -> BotConfig:
         rise_fall_use_ensemble=_bool_env("RISE_FALL_USE_ENSEMBLE", False),
         rise_fall_ensemble_min_prob=_float_env("RISE_FALL_ENSEMBLE_MIN_PROB", 0.52),
         rise_fall_cooldown_ticks=_int_env("RISE_FALL_COOLDOWN_TICKS", 3),
+        # Quality gate
+        rise_fall_quality_gate=_bool_env("RISE_FALL_QUALITY_GATE", True),
+        rise_fall_qg_min_abs_imbalance=_float_env("RISE_FALL_QG_MIN_ABS_IMBALANCE", 6.0),
+        rise_fall_qg_bayes_strong=_float_env("RISE_FALL_QG_BAYES_STRONG", 0.70),
+        rise_fall_qg_hurst_max=_float_env("RISE_FALL_QG_HURST_MAX", 0.50),
     )
 
     if config.stake <= 0:
         raise ValueError("STAKE precisa ser maior que zero.")
     if config.account_mode not in {"demo", "real", "any"}:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
-    if config.contract_mode not in {"accumulator", "rise_fall", "jump_rise_fall"}:
-        raise ValueError("CONTRACT_MODE deve ser accumulator, rise_fall ou jump_rise_fall.")
+    if config.contract_mode not in {"accumulator", "calm_accu", "rise_fall", "jump_rise_fall"}:
+        raise ValueError("CONTRACT_MODE deve ser accumulator, calm_accu, rise_fall ou jump_rise_fall.")
     if config.max_loss_day_pct > 0:
         if not 0 < config.max_loss_day_pct <= 1:
             raise ValueError("MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%).")
@@ -336,7 +352,7 @@ def load_config() -> BotConfig:
         raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
     if config.martingale_multiplier < 1.0:
         raise ValueError("MARTINGALE_MULTIPLIER deve ser >= 1.")
-    if config.contract_mode != "jump_rise_fall" and config.tick_count < config.accumulator_strategy_config.minimum_ticks:
+    if config.contract_mode not in {"jump_rise_fall", "calm_accu"} and config.tick_count < config.accumulator_strategy_config.minimum_ticks:
         raise ValueError(
             f"TICK_COUNT deve ser pelo menos {config.accumulator_strategy_config.minimum_ticks} "
             "para Accumulators."

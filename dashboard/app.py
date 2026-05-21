@@ -362,6 +362,7 @@ def api_status(response: Response):
         "consecutive_losses": int(risk_state.get("consecutive_losses", 0)),
         "use_martingale": _get_env("USE_MARTINGALE") == "true",
         "martingale_max_gales": int(_get_env("MARTINGALE_MAX_GALES") or "6"),
+        "martingale_mode": _get_env("MARTINGALE_MODE") or "classic",
         "martingale_payout_rate": _get_payout_rate(),
         "martingale_accumulated_loss": round(float(risk_state.get("martingale_accumulated_loss", 0.0)), 2),
         "martingale_base_stake": round(float(risk_state.get("martingale_base_stake", 0.0)), 2),
@@ -377,6 +378,8 @@ def api_status(response: Response):
         "stop_loss_value": round(bal_float * float(_get_env("STOP_LOSS_PCT") or "0") / 100, 2) if float(_get_env("STOP_LOSS_PCT") or "0") > 0 else float(_get_env("MAX_LOSS_PER_DAY") or "0"),
         "stop_gain_value": round(bal_float * float(_get_env("STOP_GAIN_PCT") or "0") / 100, 2) if float(_get_env("STOP_GAIN_PCT") or "0") > 0 else float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
         "account_mode": _get_env("ACCOUNT_MODE") or "demo",
+        "calm_accu_threshold": _get_env("CALM_ACCU_THRESHOLD") or "7.3e-7",
+        "calm_accu_lookback": _get_env("CALM_ACCU_LOOKBACK") or "10",
     }
 
 
@@ -631,8 +634,10 @@ ALLOWED_KEYS = {
     "USE_SOROS", "SOROS_MAX_STEPS", "SOROS_PROFIT_FACTOR",
     "MAX_STAKE",
     "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_PAYOUT_RATE",
+    "MARTINGALE_MODE",
     "INITIAL_BALANCE",
     "RISE_FALL_DURATION_TICKS", "RISE_FALL_MIN_VOTES", "RISE_FALL_COOLDOWN_TICKS",
+    "CONTRACT_MODE", "CALM_ACCU_THRESHOLD", "CALM_ACCU_LOOKBACK",
 }
 
 @app.post("/api/env")

@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 from logger import logger
-from strategy import AccumulatorStrategyConfig, accumulator_quant_filters_pass, calculate_tick_indicators, score_accumulator_row
+from strategy import AccumulatorStrategyConfig, accumulator_quant_filters_pass, calculate_tick_indicators, generate_calm_accu_signal, score_accumulator_row
 
 
 def load_ticks(path: Path) -> list[dict[str, Any]]:
@@ -368,6 +368,181 @@ def run_accumulator_backtest(
     }
 
 
+def run_calm_accu_backtest(
+    ticks: list[dict[str, Any]],
+    initial_balance: float,
+    stake: float,
+    growth_rate: float,
+    take_profit_percent: float,
+    barrier_percent: float,
+    max_hold_ticks: int,
+    cooldown_ticks: int,
+    calm_threshold: float = 7.3e-7,
+    calm_lookback: int = 10,
+    blocked_utc_hours: tuple[int, ...] = (),
+    slippage_ticks: int = 0,
+    # Soros compounding
+    use_soros_compound: bool = False,
+    soros_max_steps: int = 3,
+    soros_profit_factor: float = 1.0,
+    # Martingale
+    use_martingale: bool = False,
+    martingale_max_gales: int = 3,
+    martingale_payout_rate: float = 0.05,
+    # Fibonacci martingale
+    martingale_mode: str = "classic",
+) -> dict[str, Any]:
+    """Backtest calm-entry ACCU strategy (BOOM1000).
+
+    Uses rolling avg |return| < calm_threshold as entry filter instead of
+    score-based indicators.
+    """
+    FIB_SEQUENCE = [1, 1, 2, 3, 5, 8, 13, 21]
+    normalized_ticks = normalize_ticks(ticks)
+
+    min_ticks = calm_lookback + 1
+    if len(normalized_ticks) < min_ticks:
+        return {
+            "total_trades": 0, "wins": 0, "losses": 0, "winrate": 0.0,
+            "ending_balance": round(initial_balance, 2), "net_profit": 0.0,
+            "max_drawdown_pct": 0.0, "max_loss_streak": 0, "trades": [],
+        }
+
+    epochs = [int(t["epoch"]) for t in normalized_ticks]
+    prices = [float(t["quote"]) for t in normalized_ticks]
+
+    balance = initial_balance
+    equity_curve = [balance]
+    trades: list[dict[str, Any]] = []
+    loss_streak = 0
+    max_loss_streak = 0
+    soros_step = 0
+    soros_profit = 0.0
+    martingale_step = 0
+    martingale_accumulated_loss = 0.0
+    martingale_base_stake = 0.0
+    i = min_ticks
+
+    while i < len(normalized_ticks) - 1:
+        entry_epoch = epochs[i]
+        if datetime.fromtimestamp(entry_epoch, UTC).hour in blocked_utc_hours:
+            i += 1
+            continue
+
+        # Calm filter: rolling avg |return| over lookback ticks
+        recent = prices[i - calm_lookback: i + 1]
+        abs_returns = [abs(recent[j] / recent[j - 1] - 1) for j in range(1, len(recent))]
+        avg_abs_ret = sum(abs_returns) / len(abs_returns)
+
+        if avg_abs_ret >= calm_threshold:
+            i += 1
+            continue
+
+        # Slippage
+        execution_index = i + max(0, slippage_ticks)
+        if execution_index >= len(normalized_ticks) - 1:
+            i += 1
+            continue
+
+        _pre_soros_step = soros_step
+        _pre_gale_step = martingale_step
+
+        # Determine stake
+        trade_stake = stake
+        if use_martingale and martingale_step > 0 and martingale_base_stake > 0:
+            if martingale_mode == "fibonacci":
+                fib_idx = min(martingale_step, len(FIB_SEQUENCE) - 1)
+                trade_stake = round(martingale_base_stake * FIB_SEQUENCE[fib_idx], 2)
+            else:
+                trade_stake = round(
+                    min(martingale_accumulated_loss / martingale_payout_rate + martingale_base_stake, balance),
+                    2,
+                )
+        if use_soros_compound and soros_step > 0 and soros_profit > 0 and martingale_step == 0:
+            trade_stake = trade_stake + soros_profit
+
+        trade_stake = min(trade_stake, balance)
+        if trade_stake <= 0:
+            break
+
+        simulated = simulate_accumulator_trade(
+            ticks=normalized_ticks,
+            entry_index=execution_index,
+            stake=trade_stake,
+            growth_rate=growth_rate,
+            take_profit_percent=take_profit_percent,
+            barrier_percent=barrier_percent,
+            max_hold_ticks=max_hold_ticks,
+        )
+        profit = float(simulated["profit"])
+        balance = round(balance + profit, 2)
+        equity_curve.append(balance)
+
+        if profit > 0:
+            loss_streak = 0
+            if use_martingale:
+                martingale_step = 0
+                martingale_accumulated_loss = 0.0
+                martingale_base_stake = 0.0
+            if use_soros_compound:
+                if soros_step < soros_max_steps:
+                    soros_step += 1
+                    soros_profit = round(profit * soros_profit_factor, 2)
+                else:
+                    soros_step = 0
+                    soros_profit = 0.0
+        else:
+            loss_streak += 1
+            max_loss_streak = max(max_loss_streak, loss_streak)
+            if use_martingale:
+                if martingale_step == 0:
+                    martingale_base_stake = trade_stake
+                martingale_accumulated_loss += trade_stake
+                martingale_step = min(martingale_step + 1, martingale_max_gales)
+            if use_soros_compound:
+                soros_step = 0
+                soros_profit = 0.0
+
+        trades.append({
+            "entry_epoch": entry_epoch,
+            "exit_epoch": simulated["exit_epoch"],
+            "direction": "CALM_ACCU",
+            "avg_abs_ret": avg_abs_ret,
+            "soros_step": _pre_soros_step,
+            "gale_step": _pre_gale_step,
+            "stake": trade_stake,
+            "growth_rate": growth_rate,
+            "take_profit_percent": take_profit_percent,
+            "barrier_percent": barrier_percent,
+            "max_hold_ticks": max_hold_ticks,
+            "held_ticks": simulated["held_ticks"],
+            "entry_quote": prices[i],
+            "exit_quote": simulated["exit_quote"],
+            "max_adverse_move_percent": simulated["max_adverse_move_percent"],
+            "profit": profit,
+            "result": simulated["result"],
+            "exit_reason": simulated["exit_reason"],
+            "balance": balance,
+        })
+        i = int(simulated["exit_index"]) + cooldown_ticks + 1
+
+    wins = sum(1 for t in trades if t["profit"] > 0)
+    losses = len(trades) - wins
+    winrate = (wins / len(trades) * 100) if trades else 0.0
+
+    return {
+        "total_trades": len(trades),
+        "wins": wins,
+        "losses": losses,
+        "winrate": round(winrate, 2),
+        "ending_balance": round(balance, 2),
+        "net_profit": round(balance - initial_balance, 2),
+        "max_drawdown_pct": round(max_drawdown(equity_curve) * 100, 2),
+        "max_loss_streak": max_loss_streak,
+        "trades": trades,
+    }
+
+
 def write_trades(path: Path, trades: list[dict[str, Any]]) -> None:
     if not trades:
         return
@@ -425,10 +600,88 @@ def main() -> None:
         action="store_true",
         help="Desativa os filtros quantitativos avançados (Hurst, Hawkes, etc.). Útil para datasets com distribuições diferentes.",
     )
+    # Calm ACCU mode
+    parser.add_argument("--mode", choices=["accumulator", "calm_accu"], default="accumulator", help="Modo de backtest: accumulator (score-based) ou calm_accu (calm-entry BOOM1000).")
+    parser.add_argument("--calm-threshold", type=float, default=7.3e-7, help="Calm ACCU: limiar de avg |return| para entrada.")
+    parser.add_argument("--calm-lookback", type=int, default=10, help="Calm ACCU: janela de lookback em ticks.")
+    parser.add_argument("--martingale-mode", default="classic", choices=["classic", "fibonacci"], help="Modo de martingale: classic ou fibonacci.")
     args = parser.parse_args()
 
     logger.setLevel(logging.WARNING)
     ticks = load_ticks(args.ticks)
+
+    # ---- Calm ACCU mode ----
+    if args.mode == "calm_accu":
+        calm_common: dict[str, Any] = dict(
+            ticks=ticks,
+            initial_balance=args.initial_balance,
+            growth_rate=args.growth_rate,
+            barrier_percent=args.barrier_percent,
+            cooldown_ticks=args.cooldown_ticks,
+            calm_threshold=args.calm_threshold,
+            calm_lookback=args.calm_lookback,
+            blocked_utc_hours=parse_blocked_hours(args.blocked_utc_hours),
+            slippage_ticks=args.slippage_ticks,
+            soros_max_steps=args.soros_max_steps,
+            martingale_max_gales=args.martingale_max_gales,
+            martingale_payout_rate=args.martingale_payout_rate,
+        )
+
+        if args.run_all_scenarios:
+            scenarios = [
+                dict(label="Baseline (fixo)", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, use_soros_compound=False, use_martingale=False, martingale_mode="classic"),
+                dict(label="Soros", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, use_soros_compound=True, use_martingale=False, martingale_mode="classic"),
+                dict(label="Martingale Classic", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, use_soros_compound=False, use_martingale=True, martingale_mode="classic"),
+                dict(label="Soros+Fibo Martingale", stake=args.stake, take_profit_percent=args.take_profit_percent, max_hold_ticks=args.max_hold_ticks, use_soros_compound=True, use_martingale=True, martingale_mode="fibonacci"),
+            ]
+            rows = []
+            for sc in scenarios:
+                sc_label = sc.pop("label")
+                r = run_calm_accu_backtest(**calm_common, **sc)
+                rows.append({
+                    "Cenário": sc_label,
+                    "Trades": r["total_trades"],
+                    "Wins": r["wins"],
+                    "Losses": r["losses"],
+                    "Winrate%": f"{r['winrate']:.1f}",
+                    "PnL": f"{r['net_profit']:+.2f}",
+                    "Banca Final": f"{r['ending_balance']:.2f}",
+                    "ROI%": f"{r['net_profit'] / args.initial_balance * 100:+.2f}",
+                    "Max DD%": f"{r['max_drawdown_pct']:.2f}",
+                    "Max Loss Streak": r["max_loss_streak"],
+                })
+            if rows:
+                keys = list(rows[0].keys())
+                widths = [max(len(k), max(len(str(row[k])) for row in rows)) for k in keys]
+                header = "  ".join(k.ljust(w) for k, w in zip(keys, widths))
+                sep = "  ".join("-" * w for w in widths)
+                print(header)
+                print(sep)
+                for row in rows:
+                    print("  ".join(str(row[k]).ljust(w) for k, w in zip(keys, widths)))
+            if args.output and rows:
+                import csv as _csv
+                with args.output.open("w", newline="", encoding="utf-8") as f:
+                    w = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                    w.writeheader()
+                    w.writerows(rows)
+                print(f"\nTabela salva em: {args.output}")
+            return
+
+        result = run_calm_accu_backtest(
+            **calm_common,
+            stake=args.stake,
+            take_profit_percent=args.take_profit_percent,
+            max_hold_ticks=args.max_hold_ticks,
+            use_soros_compound=args.use_soros,
+            use_martingale=args.use_martingale,
+            martingale_mode=args.martingale_mode,
+        )
+        if args.output:
+            write_trades(args.output, result["trades"])
+        printable = {key: value for key, value in result.items() if key != "trades"}
+        print(json.dumps(printable, indent=2))
+        return
     strategy_config = AccumulatorStrategyConfig(
         min_score=args.min_score,
         bb_window=args.bb_window,

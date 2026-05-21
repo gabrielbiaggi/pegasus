@@ -19,6 +19,7 @@ from risk_manager import RiskManager
 from strategy import (
     calculate_tick_indicators,
     generate_accumulator_signal,
+    generate_calm_accu_signal,
     generate_rise_fall_signal,
     generate_jump_momentum_signal,
     JumpMomentumConfig,
@@ -428,6 +429,10 @@ class DerivBot:
                 min_score=self.config.rise_fall_min_votes,
                 min_confidence=self.config.rise_fall_min_confidence,
                 min_ticks=30,
+                quality_gate_enabled=self.config.rise_fall_quality_gate,
+                qg_min_abs_imbalance=self.config.rise_fall_qg_min_abs_imbalance,
+                qg_bayes_strong=self.config.rise_fall_qg_bayes_strong,
+                qg_hurst_max=self.config.rise_fall_qg_hurst_max,
             )
             signal, score, confidence = await asyncio.to_thread(
                 generate_jump_momentum_signal, _tick_snapshot, config=_jm_config, df=df,
@@ -737,6 +742,44 @@ class DerivBot:
                 _mode,
             )
             await self.request_rise_fall_proposal(ws, stake, signal, score, tick_epoch, metrics=metrics)
+            return
+
+        # ---- Calm ACCU mode (BOOM1000 calm-entry) ----
+        if self.config.contract_mode == "calm_accu":
+            prices = [t["quote"] for t in _tick_snapshot]
+            signal, score, p_loss = generate_calm_accu_signal(
+                prices,
+                threshold=self.config.calm_accu_threshold,
+                lookback=self.config.calm_accu_lookback,
+            )
+            if signal != "ACCU":
+                logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)
+                return
+            stake = self.risk.get_stake()
+            if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+                raw_gale = self.risk.get_gale_raw_stake()
+                if raw_gale > stake:
+                    logger.info(
+                        "GALE cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f) — recuperacao parcial",
+                        raw_gale, stake, self.config.max_stake,
+                    )
+            if self._gale_wait_ticks > 0:
+                logger.info("✅ Sinal seguro encontrado após %d ticks de espera", self._gale_wait_ticks)
+                self._gale_wait_ticks = 0
+                self._gale_wait_log_ts = 0.0
+            metrics = self._last_tick_metrics(df)
+            _mode = (
+                f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
+                if getattr(self.risk, 'use_martingale', False) and self.risk.martingale_step > 0
+                else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
+                if getattr(self.risk, 'use_soros', False) and self.risk.soros_step > 0
+                else "NORMAL"
+            )
+            logger.info(
+                "Setup CALM ACCU detectado: score=%s stake=%.2f modo=%s avg_ret<%.2e",
+                score, stake, _mode, self.config.calm_accu_threshold,
+            )
+            await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
             return
 
         # ---- Accumulator mode (default) ----
@@ -1485,6 +1528,7 @@ class DerivBot:
             try:
                 _mode_desc = {
                     "accumulator": "Accumulators 1s",
+                    "calm_accu": "Calm ACCU (BOOM1000)",
                     "rise_fall": "Rise/Fall",
                     "jump_rise_fall": "JumpRF Momentum",
                 }.get(self.config.contract_mode, self.config.contract_mode)

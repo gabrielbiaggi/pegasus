@@ -206,6 +206,13 @@ header{padding:8px 12px}
     <span class="sep">|</span>
     <div class="param-row">Payout Rate: <input type="number" id="inp-payout-rate" min="0.01" max="10" step="0.01" value="0.15" style="width:60px"/> <button class="btn btn-blue" onclick="setPayoutRate()">OK</button></div>
   </div>
+  <div class="ctrl-row">
+    <div class="param-row">Modo: <select id="sel-contract-mode" onchange="setContractMode(this)"><option value="accumulator">Accumulator</option><option value="calm_accu">Calm ACCU</option></select></div>
+    <span class="sep">|</span>
+    <div class="param-row">Martingale: <select id="sel-martingale-mode" onchange="setMartingaleMode(this)"><option value="classic">Classic</option><option value="fibonacci">Fibonacci</option></select></div>
+    <span class="sep">|</span>
+    <div class="param-row" id="calm-params" style="display:none">Calm Threshold: <input type="number" id="inp-calm-threshold" min="0" max="0.001" step="1e-8" value="7.3e-7" style="width:80px"/> Lookback: <input type="number" id="inp-calm-lookback" min="1" max="100" step="1" value="10" style="width:50px"/> <button class="btn btn-blue" onclick="setCalmParams()">OK</button></div>
+  </div>
 </div>
 <main>
 <div class="metrics">
@@ -400,6 +407,9 @@ async function setGales(){var v=parseInt($('inp-max-gales').value);if(isNaN(v)||
 async function setSorosSteps(){var v=parseInt($('inp-soros-steps').value);if(isNaN(v)||v<0||v>20){toast('Soros steps inv\u00e1lido (0-20)','var(--red)');return}try{await _postEnv('SOROS_MAX_STEPS',String(v));toast('Soros Steps = '+v+' \u2714','var(--green)')}catch(e){toast('Erro','var(--red)')}}
 async function setSorosFactor(){var v=parseFloat($('inp-soros-factor').value);if(isNaN(v)||v<0.1||v>5){toast('Soros Factor inv\u00e1lido (0.1-5)','var(--red)');return}try{await _postEnv('SOROS_PROFIT_FACTOR',v.toFixed(1));toast('Soros Factor = '+v.toFixed(1)+' \u2714','var(--green)')}catch(e){toast('Erro','var(--red)')}}
 async function setPayoutRate(){var v=parseFloat($('inp-payout-rate').value);if(isNaN(v)||v<0.01||v>10){toast('Payout inv\u00e1lido','var(--red)');return}try{await _postEnv('MARTINGALE_PAYOUT_RATE',v.toFixed(4));toast('Payout Rate = '+v.toFixed(2)+' \u2714','var(--green)')}catch(e){toast('Erro','var(--red)')}}
+async function setContractMode(sel){try{await _postEnv('CONTRACT_MODE',sel.value);toast('Modo: '+sel.value+' \u2714','var(--green)');$('calm-params').style.display=sel.value==='calm_accu'?'flex':'none'}catch(e){toast('Erro','var(--red)')}}
+async function setMartingaleMode(sel){try{await _postEnv('MARTINGALE_MODE',sel.value);toast('Martingale: '+sel.value+' \u2714','var(--green)')}catch(e){toast('Erro','var(--red)')}}
+async function setCalmParams(){var t=parseFloat($('inp-calm-threshold').value),l=parseInt($('inp-calm-lookback').value);if(isNaN(t)||t<=0){toast('Threshold inv\u00e1lido','var(--red)');return}if(isNaN(l)||l<1){toast('Lookback inv\u00e1lido','var(--red)');return}try{await _postEnv('CALM_ACCU_THRESHOLD',t.toExponential());await _postEnv('CALM_ACCU_LOOKBACK',String(l));toast('Calm: threshold='+t.toExponential()+' lookback='+l+' \u2714','var(--green)')}catch(e){toast('Erro','var(--red)');}}
 async function resetHistory(scope){if(!confirm('Resetar '+scope+'? Bot ser\u00e1 reiniciado.'))return;try{var d=await fetch('/api/reset?scope='+scope,{method:'POST'}).then(function(r){return r.json()});toast(d.msg||'Resetado.','var(--green)');fetchSessions();fetchStatus();fetchTrades()}catch(e){toast('Erro','var(--red)')}}
 function openModal(id){$(id).classList.add('active');document.body.style.overflow='hidden';if(id==='modal-indicators')fetchIndicators();if(id==='modal-sessions'){fetchSessions();fetchHistory30d()}}
 function closeModal(id){$(id).classList.remove('active');document.body.style.overflow=''}
@@ -576,7 +586,7 @@ async function fetchIndicators(){
   }catch(e){}
 }
 async function fetchStatus(){try{var d=await fetch('/api/status').then(function(r){return r.json()});_connFailed=0;$('conn-err').style.display='none';_botRunning=!!d.running;applyButtonStates(_botRunning);
-if(d.symbol)$('symbol-badge').textContent=d.symbol;
+if(d.symbol){var cm=d.contract_mode||'accumulator';var modeLabel=cm==='calm_accu'?'CALM':'ACCU';$('symbol-badge').textContent=d.symbol+' · '+modeLabel;}
 if(d.symbol&&d.deriv_app_id&&!_chartConnected&&_chartSymbol!==d.symbol){connectChart(d.symbol,d.deriv_app_id)}
 var ub=$('btn-unblock');if(ub)ub.style.display=d.risk_blocked?'inline-flex':'none';
 var badge=$('status-badge');if(d.running){var idle=d.last_trade_ts?(Date.now()-new Date(d.last_trade_ts))/1000:0;if(d.risk_blocked){badge.textContent='Bloqueado';badge.className='badge blocked'}else if(idle>3600){badge.textContent='Inativo';badge.className='badge warn'}else{badge.textContent='Online';badge.className='badge online'}}else{badge.textContent='Offline';badge.className='badge offline'}
@@ -588,6 +598,9 @@ if(!_actionLock){
 $('tog-weekends').checked=!!d.block_weekends;$('tog-soros').checked=!!d.use_soros;$('tog-martingale').checked=!!d.use_martingale;
 var as=$('sel-account');if(d.account_mode&&document.activeElement!==as){as.value=d.account_mode;as.dataset.prev=d.account_mode}
 var bl=$('balance-label'),bs=$('balance-sub');if(bl)bl.textContent=d.account_mode==='real'?'Saldo Real':'Saldo Demo';if(bs)bs.textContent=d.account_mode==='real'?'Conta real':'VRTC demo';
+var cmS=$('sel-contract-mode');if(d.contract_mode&&document.activeElement!==cmS){cmS.value=d.contract_mode;$('calm-params').style.display=d.contract_mode==='calm_accu'?'flex':'none'}
+var mmS=$('sel-martingale-mode');if(d.martingale_mode&&document.activeElement!==mmS)mmS.value=d.martingale_mode;
+var ctE=$('inp-calm-threshold'),clE=$('inp-calm-lookback');if(d.calm_accu_threshold&&document.activeElement!==ctE)ctE.value=parseFloat(d.calm_accu_threshold);if(d.calm_accu_lookback&&document.activeElement!==clE)clE.value=parseInt(d.calm_accu_lookback);
 var skE=$('inp-stake'),skV=$('inp-stake-val');if(document.activeElement!==skE&&document.activeElement!==skV){if(d.stake_pct>0){skE.value=parseFloat(d.stake_pct).toFixed(1);skV.value=parseFloat(d.stake_value).toFixed(2);skE.disabled=false;skV.disabled=true;skV.style.opacity='.5'}else{skE.value='0.0';skV.value=parseFloat(d.stake_value).toFixed(2);skE.disabled=true;skE.style.opacity='.5';skV.disabled=false;skV.style.opacity='1'}}
 var slE=$('inp-stoploss'),slV=$('inp-stoploss-val');if(document.activeElement!==slE&&document.activeElement!==slV){if(d.stop_loss_pct>0){slE.value=parseFloat(d.stop_loss_pct).toFixed(1);slV.value=parseFloat(d.stop_loss_value).toFixed(0);slE.disabled=false;slE.style.opacity='1';slV.disabled=true;slV.style.opacity='.5'}else{slE.value='0.0';slV.value=parseFloat(d.stop_loss_value).toFixed(0);slE.disabled=true;slE.style.opacity='.5';slV.disabled=false;slV.style.opacity='1'}}
 var sgE=$('inp-stopgain'),sgV=$('inp-stopgain-val');if(document.activeElement!==sgE&&document.activeElement!==sgV){if(d.stop_gain_pct>0){sgE.value=parseFloat(d.stop_gain_pct).toFixed(1);sgV.value=parseFloat(d.stop_gain_value).toFixed(0);sgE.disabled=false;sgE.style.opacity='1';sgV.disabled=true;sgV.style.opacity='.5'}else{sgE.value='0.0';sgV.value=parseFloat(d.stop_gain_value).toFixed(0);sgE.disabled=true;sgE.style.opacity='.5';sgV.disabled=false;sgV.style.opacity='1'}}
@@ -600,9 +613,9 @@ var prE=$('inp-payout-rate');if(document.activeElement!==prE)prE.value=parseFloa
 var mStep=d.martingale_step||0,sStep=d.soros_step||0,mMax=d.martingale_max_gales||6,sMax=parseInt(d.soros_max_steps||'3');_sorosMax=sMax;_galeMax=mMax;
 var mL=$('mode-label'),mS=$('mode-sub'),mD=$('mode-dots');
 if(mL){if(d.risk_blocked){mL.textContent='\u26d4 STOP';mL.className='card-value red';mS.textContent='stop loss atingido';mD.textContent=''}
-else if(mStep>0){var eff=d.martingale_effective_multiplier||2.05,ns=d.next_gale_stake||0;mL.textContent='\u26a0 GALE '+mStep+'/'+mMax;mL.className='card-value '+(mStep>=mMax?'red':'yellow');mS.textContent='x'+eff.toFixed(1)+(ns>0?' \u2192 $'+ns.toFixed(2):'')+' ('+mStep+' loss)';mD.textContent='\u25cf'.repeat(mStep)+'\u25cb'.repeat(Math.max(0,mMax-mStep))}
+else if(mStep>0){var eff=d.martingale_effective_multiplier||2.05,ns=d.next_gale_stake||0,mm=d.martingale_mode||'classic',modeTag=mm==='fibonacci'?'FIBO ':'GALE ';mL.textContent='\u26a0 '+modeTag+mStep+'/'+mMax;mL.className='card-value '+(mStep>=mMax?'red':'yellow');mS.textContent='x'+eff.toFixed(1)+(ns>0?' \u2192 $'+ns.toFixed(2):'')+' ('+mStep+' loss)';mD.textContent='\u25cf'.repeat(mStep)+'\u25cb'.repeat(Math.max(0,mMax-mStep))}
 else if(sStep>0){mL.textContent='\u25c6 SOROS '+sStep+'/'+sMax;mL.className='card-value purple';mS.textContent='acum: $'+(d.soros_profit||0).toFixed(2);mD.textContent='\u25cf'.repeat(sStep)+'\u25cb'.repeat(Math.max(0,sMax-sStep))}
-else{mL.textContent='NORMAL';mL.className='card-value green';mS.textContent='streak: '+(d.consecutive_losses||0)+' loss';mD.textContent=''}}
+else{var mm=d.martingale_mode||'classic',modeTag=mm==='fibonacci'?'Gale Fibo 1/'+mMax:'Gale '+mMax;mL.textContent='NORMAL';mL.className='card-value green';mS.textContent=modeTag+' | streak: '+(d.consecutive_losses||0)+' loss';mD.textContent=''}}
 var sig=d.signal||{},sd=$('signal-dir'),sv=$('signal-votes'),sc=$('signal-conf'),cb=$('conf-bar');
 if(sig.direction){sd.textContent=sig.direction==='CALL'?'\u25b2 CALL':'\u25bc PUT';sd.className='signal-dir '+(sig.direction==='CALL'?'call':'put');sv.textContent='\u2191'+sig.votes_up+' \u2193'+sig.votes_down;var conf=sig.confidence||0,cp=conf>1?conf:conf*100;sc.textContent='conf: '+cp.toFixed(0)+'%';cb.style.width=Math.min(cp,100)+'%';cb.style.background=cp>=80?'var(--green)':cp>=50?'var(--yellow)':'var(--red)'}else{sd.textContent='\u2014';sd.className='signal-dir none';sv.textContent='aguardando sinal';sc.textContent='conf: \u2014';cb.style.width='0%'}
 $('last-update').textContent=new Date().toLocaleTimeString('pt-BR');if(d.last_trade_ts)$('last-trade-time').textContent=timeSince(d.last_trade_ts);
@@ -642,7 +655,7 @@ tb.innerHTML=data.map(function(t,i){var ts=t.timestamp?String(t.timestamp).repla
 var dir=t.direction||'\u2014',dCls=dir==='CALL'?'call-tag':dir==='PUT'?'put-tag':'';
 var g=parseInt(t.gale_step)||0,s=parseInt(t.soros_step)||0,mode='';
 if(g>0&&s>0)mode='<span style="color:var(--yellow);font-size:.7rem">G'+g+'</span> <span style="color:var(--purple);font-size:.7rem">S'+s+'</span>';
-else if(g>0)mode='<span style="color:var(--yellow);font-size:.7rem">GALE '+g+'/'+_galeMax+'</span>';
+else if(g>0)mode='<span style="color:var(--yellow);font-size:.7rem">FIBO '+g+'/'+_galeMax+'</span>';
 else if(s>0)mode='<span style="color:var(--purple);font-size:.7rem">SOROS '+s+'/'+_sorosMax+'</span>';
 return'<tr class="'+flash+'"><td>'+ts+'</td><td class="'+dCls+'">'+dir+'</td><td class="'+cls+'">'+res+'</td><td>'+mode+'</td><td class="'+cls+'">'+profit+'</td><td>'+(t.score!=null?t.score:'\u2014')+'</td><td>'+(t.stake!=null?t.stake:'\u2014')+'</td><td>'+(t.held_ticks!=null?t.held_ticks:'\u2014')+'</td></tr>'}).join('')}catch(e){}}
 async function fetchLogs(){try{var d=await fetch('/api/logs').then(function(r){return r.json()});_logLines=d.lines||[];renderLog()}catch(e){}}

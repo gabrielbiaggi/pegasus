@@ -1105,6 +1105,41 @@ RF_FEATURES = [
 ]
 
 
+def generate_calm_accu_signal(
+    prices: list[float],
+    threshold: float = 7.3e-7,
+    lookback: int = 10,
+) -> tuple[Optional[str], int, Optional[float]]:
+    """Calm-entry accumulator signal for BOOM1000.
+
+    Computes rolling mean |return| over *lookback* ticks. If below *threshold*
+    the market is in a calm period where P(barrier breach) drops sharply,
+    creating a positive-EV ACCU entry.
+
+    Returns ("ACCU", 20, None) on calm entry, (None, 0, None) otherwise.
+    The fixed score=20 bypasses any min_score gate.
+    """
+    if len(prices) < lookback + 1:
+        return None, 0, None
+
+    recent = prices[-(lookback + 1):]
+    abs_returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent))]
+    avg_abs_ret = sum(abs_returns) / len(abs_returns)
+
+    if avg_abs_ret < threshold:
+        logger.info(
+            "CALM ACCU: avg_abs_ret=%.2e < threshold=%.2e → ENTRY",
+            avg_abs_ret, threshold,
+        )
+        return "ACCU", 20, None
+
+    logger.debug(
+        "CALM ACCU: avg_abs_ret=%.2e >= threshold=%.2e → skip",
+        avg_abs_ret, threshold,
+    )
+    return None, 0, None
+
+
 @dataclass(frozen=True)
 class RiseFallStrategyConfig:
     """Configuration for Rise/Fall directional signal generation."""
@@ -1290,6 +1325,13 @@ class JumpMomentumConfig:
     mi_flow_min: float = 0.03           # MI above this = exploitable predictability
     hurst_trending: float = 0.55        # hurst above this = trending market
     hurst_reverting: float = 0.40       # hurst below this = mean-reverting market
+    # ── Quality gate filters (post-vote rejection) ─────────────────────
+    # These reject signals that pass the vote threshold but lack indicator
+    # conviction.  At least ONE quality gate must pass for signal to fire.
+    quality_gate_enabled: bool = True
+    qg_min_abs_imbalance: float = 6.0   # |tick_imbalance| must reach this (6+ proven profitable)
+    qg_bayes_strong: float = 0.70       # bayesian_prob_up > X or < (1-X)
+    qg_hurst_max: float = 0.50          # hurst below this for bayes+hurst combo
 
 
 def _ema_series(prices: list[float], period: int) -> list[float]:
@@ -1632,6 +1674,48 @@ def generate_jump_momentum_signal(
     confidence = winning_votes / total_votes
 
     if winning_votes >= config.min_score and confidence >= config.min_confidence:
+        # ── QUALITY GATE: at least one indicator filter must pass ───────
+        if config.quality_gate_enabled and df is not None and len(df) >= config.min_ticks:
+            last = df.iloc[-1]
+
+            def _qg(name: str, default: float = 0.0) -> float:
+                v = last.get(name, default)
+                try:
+                    f = float(v if v is not None else default)
+                except (TypeError, ValueError):
+                    f = default
+                return default if f != f else f
+
+            qg_imbalance = _qg("tick_imbalance", 0.0)
+            qg_bayes = _qg("bayesian_prob_up", 0.5)
+            qg_hurst = _qg("hurst_exponent", 0.5)
+
+            # Gate 1: strong tick imbalance (|imbalance| >= threshold)
+            gate_imbalance = abs(qg_imbalance) >= config.qg_min_abs_imbalance
+
+            # Gate 2: strong bayesian conviction
+            gate_bayes = qg_bayes > config.qg_bayes_strong or qg_bayes < (1.0 - config.qg_bayes_strong)
+
+            # Gate 3: bayes + hurst combo (strongest filter: 77.8% WR)
+            gate_bayes_hurst = gate_bayes and qg_hurst < config.qg_hurst_max
+
+            if not gate_imbalance:
+                logger.debug(
+                    "JumpMom QUALITY GATE REJECT: imb=%.1f (need ±%.1f), "
+                    "bayes=%.2f, hurst=%.2f",
+                    qg_imbalance, config.qg_min_abs_imbalance,
+                    qg_bayes, qg_hurst,
+                )
+                return None, 0, None
+
+            # Log which gate(s) passed
+            gates = [f"imb={qg_imbalance:+.1f}"]
+            if gate_bayes_hurst:
+                gates.append(f"bayes={qg_bayes:.2f}+hurst={qg_hurst:.2f}")
+            elif gate_bayes:
+                gates.append(f"bayes={qg_bayes:.2f}")
+            logger.info("JumpMom QUALITY GATE PASS: %s", ", ".join(gates))
+
         if up_votes > dn_votes:
             logger.info(
                 "JumpMom CALL: ↑%d ↓%d (conf=%.0f%%, %d/%d votes)",
