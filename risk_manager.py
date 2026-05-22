@@ -455,6 +455,13 @@ class RiskManager:
                 self.balance,
                 self.balance - saved_sod,
             )
+        else:
+            # saved_sod=0 = nova sessao (estado foi zerado pelo deploy --restart).
+            # start_of_day_balance vem do saldo real da autorizacao Deriv.
+            logger.info(
+                "Nova sessao: start_of_day_balance = %.2f (saldo real Deriv)",
+                self.start_of_day_balance,
+            )
         self.daily_trailing_active = bool(data.get("daily_trailing_active", False))
         self.trades_today = int(data.get("trades_today", 0))
         self.wins = int(data.get("wins", 0))

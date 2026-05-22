@@ -3853,15 +3853,15 @@
             fetchIndicators();
             fetchSessions();
             fetchHistory30d();
-            setInterval(fetchStatus, 3000);
+            // Status: 1s — captura trades rapidos (bot pode fechar em <5s)
+            setInterval(fetchStatus, 1000);
+            // Trades + Logs: 1.5s — sincroniza com ciclo do bot
             setInterval(function () {
                 fetchTrades();
                 fetchLogs();
-            }, 5000);
-            setInterval(
-                fetchIndicators,
-                5000,
-            ); /* indicators every 5s for live feel */
+            }, 1500);
+            // Indicadores: 3s — suficiente para live feel
+            setInterval(fetchIndicators, 3000);
             setInterval(fetchSessions, 30000);
             setInterval(fetchHistory30d, 60000);
             setInterval(async function () {

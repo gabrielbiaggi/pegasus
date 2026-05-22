@@ -249,12 +249,12 @@ _pg_trades_cache: dict = {"ts": 0.0, "today": "", "df": None}
 
 
 def _today_df() -> pd.DataFrame:
-    """Read today's trades from PostgreSQL."""
+    """Read today's trades from PostgreSQL. Cache TTL reduzido para 1s para capturar trades rapidos."""
     global _pg_trades_cache
     now = _time.monotonic()
     today = datetime.now(timezone.utc).date().isoformat()
     if (
-        now - _pg_trades_cache["ts"] < 3.0
+        now - _pg_trades_cache["ts"] < 1.0  # era 3.0 — reduzido para 1s
         and _pg_trades_cache["today"] == today
         and _pg_trades_cache["df"] is not None
     ):
