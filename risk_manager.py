@@ -81,12 +81,18 @@ class RiskManager:
         self.losses = 0
         self.consecutive_losses = 0
         self.max_loss_streak_today = 0
-        self.loss_block_override = False   # set True via dashboard to bypass daily loss limit
+        self.loss_block_override = (
+            False  # set True via dashboard to bypass daily loss limit
+        )
         self.soros_step = 0
         self.soros_profit = 0.0
         self.martingale_step = 0
-        self.martingale_accumulated_loss: float = 0.0  # soma dos buy_prices perdidos na sequencia atual
-        self.martingale_base_stake: float = 0.0       # stake da primeira aposta da sequencia (step 0)
+        self.martingale_accumulated_loss: float = (
+            0.0  # soma dos buy_prices perdidos na sequencia atual
+        )
+        self.martingale_base_stake: float = (
+            0.0  # stake da primeira aposta da sequencia (step 0)
+        )
         # Sliding window timestamps of recent losses (monotonic clock)
         self._recent_loss_times: deque[float] = deque()
         # Last time we re-read the state file to pick up external overrides (e.g. dashboard unblock)
@@ -132,11 +138,16 @@ class RiskManager:
 
         new_override = bool(data.get("loss_block_override", False))
         new_consec = int(data.get("consecutive_losses", self.consecutive_losses))
-        if new_override != self.loss_block_override or new_consec != self.consecutive_losses:
+        if (
+            new_override != self.loss_block_override
+            or new_consec != self.consecutive_losses
+        ):
             logger.info(
                 "Override detectado no disco: loss_block_override %s→%s  consecutive_losses %s→%s",
-                self.loss_block_override, new_override,
-                self.consecutive_losses, new_consec,
+                self.loss_block_override,
+                new_override,
+                self.consecutive_losses,
+                new_consec,
             )
             self.loss_block_override = new_override
             self.consecutive_losses = new_consec
@@ -154,8 +165,12 @@ class RiskManager:
             logger.info(
                 "♻ Reconciliado do disco: trades=%d, W=%d, L=%d, "
                 "net_profit=%.2f, daily_loss=%.2f, saldo_inicio=%.2f",
-                self.trades_today, self.wins, self.losses,
-                self.daily_net_profit, self.daily_loss, self.start_of_day_balance,
+                self.trades_today,
+                self.wins,
+                self.losses,
+                self.daily_net_profit,
+                self.daily_loss,
+                self.start_of_day_balance,
             )
             # Clear reconcile flag from file so it doesn't re-trigger
             data.pop("reconcile", None)
@@ -191,21 +206,37 @@ class RiskManager:
                 if _config_locked:
                     logger.warning(
                         "🔒 Stop Loss BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
-                        self.martingale_step, self.martingale_max_gales, self.max_loss_day, new_loss,
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                        self.max_loss_day,
+                        new_loss,
                     )
                 else:
-                    logger.info("Stop Loss atualizado via dashboard: %.2f → %.2f", self.max_loss_day, new_loss)
+                    logger.info(
+                        "Stop Loss atualizado via dashboard: %.2f → %.2f",
+                        self.max_loss_day,
+                        new_loss,
+                    )
                     self.max_loss_day = new_loss
             # Update stop gain
-            new_profit = float(env_data.get("MAX_PROFIT_PER_DAY", str(self.max_profit_day)))
+            new_profit = float(
+                env_data.get("MAX_PROFIT_PER_DAY", str(self.max_profit_day))
+            )
             if new_profit != self.max_profit_day:
                 if _config_locked:
                     logger.warning(
                         "🔒 Stop Gain BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
-                        self.martingale_step, self.martingale_max_gales, self.max_profit_day, new_profit,
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                        self.max_profit_day,
+                        new_profit,
                     )
                 else:
-                    logger.info("Stop Gain atualizado via dashboard: %.2f → %.2f", self.max_profit_day, new_profit)
+                    logger.info(
+                        "Stop Gain atualizado via dashboard: %.2f → %.2f",
+                        self.max_profit_day,
+                        new_profit,
+                    )
                     self.max_profit_day = new_profit
             # Update stake
             new_stake = float(env_data.get("STAKE", str(self.fixed_stake)))
@@ -213,10 +244,17 @@ class RiskManager:
                 if _config_locked:
                     logger.warning(
                         "🔒 Stake BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
-                        self.martingale_step, self.martingale_max_gales, self.fixed_stake, new_stake,
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                        self.fixed_stake,
+                        new_stake,
                     )
                 else:
-                    logger.info("Stake atualizado via dashboard: %.2f → %.2f", self.fixed_stake, new_stake)
+                    logger.info(
+                        "Stake atualizado via dashboard: %.2f → %.2f",
+                        self.fixed_stake,
+                        new_stake,
+                    )
                     self.fixed_stake = new_stake
             # Update max_stake
             new_max_stake = float(env_data.get("MAX_STAKE", str(self.max_stake)))
@@ -224,10 +262,17 @@ class RiskManager:
                 if _config_locked:
                     logger.warning(
                         "🔒 Max Stake BLOQUEADO durante gale %d/%d (tentativa: %.2f → %.2f)",
-                        self.martingale_step, self.martingale_max_gales, self.max_stake, new_max_stake,
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                        self.max_stake,
+                        new_max_stake,
                     )
                 else:
-                    logger.info("Max Stake atualizado via dashboard: %.2f → %.2f", self.max_stake, new_max_stake)
+                    logger.info(
+                        "Max Stake atualizado via dashboard: %.2f → %.2f",
+                        self.max_stake,
+                        new_max_stake,
+                    )
                     self.max_stake = new_max_stake
             # Update stop loss/gain percentages
             new_sl_pct = float(env_data.get("STOP_LOSS_PCT", str(self.stop_loss_pct)))
@@ -235,66 +280,126 @@ class RiskManager:
                 if _config_locked:
                     logger.warning(
                         "🔒 Stop Loss %% BLOQUEADO durante gale %d/%d",
-                        self.martingale_step, self.martingale_max_gales,
+                        self.martingale_step,
+                        self.martingale_max_gales,
                     )
                 else:
-                    logger.info("Stop Loss %% atualizado: %.1f%% → %.1f%%", self.stop_loss_pct, new_sl_pct)
+                    logger.info(
+                        "Stop Loss %% atualizado: %.1f%% → %.1f%%",
+                        self.stop_loss_pct,
+                        new_sl_pct,
+                    )
                     self.stop_loss_pct = new_sl_pct
             new_sg_pct = float(env_data.get("STOP_GAIN_PCT", str(self.stop_gain_pct)))
             if new_sg_pct != self.stop_gain_pct:
                 if _config_locked:
                     logger.warning(
                         "🔒 Stop Gain %% BLOQUEADO durante gale %d/%d",
-                        self.martingale_step, self.martingale_max_gales,
+                        self.martingale_step,
+                        self.martingale_max_gales,
                     )
                 else:
-                    logger.info("Stop Gain %% atualizado: %.1f%% → %.1f%%", self.stop_gain_pct, new_sg_pct)
+                    logger.info(
+                        "Stop Gain %% atualizado: %.1f%% → %.1f%%",
+                        self.stop_gain_pct,
+                        new_sg_pct,
+                    )
                     self.stop_gain_pct = new_sg_pct
             # Update stake percentage (not locked — doesn't affect active gale calc)
-            new_base_pct = float(env_data.get("DYNAMIC_STAKE_BASE_PCT", str(self.dynamic_stake_base_pct)))
+            new_base_pct = float(
+                env_data.get("DYNAMIC_STAKE_BASE_PCT", str(self.dynamic_stake_base_pct))
+            )
             if new_base_pct != self.dynamic_stake_base_pct:
-                logger.info("Stake base pct atualizado: %.4f → %.4f", self.dynamic_stake_base_pct, new_base_pct)
+                logger.info(
+                    "Stake base pct atualizado: %.4f → %.4f",
+                    self.dynamic_stake_base_pct,
+                    new_base_pct,
+                )
                 self.dynamic_stake_base_pct = new_base_pct
             # Live-reload martingale/soros toggles (sem restart)
             new_use_mg = env_data.get("USE_MARTINGALE", "").strip().lower() == "true"
             if new_use_mg != self.use_martingale:
                 if _config_locked:
-                    logger.warning("U0001f512 USE_MARTINGALE BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                    logger.warning(
+                        "U0001f512 USE_MARTINGALE BLOQUEADO durante gale %d/%d",
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                    )
                 else:
-                    logger.info("Martingale toggle atualizado: %s → %s", self.use_martingale, new_use_mg)
+                    logger.info(
+                        "Martingale toggle atualizado: %s → %s",
+                        self.use_martingale,
+                        new_use_mg,
+                    )
                     self.use_martingale = new_use_mg
             new_use_soros = env_data.get("USE_SOROS", "").strip().lower() == "true"
             if new_use_soros != self.use_soros:
-                logger.info("Soros toggle atualizado: %s → %s", self.use_soros, new_use_soros)
+                logger.info(
+                    "Soros toggle atualizado: %s → %s", self.use_soros, new_use_soros
+                )
                 self.use_soros = new_use_soros
-            new_max_gales = int(env_data.get("MARTINGALE_MAX_GALES", str(self.martingale_max_gales)))
+            new_max_gales = int(
+                env_data.get("MARTINGALE_MAX_GALES", str(self.martingale_max_gales))
+            )
             if new_max_gales != self.martingale_max_gales:
                 if _config_locked:
-                    logger.warning("U0001f512 MARTINGALE_MAX_GALES BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                    logger.warning(
+                        "U0001f512 MARTINGALE_MAX_GALES BLOQUEADO durante gale %d/%d",
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                    )
                 else:
-                    logger.info("Max gales atualizado: %d → %d", self.martingale_max_gales, new_max_gales)
+                    logger.info(
+                        "Max gales atualizado: %d → %d",
+                        self.martingale_max_gales,
+                        new_max_gales,
+                    )
                     self.martingale_max_gales = new_max_gales
             # SOROS_MAX_STEPS live-reload
-            new_soros_steps = int(env_data.get("SOROS_MAX_STEPS", str(self.soros_max_steps)))
+            new_soros_steps = int(
+                env_data.get("SOROS_MAX_STEPS", str(self.soros_max_steps))
+            )
             if new_soros_steps != self.soros_max_steps:
-                logger.info("Soros max steps atualizado: %d → %d", self.soros_max_steps, new_soros_steps)
+                logger.info(
+                    "Soros max steps atualizado: %d → %d",
+                    self.soros_max_steps,
+                    new_soros_steps,
+                )
                 self.soros_max_steps = new_soros_steps
             # SOROS_PROFIT_FACTOR live-reload
-            new_soros_factor = float(env_data.get("SOROS_PROFIT_FACTOR", str(self.soros_profit_factor)))
+            new_soros_factor = float(
+                env_data.get("SOROS_PROFIT_FACTOR", str(self.soros_profit_factor))
+            )
             if new_soros_factor != self.soros_profit_factor:
-                logger.info("Soros profit factor atualizado: %.1f → %.1f", self.soros_profit_factor, new_soros_factor)
+                logger.info(
+                    "Soros profit factor atualizado: %.1f → %.1f",
+                    self.soros_profit_factor,
+                    new_soros_factor,
+                )
                 self.soros_profit_factor = new_soros_factor
             # MARTINGALE_PAYOUT_RATE live-reload
-            new_payout = float(env_data.get("MARTINGALE_PAYOUT_RATE", str(self.martingale_payout_rate)))
+            new_payout = float(
+                env_data.get("MARTINGALE_PAYOUT_RATE", str(self.martingale_payout_rate))
+            )
             new_payout = max(0.001, new_payout)
             if new_payout != self.martingale_payout_rate:
                 if _config_locked:
-                    logger.warning("\U0001f512 MARTINGALE_PAYOUT_RATE BLOQUEADO durante gale %d/%d", self.martingale_step, self.martingale_max_gales)
+                    logger.warning(
+                        "\U0001f512 MARTINGALE_PAYOUT_RATE BLOQUEADO durante gale %d/%d",
+                        self.martingale_step,
+                        self.martingale_max_gales,
+                    )
                 else:
-                    logger.info("Payout rate atualizado: %.4f → %.4f", self.martingale_payout_rate, new_payout)
+                    logger.info(
+                        "Payout rate atualizado: %.4f → %.4f",
+                        self.martingale_payout_rate,
+                        new_payout,
+                    )
                     self.martingale_payout_rate = new_payout
             # BLOCK_WEEKENDS live-reload
-            self.block_weekends = env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
+            self.block_weekends = (
+                env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
+            )
         except (OSError, ValueError):
             pass
 
@@ -312,11 +417,26 @@ class RiskManager:
             return
 
         self.daily_loss = float(data.get("daily_loss", 0.0))
-        self.daily_net_profit = float(data.get("daily_net_profit", data.get("daily_profit", 0.0)))
-        self.daily_peak_profit = float(data.get("daily_peak_profit", max(0.0, self.daily_net_profit)))
-        # start_of_day_balance is NOT restored from file — always uses balance at
-        # bot startup so P&L reflects change since this session started.
-        # (self.start_of_day_balance already set in __init__ from authorization balance)
+        self.daily_net_profit = float(
+            data.get("daily_net_profit", data.get("daily_profit", 0.0))
+        )
+        self.daily_peak_profit = float(
+            data.get("daily_peak_profit", max(0.0, self.daily_net_profit))
+        )
+
+        # CRITICAL FIX: restore start_of_day_balance from the saved state so that
+        # MAX_LOSS_PER_DAY is ALWAYS calculated relative to the true beginning of the
+        # calendar day — not the balance at the moment of this restart.
+        # Without this, every restart silently resets the daily loss reference.
+        saved_sod = float(data.get("start_of_day_balance", 0.0))
+        if saved_sod > 0:
+            self.start_of_day_balance = saved_sod
+            logger.info(
+                "start_of_day_balance restaurado do estado: %.2f (saldo_atual=%.2f, perda_real_dia=%.2f)",
+                saved_sod,
+                self.balance,
+                self.balance - saved_sod,
+            )
         self.daily_trailing_active = bool(data.get("daily_trailing_active", False))
         self.trades_today = int(data.get("trades_today", 0))
         self.wins = int(data.get("wins", 0))
@@ -326,12 +446,17 @@ class RiskManager:
         self.soros_step = int(data.get("soros_step", 0))
         self.soros_profit = float(data.get("soros_profit", 0.0))
         self.martingale_step = int(data.get("martingale_step", 0))
-        self.martingale_accumulated_loss = float(data.get("martingale_accumulated_loss", 0.0))
+        self.martingale_accumulated_loss = float(
+            data.get("martingale_accumulated_loss", 0.0)
+        )
         self.martingale_base_stake = float(data.get("martingale_base_stake", 0.0))
         self.loss_block_override = bool(data.get("loss_block_override", False))
         # Segurança: estado legado sem base_stake → reseta gale (melhor pausar que calcular errado)
         if self.martingale_step > 0 and self.martingale_base_stake == 0.0:
-            logger.warning("Estado martingale inconsistente (base_stake=0 com step=%d). Resetando gale.", self.martingale_step)
+            logger.warning(
+                "Estado martingale inconsistente (base_stake=0 com step=%d). Resetando gale.",
+                self.martingale_step,
+            )
             self.martingale_step = 0
             self.martingale_accumulated_loss = 0.0
         # NOTE: max_loss_day is NOT loaded from state file — .env is the single source of truth
@@ -388,14 +513,23 @@ class RiskManager:
             logger.info(
                 "♻ Reconciliado com DB: trades %d→%d | W %d→%d | L %d→%d | "
                 "loss %.2f→%.2f | net_profit(saldo)=%.2f | saldo_inicio_sessao=%.2f",
-                old[0], new[0], old[1], new[1], old[2], new[2],
-                old[3], new[3], self.daily_net_profit, self.start_of_day_balance,
+                old[0],
+                new[0],
+                old[1],
+                new[1],
+                old[2],
+                new[2],
+                old[3],
+                new[3],
+                self.daily_net_profit,
+                self.start_of_day_balance,
             )
             self._save_state()
         else:
             logger.info(
                 "♻ DB confere | net_profit(saldo)=%.2f | saldo_inicio_sessao=%.2f",
-                self.daily_net_profit, self.start_of_day_balance,
+                self.daily_net_profit,
+                self.start_of_day_balance,
             )
 
     def _reset_if_new_day(self) -> None:
@@ -446,7 +580,10 @@ class RiskManager:
         if abs(new_pnl - self.daily_net_profit) > 0.005:
             self.daily_net_profit = new_pnl
             self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
-            if self.daily_trailing_start > 0 and self.daily_peak_profit >= self.daily_trailing_start:
+            if (
+                self.daily_trailing_start > 0
+                and self.daily_peak_profit >= self.daily_trailing_start
+            ):
                 self.daily_trailing_active = True
             self._save_state()
 
@@ -480,21 +617,39 @@ class RiskManager:
 
         # Soros: reinveste lucro acumulado de wins consecutivos (limpos, não gale)
         # Posicionado APÓS gale-safe cap para que cada step Soros cresça progressivamente.
-        if self.use_soros and not _in_gale and 0 < self.soros_step <= self.soros_max_steps and self.soros_profit > 0:
+        if (
+            self.use_soros
+            and not _in_gale
+            and 0 < self.soros_step <= self.soros_max_steps
+            and self.soros_profit > 0
+        ):
             raw_stake = raw_stake + self.soros_profit
 
         # Martingale/Fibonacci: calcula stake de recuperação para o gale atual.
-        if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
+        if (
+            self.use_martingale
+            and self.martingale_step > 0
+            and self.martingale_base_stake > 0
+        ):
             if self.martingale_mode == "fibonacci":
                 fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
                 raw_stake = self.fixed_stake * FIB_SEQUENCE[fib_idx]
             else:
                 # Classic: G = perdas_acumuladas / payout_rate + stake_base
-                raw_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+                raw_stake = (
+                    self.martingale_accumulated_loss / self.martingale_payout_rate
+                    + self.martingale_base_stake
+                )
 
-        remaining_budget = max(0.0, self._effective_loss_limit() + self.daily_net_profit)
+        remaining_budget = max(
+            0.0, self._effective_loss_limit() + self.daily_net_profit
+        )
 
-        if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
+        if (
+            self.use_martingale
+            and self.martingale_step > 0
+            and self.martingale_base_stake > 0
+        ):
             # Martingale recovery: o limite é a banca inteira.
             caps = [raw_stake, self.balance]
         elif self.loss_block_override:
@@ -552,7 +707,7 @@ class RiskManager:
         As balance shrinks from losses, the cap automatically decreases.
         """
         if not self.use_martingale or self.martingale_step <= 0:
-            return float('inf')
+            return float("inf")
 
         remaining = self.martingale_max_gales - self.martingale_step
         floor = max(self.martingale_min_balance_floor, 0)
@@ -598,13 +753,20 @@ class RiskManager:
         contracts to work around Deriv's per-contract stake ceiling.
         Returns 0.0 when not in a martingale gale.
         """
-        if not (self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0):
+        if not (
+            self.use_martingale
+            and self.martingale_step > 0
+            and self.martingale_base_stake > 0
+        ):
             return 0.0
         if self.martingale_mode == "fibonacci":
             fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
             raw = self.fixed_stake * FIB_SEQUENCE[fib_idx]
         else:
-            raw = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
+            raw = (
+                self.martingale_accumulated_loss / self.martingale_payout_rate
+                + self.martingale_base_stake
+            )
         return round(min(raw, self.balance), 2)
 
     def can_trade(self) -> bool:
@@ -615,7 +777,10 @@ class RiskManager:
         _now = time.monotonic()
 
         # PROTEÇÃO: balance floor — se saldo abaixo do mínimo, para tudo (inclusive gale)
-        if self.martingale_min_balance_floor > 0 and self.balance < self.martingale_min_balance_floor:
+        if (
+            self.martingale_min_balance_floor > 0
+            and self.balance < self.martingale_min_balance_floor
+        ):
             if _now - self._log_ts_loss >= 60:
                 logger.warning(
                     "⛔ Balance floor atingido: saldo=%.2f < floor=%.2f — PARANDO operacoes (inclusive gale)",
@@ -627,7 +792,9 @@ class RiskManager:
             if self.use_martingale and self.martingale_step > 0:
                 logger.warning(
                     "⛔ Gale %d/%d ABORTADO por balance floor — perdas=%.2f absorvidas",
-                    self.martingale_step, self.martingale_max_gales, self.martingale_accumulated_loss,
+                    self.martingale_step,
+                    self.martingale_max_gales,
+                    self.martingale_accumulated_loss,
                 )
                 self.martingale_step = 0
                 self.martingale_accumulated_loss = 0.0
@@ -636,19 +803,33 @@ class RiskManager:
             return False
 
         # PROTEÇÃO: dynamic gale cap — aborta gale se próximo step exige mais que saldo disponível
-        if self.use_martingale and self.martingale_step > 0 and self.martingale_base_stake > 0:
+        if (
+            self.use_martingale
+            and self.martingale_step > 0
+            and self.martingale_base_stake > 0
+        ):
             if self.martingale_mode == "fibonacci":
                 fib_idx = min(self.martingale_step, len(FIB_SEQUENCE) - 1)
                 next_gale_stake = self.fixed_stake * FIB_SEQUENCE[fib_idx]
             else:
-                next_gale_stake = self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake
-            usable_balance = self.balance * self.martingale_max_balance_pct if self.martingale_max_balance_pct > 0 else self.balance
+                next_gale_stake = (
+                    self.martingale_accumulated_loss / self.martingale_payout_rate
+                    + self.martingale_base_stake
+                )
+            usable_balance = (
+                self.balance * self.martingale_max_balance_pct
+                if self.martingale_max_balance_pct > 0
+                else self.balance
+            )
             if next_gale_stake > usable_balance:
                 logger.warning(
                     "⛔ Gale %d/%d ABORTADO: stake_necessaria=%.2f > saldo_disponivel=%.2f (%.0f%% de %.2f)",
-                    self.martingale_step, self.martingale_max_gales,
-                    next_gale_stake, usable_balance,
-                    self.martingale_max_balance_pct * 100, self.balance,
+                    self.martingale_step,
+                    self.martingale_max_gales,
+                    next_gale_stake,
+                    usable_balance,
+                    self.martingale_max_balance_pct * 100,
+                    self.balance,
                 )
                 logger.warning(
                     "   Perdas acumuladas=%.2f absorvidas — resetando para G0",
@@ -661,8 +842,21 @@ class RiskManager:
 
         _loss_limit = self._effective_loss_limit()
         if self.daily_net_profit <= -_loss_limit and not self.loss_block_override:
-            # Never block during martingale recovery — the gale MUST continue to recover losses
-            if not (self.use_martingale and self.martingale_step > 0):
+            # Allow gale to continue ONLY if loss is within 2x the daily limit.
+            # Beyond 2x = emergency stop regardless of gale state (prevents death spiral).
+            _in_gale_recovery = self.use_martingale and self.martingale_step > 0
+            _emergency = self.daily_net_profit <= -_loss_limit * 2.0
+            if not _in_gale_recovery or _emergency:
+                if _emergency and _in_gale_recovery:
+                    logger.warning(
+                        "🚨 EMERGENCY STOP: perda=%.2f ultrapassou 2x o limite=%.2f — gale abortado",
+                        self.daily_net_profit,
+                        _loss_limit,
+                    )
+                    self.martingale_step = 0
+                    self.martingale_accumulated_loss = 0.0
+                    self.martingale_base_stake = 0.0
+                    self._save_state()
                 if _now - self._log_ts_loss >= 60:
                     logger.warning(
                         "Stop loss diario atingido: lucro_liquido=%.2f (limite=-%.2f)",
@@ -675,11 +869,16 @@ class RiskManager:
         _profit_limit = self._effective_profit_limit()
         if _profit_limit > 0 and self.daily_net_profit >= _profit_limit:
             if _now - self._log_ts_profit >= 60:
-                logger.warning("Meta de lucro diaria atingida: %.2f", self.daily_net_profit)
+                logger.warning(
+                    "Meta de lucro diaria atingida: %.2f", self.daily_net_profit
+                )
                 self._log_ts_profit = _now
             return False
 
-        if self.daily_trailing_active and self.daily_net_profit <= self.daily_trailing_lock:
+        if (
+            self.daily_trailing_active
+            and self.daily_net_profit <= self.daily_trailing_lock
+        ):
             if _now - self._log_ts_trailing >= 60:
                 logger.warning(
                     "Trailing diario protegido: lucro_liquido=%.2f lock=%.2f",
@@ -695,7 +894,10 @@ class RiskManager:
             # Never block during martingale recovery — the gale MUST continue
             if not (self.use_martingale and self.martingale_step > 0):
                 if _now - self._log_ts_consec >= 60:
-                    logger.warning("Limite de losses consecutivos atingido: %s", self.consecutive_losses)
+                    logger.warning(
+                        "Limite de losses consecutivos atingido: %s",
+                        self.consecutive_losses,
+                    )
                     self._log_ts_consec = _now
                 return False
 
@@ -713,7 +915,10 @@ class RiskManager:
         # already caps stake by (max_loss_day - daily_loss). No need to re-check here.
 
         # Protect trailing lock: don't enter a trade that would risk dropping below the locked profit
-        if self.daily_trailing_active and self.daily_net_profit - stake < self.daily_trailing_lock:
+        if (
+            self.daily_trailing_active
+            and self.daily_net_profit - stake < self.daily_trailing_lock
+        ):
             logger.warning(
                 "Proxima stake %.2f arriscaria lucro protegido %.2f (lock=%.2f)",
                 stake,
@@ -760,7 +965,10 @@ class RiskManager:
         self.daily_net_profit += profit
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
 
-        if self.daily_trailing_start > 0 and self.daily_peak_profit >= self.daily_trailing_start:
+        if (
+            self.daily_trailing_start > 0
+            and self.daily_peak_profit >= self.daily_trailing_start
+        ):
             self.daily_trailing_active = True
 
         if profit > 0:
@@ -784,7 +992,9 @@ class RiskManager:
                         next_stake = round(self.fixed_stake * FIB_SEQUENCE[fib_idx], 2)
                         logger.info(
                             "⚡ Fibonacci parcial: step=%d → %d | stake_prox=%.2f",
-                            prev_step, self.martingale_step, next_stake,
+                            prev_step,
+                            self.martingale_step,
+                            next_stake,
                         )
                 else:
                     # Classic: reduce accumulated_loss by this WIN's profit.
@@ -802,7 +1012,8 @@ class RiskManager:
                     elif self.martingale_step >= self.martingale_max_gales:
                         logger.warning(
                             "⚠ Martingale max_gales=%d atingido com residuo=%.2f — absorvido como perda aceita",
-                            self.martingale_max_gales, self.martingale_accumulated_loss,
+                            self.martingale_max_gales,
+                            self.martingale_accumulated_loss,
                         )
                         self.martingale_step = 0
                         self.martingale_accumulated_loss = 0.0
@@ -812,7 +1023,12 @@ class RiskManager:
                             "⚡ Martingale parcial: +%.2f recuperado | residual=%.2f | stake_prox=%.2f",
                             profit,
                             self.martingale_accumulated_loss,
-                            round(self.martingale_accumulated_loss / self.martingale_payout_rate + self.martingale_base_stake, 2),
+                            round(
+                                self.martingale_accumulated_loss
+                                / self.martingale_payout_rate
+                                + self.martingale_base_stake,
+                                2,
+                            ),
                         )
             else:
                 self.martingale_step = 0
@@ -828,12 +1044,21 @@ class RiskManager:
                 else:
                     self.soros_step = 0
                     self.soros_profit = 0.0
-            _modo_win = f"SOROS {self.soros_step}/{self.soros_max_steps}" if self.use_soros and self.soros_step > 0 else "NORMAL"
+            _modo_win = (
+                f"SOROS {self.soros_step}/{self.soros_max_steps}"
+                if self.use_soros and self.soros_step > 0
+                else "NORMAL"
+            )
             # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
             # Production (handle_buy deducted stake): add stake back + profit.
             # Unit tests (no handle_buy): add only profit (stake was never deducted).
             self.balance = round(self.balance + _stake_deducted + profit, 2)
-            logger.info("WIN %+0.2f | saldo_estimado=%0.2f | modo=%s", profit, self.balance, _modo_win)
+            logger.info(
+                "WIN %+0.2f | saldo_estimado=%0.2f | modo=%s",
+                profit,
+                self.balance,
+                _modo_win,
+            )
         else:
             self.losses += 1
             self.consecutive_losses += 1
@@ -868,12 +1093,18 @@ class RiskManager:
                     self.martingale_base_stake = 0.0
                 else:
                     self.martingale_step += 1
-            self.max_loss_streak_today = max(self.max_loss_streak_today, self.consecutive_losses)
+            self.max_loss_streak_today = max(
+                self.max_loss_streak_today, self.consecutive_losses
+            )
             realized_loss = abs(profit) if profit < 0 else buy_price
             self.daily_loss += realized_loss
             # Record timestamp for frequency-based MDD
             self._recent_loss_times.append(time.monotonic())
-            _modo_loss = f"GALE {self.martingale_step}/{self.martingale_max_gales}" if self.use_martingale and self.martingale_step > 0 else "NORMAL"
+            _modo_loss = (
+                f"GALE {self.martingale_step}/{self.martingale_max_gales}"
+                if self.use_martingale and self.martingale_step > 0
+                else "NORMAL"
+            )
             # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
             # Production (handle_buy already deducted stake): balance is already correct, no change.
             # Unit tests (no handle_buy): deduct the stake here.

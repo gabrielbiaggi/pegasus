@@ -61,7 +61,9 @@ class BotConfig:
     block_weekends: bool
     loss_pause_enabled: bool
     max_loss_per_day: float
-    max_loss_day_pct: float  # 0.0 = use max_loss_per_day; >0 = % of balance (overrides fixed)
+    max_loss_day_pct: (
+        float  # 0.0 = use max_loss_per_day; >0 = % of balance (overrides fixed)
+    )
     max_profit_per_day: float
     stop_loss_pct: float
     stop_gain_pct: float
@@ -79,12 +81,20 @@ class BotConfig:
     martingale_max_gales: int
     martingale_multiplier: float
     martingale_payout_rate: float
-    martingale_max_balance_pct: float  # max % of balance per single bet (0=disabled, e.g. 0.7 = 70%)
-    martingale_min_balance_floor: float  # stop trading if balance drops below this (0=disabled)
+    martingale_max_balance_pct: (
+        float  # max % of balance per single bet (0=disabled, e.g. 0.7 = 70%)
+    )
+    martingale_min_balance_floor: (
+        float  # stop trading if balance drops below this (0=disabled)
+    )
     martingale_lock_config: bool  # lock SL/SG/stake changes while gale is active
     martingale_last_gale_max_ploss: float
-    martingale_last_gale_max_wait_ticks: int  # max ticks to wait in last-gale mode; 0 = wait forever
-    martingale_sniper_max_wait_secs: int  # 0 = wait forever; abandon gale after N secs blocked by SNIPER
+    martingale_last_gale_max_wait_ticks: (
+        int  # max ticks to wait in last-gale mode; 0 = wait forever
+    )
+    martingale_sniper_max_wait_secs: (
+        int  # 0 = wait forever; abandon gale after N secs blocked by SNIPER
+    )
     martingale_mode: str  # "classic" or "fibonacci"
     dynamic_stake_base_pct: float
     journal_dir: str
@@ -134,7 +144,9 @@ class BotConfig:
     accumulator_max_kalman_residual_zscore: float
     accumulator_use_ensemble: bool
     accumulator_ensemble_min_prob: float
-    accumulator_min_barrier_distance_pct: float  # 0.0 = desativado; >0 = % minima da barreira (saida defensiva)
+    accumulator_min_barrier_distance_pct: (
+        float  # 0.0 = desativado; >0 = % minima da barreira (saida defensiva)
+    )
     # Calm ACCU (BOOM1000 calm-entry mode)
     calm_accu_threshold: float
     calm_accu_lookback: int
@@ -193,10 +205,10 @@ class BotConfig:
             calm_min_score=self.calm_accu_min_score,
         )
 
-
     @property
     def rise_fall_strategy_config(self) -> "RiseFallStrategyConfig":
         from strategy import RiseFallStrategyConfig
+
         return RiseFallStrategyConfig(
             min_votes=self.rise_fall_min_votes,
             min_imbalance=self.rise_fall_min_imbalance,
@@ -210,7 +222,9 @@ def load_config() -> BotConfig:
 
     token = os.getenv("DERIV_TOKEN", "").strip()
     if not token:
-        raise ValueError("DERIV_TOKEN nao foi definido. Crie um .env a partir de .env.example.")
+        raise ValueError(
+            "DERIV_TOKEN nao foi definido. Crie um .env a partir de .env.example."
+        )
 
     app_id = os.getenv("DERIV_APP_ID", "1089").strip()
     if not app_id:
@@ -250,8 +264,12 @@ def load_config() -> BotConfig:
         martingale_max_balance_pct=_float_env("MARTINGALE_MAX_BALANCE_PCT", 0.7),
         martingale_min_balance_floor=_float_env("MARTINGALE_MIN_BALANCE_FLOOR", 0.0),
         martingale_lock_config=_bool_env("MARTINGALE_LOCK_CONFIG", True),
-        martingale_last_gale_max_ploss=_float_env("MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05),
-        martingale_last_gale_max_wait_ticks=_int_env("MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0),
+        martingale_last_gale_max_ploss=_float_env(
+            "MARTINGALE_LAST_GALE_MAX_PLOSS", 0.05
+        ),
+        martingale_last_gale_max_wait_ticks=_int_env(
+            "MARTINGALE_LAST_GALE_MAX_WAIT_TICKS", 0
+        ),
         martingale_sniper_max_wait_secs=_int_env("MARTINGALE_SNIPER_MAX_WAIT_SECS", 0),
         martingale_mode=os.getenv("MARTINGALE_MODE", "classic").strip().lower(),
         dynamic_stake_base_pct=_float_env("DYNAMIC_STAKE_BASE_PCT", 0.02),
@@ -262,47 +280,91 @@ def load_config() -> BotConfig:
         reconnect_delay_seconds=_int_env("RECONNECT_DELAY_SECONDS", 10),
         tick_count=_int_env("TICK_COUNT", 300),
         accumulator_growth_rate=_float_env("ACCUMULATOR_GROWTH_RATE", 0.03),
-        accumulator_take_profit_percent=_float_env("ACCUMULATOR_TAKE_PROFIT_PERCENT", 3.0),
+        accumulator_take_profit_percent=_float_env(
+            "ACCUMULATOR_TAKE_PROFIT_PERCENT", 3.0
+        ),
         accumulator_max_hold_ticks=_int_env("ACCUMULATOR_MAX_HOLD_TICKS", 8),
-        accumulator_shadow_barrier_atr_multiplier=_float_env("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER", 5.0),
-        accumulator_shadow_barrier_min_percent=_float_env("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT", 0.03),
-        accumulator_shadow_barrier_max_percent=_float_env("ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT", 0.10),
-        accumulator_shadow_proposal_enabled=_bool_env("ACCUMULATOR_SHADOW_PROPOSAL_ENABLED", True),
-        accumulator_shadow_proposal_throttle_seconds=_int_env("ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS", 5),
-        accumulator_shadow_proposal_min_score=_int_env("ACCUMULATOR_SHADOW_PROPOSAL_MIN_SCORE", 4),
+        accumulator_shadow_barrier_atr_multiplier=_float_env(
+            "ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER", 5.0
+        ),
+        accumulator_shadow_barrier_min_percent=_float_env(
+            "ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT", 0.03
+        ),
+        accumulator_shadow_barrier_max_percent=_float_env(
+            "ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT", 0.10
+        ),
+        accumulator_shadow_proposal_enabled=_bool_env(
+            "ACCUMULATOR_SHADOW_PROPOSAL_ENABLED", True
+        ),
+        accumulator_shadow_proposal_throttle_seconds=_int_env(
+            "ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS", 5
+        ),
+        accumulator_shadow_proposal_min_score=_int_env(
+            "ACCUMULATOR_SHADOW_PROPOSAL_MIN_SCORE", 4
+        ),
         accumulator_cooldown_ticks=_int_env("ACCUMULATOR_COOLDOWN_TICKS", 3),
         accumulator_use_limit_order=_bool_env("ACCUMULATOR_USE_LIMIT_ORDER", False),
         accumulator_min_score=_int_env("ACCUMULATOR_MIN_SCORE", 7),
         accumulator_bb_window=_int_env("ACCUMULATOR_BB_WINDOW", 20),
         accumulator_bb_std_dev=_float_env("ACCUMULATOR_BB_STD_DEV", 2.0),
-        accumulator_max_bb_width_percent=_float_env("ACCUMULATOR_MAX_BB_WIDTH_PERCENT", 0.08),
+        accumulator_max_bb_width_percent=_float_env(
+            "ACCUMULATOR_MAX_BB_WIDTH_PERCENT", 0.08
+        ),
         accumulator_atr_window=_int_env("ACCUMULATOR_ATR_WINDOW", 20),
-        accumulator_max_tick_atr_percent=_float_env("ACCUMULATOR_MAX_TICK_ATR_PERCENT", 0.015),
+        accumulator_max_tick_atr_percent=_float_env(
+            "ACCUMULATOR_MAX_TICK_ATR_PERCENT", 0.015
+        ),
         accumulator_recent_window=_int_env("ACCUMULATOR_RECENT_WINDOW", 5),
-        accumulator_max_recent_move_percent=_float_env("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT", 0.05),
+        accumulator_max_recent_move_percent=_float_env(
+            "ACCUMULATOR_MAX_RECENT_MOVE_PERCENT", 0.05
+        ),
         accumulator_hawkes_alpha=_float_env("ACCUMULATOR_HAWKES_ALPHA", 1.0),
         accumulator_hawkes_beta=_float_env("ACCUMULATOR_HAWKES_BETA", 0.85),
-        accumulator_hawkes_jump_atr_multiplier=_float_env("ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER", 1.5),
-        accumulator_max_hawkes_intensity=_float_env("ACCUMULATOR_MAX_HAWKES_INTENSITY", 0.2),
+        accumulator_hawkes_jump_atr_multiplier=_float_env(
+            "ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER", 1.5
+        ),
+        accumulator_max_hawkes_intensity=_float_env(
+            "ACCUMULATOR_MAX_HAWKES_INTENSITY", 0.2
+        ),
         accumulator_imbalance_window=_int_env("ACCUMULATOR_IMBALANCE_WINDOW", 10),
-        accumulator_max_abs_tick_imbalance=_int_env("ACCUMULATOR_MAX_ABS_TICK_IMBALANCE", 2),
+        accumulator_max_abs_tick_imbalance=_int_env(
+            "ACCUMULATOR_MAX_ABS_TICK_IMBALANCE", 2
+        ),
         accumulator_hurst_window=_int_env("ACCUMULATOR_HURST_WINDOW", 30),
-        accumulator_max_hurst_exponent=_float_env("ACCUMULATOR_MAX_HURST_EXPONENT", 0.45),
+        accumulator_max_hurst_exponent=_float_env(
+            "ACCUMULATOR_MAX_HURST_EXPONENT", 0.45
+        ),
         accumulator_derivative_window=_int_env("ACCUMULATOR_DERIVATIVE_WINDOW", 20),
-        accumulator_max_velocity_zscore=_float_env("ACCUMULATOR_MAX_VELOCITY_ZSCORE", 2.0),
-        accumulator_max_acceleration_zscore=_float_env("ACCUMULATOR_MAX_ACCELERATION_ZSCORE", 2.0),
+        accumulator_max_velocity_zscore=_float_env(
+            "ACCUMULATOR_MAX_VELOCITY_ZSCORE", 2.0
+        ),
+        accumulator_max_acceleration_zscore=_float_env(
+            "ACCUMULATOR_MAX_ACCELERATION_ZSCORE", 2.0
+        ),
         accumulator_integral_window=_int_env("ACCUMULATOR_INTEGRAL_WINDOW", 20),
-        accumulator_max_pmi_distance_percent=_float_env("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT", 0.005),
+        accumulator_max_pmi_distance_percent=_float_env(
+            "ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT", 0.005
+        ),
         accumulator_markov_window=_int_env("ACCUMULATOR_MARKOV_WINDOW", 50),
-        accumulator_max_markov_continuation_prob=_float_env("ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB", 0.45),
-        accumulator_shannon_entropy_window=_int_env("ACCUMULATOR_SHANNON_ENTROPY_WINDOW", 30),
-        accumulator_min_shannon_entropy=_float_env("ACCUMULATOR_MIN_SHANNON_ENTROPY", 0.80),
+        accumulator_max_markov_continuation_prob=_float_env(
+            "ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB", 0.45
+        ),
+        accumulator_shannon_entropy_window=_int_env(
+            "ACCUMULATOR_SHANNON_ENTROPY_WINDOW", 30
+        ),
+        accumulator_min_shannon_entropy=_float_env(
+            "ACCUMULATOR_MIN_SHANNON_ENTROPY", 0.80
+        ),
         accumulator_kalman_q=_float_env("ACCUMULATOR_KALMAN_Q", 1e-5),
         accumulator_kalman_r=_float_env("ACCUMULATOR_KALMAN_R", 1e-2),
-        accumulator_max_kalman_residual_zscore=_float_env("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE", 2.0),
+        accumulator_max_kalman_residual_zscore=_float_env(
+            "ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE", 2.0
+        ),
         accumulator_use_ensemble=_bool_env("USE_ENSEMBLE", False),
         accumulator_ensemble_min_prob=_float_env("ENSEMBLE_MIN_PROB", 0.294),
-        accumulator_min_barrier_distance_pct=_float_env("ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0),
+        accumulator_min_barrier_distance_pct=_float_env(
+            "ACCUMULATOR_MIN_BARRIER_DISTANCE_PCT", 0.0
+        ),
         # Calm ACCU
         calm_accu_threshold=_float_env("CALM_ACCU_THRESHOLD", 7.3e-7),
         calm_accu_lookback=_int_env("CALM_ACCU_LOOKBACK", 10),
@@ -317,7 +379,9 @@ def load_config() -> BotConfig:
         rise_fall_cooldown_ticks=_int_env("RISE_FALL_COOLDOWN_TICKS", 3),
         # Quality gate
         rise_fall_quality_gate=_bool_env("RISE_FALL_QUALITY_GATE", True),
-        rise_fall_qg_min_abs_imbalance=_float_env("RISE_FALL_QG_MIN_ABS_IMBALANCE", 6.0),
+        rise_fall_qg_min_abs_imbalance=_float_env(
+            "RISE_FALL_QG_MIN_ABS_IMBALANCE", 6.0
+        ),
         rise_fall_qg_bayes_strong=_float_env("RISE_FALL_QG_BAYES_STRONG", 0.70),
         rise_fall_qg_hurst_max=_float_env("RISE_FALL_QG_HURST_MAX", 0.50),
     )
@@ -326,27 +390,45 @@ def load_config() -> BotConfig:
         raise ValueError("STAKE precisa ser maior que zero.")
     if config.account_mode not in {"demo", "real", "any"}:
         raise ValueError("ACCOUNT_MODE deve ser demo, real ou any.")
-    if config.contract_mode not in {"accumulator", "calm_accu", "rise_fall", "jump_rise_fall"}:
-        raise ValueError("CONTRACT_MODE deve ser accumulator, calm_accu, rise_fall ou jump_rise_fall.")
+    if config.contract_mode not in {
+        "accumulator",
+        "calm_accu",
+        "rise_fall",
+        "jump_rise_fall",
+    }:
+        raise ValueError(
+            "CONTRACT_MODE deve ser accumulator, calm_accu, rise_fall ou jump_rise_fall."
+        )
     if config.max_loss_day_pct > 0:
         if not 0 < config.max_loss_day_pct <= 1:
-            raise ValueError("MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%).")
+            raise ValueError(
+                "MAX_LOSS_DAY_PCT deve estar entre 0 e 1 (ex: 0.10 = 10%)."
+            )
     elif config.max_loss_per_day <= 0:
-        raise ValueError("MAX_LOSS_PER_DAY precisa ser maior que zero (ou defina MAX_LOSS_DAY_PCT).")
+        raise ValueError(
+            "MAX_LOSS_PER_DAY precisa ser maior que zero (ou defina MAX_LOSS_DAY_PCT)."
+        )
     if config.max_profit_per_day < 0:
         raise ValueError("MAX_PROFIT_PER_DAY nao pode ser negativo.")
     if config.max_trades_per_day <= 0:
         raise ValueError("MAX_TRADES_PER_DAY precisa ser maior que zero.")
     if config.daily_trailing_start < 0 or config.daily_trailing_lock < 0:
         raise ValueError("DAILY_TRAILING_START/LOCK nao podem ser negativos.")
-    if config.daily_trailing_lock > config.daily_trailing_start and config.daily_trailing_start > 0:
-        raise ValueError("DAILY_TRAILING_LOCK nao pode ser maior que DAILY_TRAILING_START.")
+    if (
+        config.daily_trailing_lock > config.daily_trailing_start
+        and config.daily_trailing_start > 0
+    ):
+        raise ValueError(
+            "DAILY_TRAILING_LOCK nao pode ser maior que DAILY_TRAILING_START."
+        )
     if not 0 < config.max_stake_percent <= 1:
         raise ValueError("MAX_STAKE_PERCENT deve estar entre 0 e 1.")
     if config.min_stake <= 0:
         raise ValueError("MIN_STAKE deve ser maior que zero.")
     if config.max_stake > 0 and config.max_stake < config.min_stake:
-        raise ValueError("MAX_STAKE nao pode ser menor que MIN_STAKE (use 0 para desativar o cap absoluto).")
+        raise ValueError(
+            "MAX_STAKE nao pode ser menor que MIN_STAKE (use 0 para desativar o cap absoluto)."
+        )
     if config.soros_max_steps < 0:
         raise ValueError("SOROS_MAX_STEPS nao pode ser negativo.")
     if config.soros_profit_factor < 0:
@@ -355,27 +437,50 @@ def load_config() -> BotConfig:
         raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
     if config.martingale_multiplier < 1.0:
         raise ValueError("MARTINGALE_MULTIPLIER deve ser >= 1.")
-    if config.contract_mode not in {"jump_rise_fall", "calm_accu"} and config.tick_count < config.accumulator_strategy_config.minimum_ticks:
+    # SAFETY: SOROS + MARTINGALE together creates a death spiral on BOOM/CRASH/ACCU markets.
+    # Soros amplifies the stake at the worst possible time (just before a boom hit),
+    # then martingale doubles down on the already-amplified loss. NEVER enable both.
+    if config.use_soros and config.use_martingale:
+        raise ValueError(
+            "USE_SOROS e USE_MARTINGALE nao podem estar ambos habilitados. "
+            "Soros + Gale juntos criam death spiral em mercados BOOM/CRASH. "
+            "Use apenas UM dos dois."
+        )
+    if (
+        config.contract_mode not in {"jump_rise_fall", "calm_accu"}
+        and config.tick_count < config.accumulator_strategy_config.minimum_ticks
+    ):
         raise ValueError(
             f"TICK_COUNT deve ser pelo menos {config.accumulator_strategy_config.minimum_ticks} "
             "para Accumulators."
         )
     if config.accumulator_growth_rate not in {0.01, 0.02, 0.03, 0.04, 0.05}:
-        raise ValueError("ACCUMULATOR_GROWTH_RATE deve ser 0.01, 0.02, 0.03, 0.04 ou 0.05.")
+        raise ValueError(
+            "ACCUMULATOR_GROWTH_RATE deve ser 0.01, 0.02, 0.03, 0.04 ou 0.05."
+        )
     if config.accumulator_take_profit_percent <= 0:
         raise ValueError("ACCUMULATOR_TAKE_PROFIT_PERCENT precisa ser maior que zero.")
     if config.accumulator_max_hold_ticks <= 0:
         raise ValueError("ACCUMULATOR_MAX_HOLD_TICKS precisa ser maior que zero.")
     if config.accumulator_shadow_barrier_atr_multiplier <= 0:
-        raise ValueError("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER precisa ser maior que zero.")
+        raise ValueError(
+            "ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER precisa ser maior que zero."
+        )
     if config.accumulator_shadow_barrier_min_percent <= 0:
-        raise ValueError("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT precisa ser maior que zero.")
-    if config.accumulator_shadow_barrier_max_percent < config.accumulator_shadow_barrier_min_percent:
+        raise ValueError(
+            "ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT precisa ser maior que zero."
+        )
+    if (
+        config.accumulator_shadow_barrier_max_percent
+        < config.accumulator_shadow_barrier_min_percent
+    ):
         raise ValueError(
             "ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT precisa ser >= ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT."
         )
     if config.accumulator_shadow_proposal_throttle_seconds < 1:
-        raise ValueError("ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS precisa ser >= 1.")
+        raise ValueError(
+            "ACCUMULATOR_SHADOW_PROPOSAL_THROTTLE_SECONDS precisa ser >= 1."
+        )
     if config.accumulator_shadow_proposal_min_score < 0:
         raise ValueError("ACCUMULATOR_SHADOW_PROPOSAL_MIN_SCORE nao pode ser negativo.")
     if config.accumulator_cooldown_ticks < 0:
@@ -400,31 +505,43 @@ def load_config() -> BotConfig:
         raise ValueError("ACCUMULATOR_SHANNON_ENTROPY_WINDOW precisa ser maior que 2.")
     if config.accumulator_bb_std_dev <= 0:
         raise ValueError("ACCUMULATOR_BB_STD_DEV precisa ser maior que zero.")
-    if config.accumulator_max_bb_width_percent < 0 or config.accumulator_max_tick_atr_percent < 0:
+    if (
+        config.accumulator_max_bb_width_percent < 0
+        or config.accumulator_max_tick_atr_percent < 0
+    ):
         raise ValueError("Filtros percentuais do accumulator nao podem ser negativos.")
     if config.accumulator_max_recent_move_percent < 0:
         raise ValueError("ACCUMULATOR_MAX_RECENT_MOVE_PERCENT nao pode ser negativo.")
     if config.accumulator_hawkes_alpha < 0 or config.accumulator_hawkes_beta < 0:
         raise ValueError("Parametros Hawkes nao podem ser negativos.")
     if config.accumulator_hawkes_jump_atr_multiplier <= 0:
-        raise ValueError("ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER precisa ser maior que zero.")
+        raise ValueError(
+            "ACCUMULATOR_HAWKES_JUMP_ATR_MULTIPLIER precisa ser maior que zero."
+        )
     if config.accumulator_max_hawkes_intensity < 0:
         raise ValueError("ACCUMULATOR_MAX_HAWKES_INTENSITY nao pode ser negativo.")
     if config.accumulator_max_abs_tick_imbalance < 0:
         raise ValueError("ACCUMULATOR_MAX_ABS_TICK_IMBALANCE nao pode ser negativo.")
     if config.accumulator_max_hurst_exponent <= 0:
         raise ValueError("ACCUMULATOR_MAX_HURST_EXPONENT precisa ser maior que zero.")
-    if config.accumulator_max_velocity_zscore < 0 or config.accumulator_max_acceleration_zscore < 0:
+    if (
+        config.accumulator_max_velocity_zscore < 0
+        or config.accumulator_max_acceleration_zscore < 0
+    ):
         raise ValueError("Limites de z-score das derivadas nao podem ser negativos.")
     if config.accumulator_max_pmi_distance_percent < 0:
         raise ValueError("ACCUMULATOR_MAX_PMI_DISTANCE_PERCENT nao pode ser negativo.")
     if not 0 <= config.accumulator_max_markov_continuation_prob <= 1:
-        raise ValueError("ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB deve estar entre 0 e 1.")
+        raise ValueError(
+            "ACCUMULATOR_MAX_MARKOV_CONTINUATION_PROB deve estar entre 0 e 1."
+        )
     if not 0 <= config.accumulator_min_shannon_entropy <= 1:
         raise ValueError("ACCUMULATOR_MIN_SHANNON_ENTROPY deve estar entre 0 e 1.")
     if config.accumulator_kalman_q <= 0 or config.accumulator_kalman_r <= 0:
         raise ValueError("ACCUMULATOR_KALMAN_Q/R precisam ser maiores que zero.")
     if config.accumulator_max_kalman_residual_zscore < 0:
-        raise ValueError("ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE nao pode ser negativo.")
+        raise ValueError(
+            "ACCUMULATOR_MAX_KALMAN_RESIDUAL_ZSCORE nao pode ser negativo."
+        )
 
     return config
