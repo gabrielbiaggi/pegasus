@@ -86,6 +86,11 @@ class RiskManager:
         )
         self.soros_step = 0
         self.soros_profit = 0.0
+        # Soros post-loss cooldown: após um boom/crash, pula reinvestimento soros
+        # por N trades para evitar exposição composta durante booms clusterizados.
+        # Configurável via SOROS_POST_LOSS_COOLDOWN no .env (padrão=2).
+        self._soros_post_loss_cooldown: int = 0
+        self.soros_post_loss_cooldown_n: int = 2
         self.martingale_step = 0
         self.martingale_accumulated_loss: float = (
             0.0  # soma dos buy_prices perdidos na sequencia atual
@@ -888,18 +893,8 @@ class RiskManager:
                 self._log_ts_trailing = _now
             return False
 
-        # max_trades_day limit removed — bot runs unlimited trades per day
-
-        if self.consecutive_losses >= self.max_consecutive_losses:
-            # Never block during martingale recovery — the gale MUST continue
-            if not (self.use_martingale and self.martingale_step > 0):
-                if _now - self._log_ts_consec >= 60:
-                    logger.warning(
-                        "Limite de losses consecutivos atingido: %s",
-                        self.consecutive_losses,
-                    )
-                    self._log_ts_consec = _now
-                return False
+        # max_trades_day limit removed — somente STOP_LOSS e STOP_GAIN controlam parada
+        # consecutive_losses é apenas métrica — não bloqueia operações
 
         stake = self.get_stake()
         if stake <= 0:
@@ -1036,7 +1031,14 @@ class RiskManager:
                 self.martingale_base_stake = 0.0
             # Soros só ativa em wins limpos (G0), NÃO em recuperações de gale.
             # Após um gale win, o "lucro" bruto é apenas recuperação de perdas, não ganho real.
-            if self.use_soros and self.soros_max_steps > 0 and not _was_gale_win:
+            # Soros post-loss cooldown: se ainda em cooldown pós-boom, conta mas não avança soros.
+            if self._soros_post_loss_cooldown > 0:
+                self._soros_post_loss_cooldown -= 1
+                logger.debug(
+                    "Soros cooldown pós-loss: %d trade(s) restante(s) — soros pausado",
+                    self._soros_post_loss_cooldown,
+                )
+            elif self.use_soros and self.soros_max_steps > 0 and not _was_gale_win:
                 if self.soros_step < self.soros_max_steps:
                     self.soros_step += 1
                     _reinvest = round(profit * self.soros_profit_factor, 2)
@@ -1064,6 +1066,14 @@ class RiskManager:
             self.consecutive_losses += 1
             self.soros_step = 0
             self.soros_profit = 0.0
+            # Ativa cooldown pós-loss: booms no BOOM1000 se clusterizam —
+            # aguarda N trades antes de voltar a reinvestir soros.
+            if self.use_soros and self.soros_post_loss_cooldown_n > 0:
+                self._soros_post_loss_cooldown = self.soros_post_loss_cooldown_n
+                logger.info(
+                    "Soros cooldown ativado por %d trade(s) após loss",
+                    self._soros_post_loss_cooldown,
+                )
             if self.use_martingale:
                 if self.martingale_step == 0:
                     # Primeiro loss: base_stake é SEMPRE o valor base (sem Soros)
