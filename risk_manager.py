@@ -401,6 +401,19 @@ class RiskManager:
                         new_payout,
                     )
                     self.martingale_payout_rate = new_payout
+            # SOROS_POST_LOSS_COOLDOWN live-reload
+            new_cooldown_n = int(
+                env_data.get(
+                    "SOROS_POST_LOSS_COOLDOWN", str(self.soros_post_loss_cooldown_n)
+                )
+            )
+            if new_cooldown_n != self.soros_post_loss_cooldown_n:
+                logger.info(
+                    "Soros post-loss cooldown atualizado: %d → %d",
+                    self.soros_post_loss_cooldown_n,
+                    new_cooldown_n,
+                )
+                self.soros_post_loss_cooldown_n = new_cooldown_n
             # BLOCK_WEEKENDS live-reload
             self.block_weekends = (
                 env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
