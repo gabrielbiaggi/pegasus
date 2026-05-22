@@ -510,7 +510,7 @@
             }
             .signal-bar {
                 display: grid;
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: 1fr 1fr 1fr;
                 gap: 12px;
                 margin-bottom: 16px;
             }
@@ -878,7 +878,7 @@
                     grid-template-columns: repeat(3, 1fr);
                 }
                 .signal-bar {
-                    grid-template-columns: 1fr;
+                    grid-template-columns: 1fr 1fr;
                 }
             }
             @media (max-width: 640px) {
@@ -1418,6 +1418,40 @@
                         id="signal-extra"
                         style="
                             margin-top: 2px;
+                            font-size: 0.68rem;
+                            color: var(--dim);
+                        "
+                    ></div>
+                </div>
+                <!-- Card regime do mercado -->
+                <div class="card" style="text-align: center" id="regime-card">
+                    <div class="card-label">Regime do Mercado</div>
+                    <div
+                        class="card-value"
+                        id="regime-label"
+                        style="font-size: 1.1rem"
+                    >
+                        &mdash;
+                    </div>
+                    <div
+                        class="card-sub"
+                        id="regime-detail"
+                        style="margin-top: 4px; font-size: 0.72rem"
+                    >
+                        &mdash;
+                    </div>
+                    <div class="conf-bar" style="margin-top: 8px">
+                        <div
+                            class="conf-bar-fill"
+                            id="regime-bar"
+                            style="width: 0%"
+                        ></div>
+                    </div>
+                    <div
+                        class="card-sub"
+                        id="regime-blocked"
+                        style="
+                            margin-top: 4px;
                             font-size: 0.68rem;
                             color: var(--dim);
                         "
@@ -3846,6 +3880,53 @@
                     $("hist30d-loading").textContent = "Erro: " + e.message;
                 }
             }
+            async function fetchRegime() {
+                try {
+                    var d = await fetch("/api/regime").then(function (r) {
+                        return r.json();
+                    });
+                    var lbl = $("regime-label"),
+                        det = $("regime-detail"),
+                        bar = $("regime-bar"),
+                        blk = $("regime-blocked");
+                    if (!lbl) return;
+                    var status = d.status || "unknown";
+                    var cusum = d.cusum || 0;
+                    var hurst = d.hurst || 0;
+                    var maxCusum = d.max_cusum || 5.0;
+                    // Label e cor
+                    if (status === "ok") {
+                        lbl.textContent = "\u2705 Pronto";
+                        lbl.style.color = "var(--green)";
+                        bar.style.background = "var(--green)";
+                    } else if (status === "borderline") {
+                        lbl.textContent = "\u26a0\ufe0f Borderline";
+                        lbl.style.color = "var(--yellow)";
+                        bar.style.background = "var(--yellow)";
+                    } else if (status === "wait") {
+                        lbl.textContent = "\u23f3 Aguardando";
+                        lbl.style.color = "var(--red)";
+                        bar.style.background = "var(--red)";
+                    } else {
+                        lbl.textContent = "\u2014";
+                        lbl.style.color = "var(--dim)";
+                        bar.style.background = "var(--dim)";
+                    }
+                    // Detalhes
+                    det.textContent =
+                        "CUSUM=" +
+                        cusum.toFixed(2) +
+                        " | H=" +
+                        hurst.toFixed(3);
+                    // Barra proporcional ao cusum (0-10 scale)
+                    var pct = Math.min((cusum / (maxCusum * 1.5)) * 100, 100);
+                    bar.style.width = pct.toFixed(0) + "%";
+                    // Motivo do bloqueio
+                    var reasons = d.blocked_by || [];
+                    blk.textContent =
+                        reasons.length > 0 ? reasons.join(" | ") : "";
+                } catch (e) {}
+            }
             /* ---- Init & Polling ---- */
             fetchStatus();
             fetchTrades();
@@ -3853,6 +3934,7 @@
             fetchIndicators();
             fetchSessions();
             fetchHistory30d();
+            fetchRegime();
             // Status: 1s — captura trades rapidos (bot pode fechar em <5s)
             setInterval(fetchStatus, 1000);
             // Trades + Logs: 1.5s — sincroniza com ciclo do bot
@@ -3860,6 +3942,8 @@
                 fetchTrades();
                 fetchLogs();
             }, 1500);
+            // Regime do mercado: 1s — mostra se bot esta aguardando ou pronto
+            setInterval(fetchRegime, 1000);
             // Indicadores: 3s — suficiente para live feel
             setInterval(fetchIndicators, 3000);
             setInterval(fetchSessions, 30000);

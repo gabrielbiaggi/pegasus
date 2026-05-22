@@ -830,6 +830,66 @@ def api_logs():
     return {"lines": lines}
 
 
+def _compute_regime(ind: dict) -> dict:
+    """Calcula status do regime de mercado para o dashboard.
+
+    Retorna: status (ok|wait|block), cusum, hurst, motivo do bloqueio.
+    """
+    cusum = float(ind.get("cusum_score") or 0.0)
+    hurst = float(ind.get("hurst_exponent") or 0.5)
+    max_cusum = float(_get_env("CALM_ACCU_MAX_ENTRY_CUSUM") or "5.0")
+    min_hurst = float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.0")
+
+    blocked_by = []
+    if max_cusum > 0 and cusum > max_cusum:
+        blocked_by.append(f"cusum={cusum:.2f} > max={max_cusum:.1f}")
+    if min_hurst > 0 and hurst < min_hurst:
+        blocked_by.append(f"H={hurst:.3f} < min={min_hurst:.2f}")
+
+    if blocked_by:
+        status = "wait"
+    else:
+        status = "ok"
+
+    # Cor: verde=ok, amarelo=borderline (perto do limite), vermelho=bloqueado
+    if status == "ok":
+        if max_cusum > 0 and cusum > max_cusum * 0.85:
+            status = "borderline"
+
+    return {
+        "status": status,
+        "cusum": round(cusum, 2),
+        "hurst": round(hurst, 3),
+        "max_cusum": max_cusum,
+        "min_hurst": min_hurst,
+        "blocked_by": blocked_by,
+        "label": "Mercado OK"
+        if status == "ok"
+        else ("Borderline" if status == "borderline" else "Aguardando calmaria"),
+    }
+
+
+@app.get("/api/regime")
+def api_regime(response: Response):
+    """Endpoint leve só para regime do mercado. Polled a cada 1s pelo dashboard."""
+    response.headers["Cache-Control"] = "no-store, no-cache"
+    live_path = BASE / "logs" / "live_indicators.json"
+    try:
+        if live_path.exists():
+            data = json.loads(live_path.read_text())
+            if data:
+                return _compute_regime(data)
+    except Exception:
+        pass
+    return {
+        "status": "unknown",
+        "label": "Sem dados",
+        "cusum": 0,
+        "hurst": 0,
+        "blocked_by": [],
+    }
+
+
 @app.get("/api/indicators")
 def api_indicators(response: Response):
     """Return latest signal indicators — prefer live file from bot, fallback to DB."""
@@ -843,6 +903,7 @@ def api_indicators(response: Response):
             data = json.loads(live_path.read_text())
             if data:
                 result["latest_signal_indicators"] = data
+                result["regime"] = _compute_regime(data)
                 return result
     except Exception:
         pass
