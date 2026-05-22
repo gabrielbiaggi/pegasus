@@ -910,6 +910,32 @@ class DerivBot:
                 self._gale_wait_ticks = 0
                 self._gale_wait_log_ts = 0.0
             metrics = self._last_tick_metrics(df)
+
+            # ── QUALITY GATE: filtros de indicadores no momento da entrada ──────
+            # Baseado em análise de dados reais: cusum 5.5-7 e H < 0.45 destroem P&L.
+            # Bloqueia entradas na zona de perigo sem parar o bot.
+            if df is not None and not df.empty:
+                _last = df.iloc[-1]
+                _cusum = float(_last.get("cusum_score", 0.0) or 0.0)
+                _hurst = float(_last.get("hurst_exponent", 0.5) or 0.5)
+                _max_cusum = self.config.calm_accu_max_entry_cusum
+                _min_hurst = self.config.accumulator_min_hurst_exponent
+                if _max_cusum > 0 and _cusum > _max_cusum:
+                    logger.info(
+                        "CALM ACCU QUALITY GATE: cusum=%.2f > max=%.2f — skip (zona de perigo)",
+                        _cusum,
+                        _max_cusum,
+                    )
+                    return
+                if _min_hurst > 0 and _hurst < _min_hurst:
+                    logger.info(
+                        "CALM ACCU QUALITY GATE: H=%.3f < min=%.3f — skip (mercado anti-trend)",
+                        _hurst,
+                        _min_hurst,
+                    )
+                    return
+            # ── fim QUALITY GATE ─────────────────────────────────────────────────
+
             _mode = (
                 f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
                 if getattr(self.risk, "use_martingale", False)
