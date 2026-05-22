@@ -80,7 +80,7 @@ def _search_log_backward(pattern: bytes, chunk: int = 65536) -> str:
                 idx = data.rfind(pattern)
                 if idx != -1:
                     eol = data.find(b"\n", idx)
-                    line = data[idx: eol if eol != -1 else len(data)]
+                    line = data[idx : eol if eol != -1 else len(data)]
                     return line.decode("utf-8", errors="replace")
                 # Keep tail bytes in case pattern spans a chunk boundary
                 buf = data[: len(pattern) - 1]
@@ -128,23 +128,23 @@ def _last_jump_signal() -> dict:
     line = _search_log_backward(b"JumpMom ")
     if not line:
         return {}
-    # Format: "JumpMom PUT: ↑1 ↓5 (conf=83%, 5/6 votes)"
     m = re.search(
         r"JumpMom (\w+):\s*\S*?(\d+)\s*\S*?(\d+)\s*\(conf=(\d+)%,\s*(\d+)/(\d+)\s*votes\)",
         line,
     )
     if not m:
-        # Fallback: old format "JumpMom CALL: up=7 dn=0 conf=100.0"
         m = re.search(r"JumpMom (\w+): up=(\d+) dn=(\d+) conf=([\d.]+)", line)
         if not m:
             return {}
         return {
+            "type": "jump",
             "direction": m.group(1),
             "votes_up": int(m.group(2)),
             "votes_down": int(m.group(3)),
             "confidence": float(m.group(4)),
         }
     return {
+        "type": "jump",
         "direction": m.group(1),
         "votes_up": int(m.group(2)),
         "votes_down": int(m.group(3)),
@@ -152,6 +152,79 @@ def _last_jump_signal() -> dict:
         "votes_for": int(m.group(5)),
         "votes_total": int(m.group(6)),
     }
+
+
+def _last_calm_accu_signal() -> dict:
+    """Parse bot log for the latest Calm ACCU signal info."""
+    # Prefer lines with stake info (actual entry), fallback to score-only
+    for keyword in (b"Setup CALM ACCU", b"CALM ACCU ENTRY"):
+        line = _search_log_backward(keyword)
+        if line:
+            break
+    if not line:
+        return {}
+
+    # "CALM ACCU ENTRY: score=29/37 | H=0.482 | cusum=5.39 | P(LOSS)=0.0047"
+    # "Setup CALM ACCU detectado: score=29 stake=6.52 modo=SOROS 1/3 avg_ret<1.50e-06"
+    score, score_max, p_loss, hurst, cusum, stake, mode = (
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+    m = re.search(r"score=(\d+)(?:/(\d+))?", line)
+    if m:
+        score = int(m.group(1))
+        score_max = int(m.group(2)) if m.group(2) else None
+
+    m = re.search(r"P\(LOSS\)=([\d.e+-]+)", line)
+    if m:
+        p_loss = float(m.group(1))
+
+    m = re.search(r"H=([\d.]+)", line)
+    if m:
+        hurst = float(m.group(1))
+
+    m = re.search(r"cusum=([\d.]+)", line)
+    if m:
+        cusum = float(m.group(1))
+
+    m = re.search(r"stake=([\d.]+)", line)
+    if m:
+        stake = float(m.group(1))
+
+    m = re.search(r"modo=(\S+)", line)
+    if m:
+        mode = m.group(1)
+
+    if score is None:
+        return {}
+
+    return {
+        "type": "calm_accu",
+        "direction": "ACCU",
+        "score": score,
+        "score_max": score_max or 37,
+        "p_loss": round(p_loss, 6) if p_loss is not None else None,
+        "hurst": round(hurst, 3) if hurst is not None else None,
+        "cusum": round(cusum, 2) if cusum is not None else None,
+        "stake": stake,
+        "mode": mode,
+        # confidence = 1 - P(LOSS), scaled 0-100 for the bar
+        "confidence": round((1.0 - p_loss) * 100, 1) if p_loss is not None else None,
+    }
+
+
+def _last_signal() -> dict:
+    """Return the latest signal for the active contract mode."""
+    mode = _get_env("CONTRACT_MODE") or "accumulator"
+    if mode in ("calm_accu", "accumulator"):
+        return _last_calm_accu_signal()
+    return _last_jump_signal()
 
 
 def _read_log_tail(n_bytes: int = 65536) -> str:
@@ -176,9 +249,11 @@ def _today_df() -> pd.DataFrame:
     global _pg_trades_cache
     now = _time.monotonic()
     today = datetime.now(timezone.utc).date().isoformat()
-    if (now - _pg_trades_cache["ts"] < 3.0
-            and _pg_trades_cache["today"] == today
-            and _pg_trades_cache["df"] is not None):
+    if (
+        now - _pg_trades_cache["ts"] < 3.0
+        and _pg_trades_cache["today"] == today
+        and _pg_trades_cache["df"] is not None
+    ):
         return _pg_trades_cache["df"]
     try:
         conn = psycopg2.connect(_pg_dsn_str())
@@ -239,12 +314,12 @@ def _set_env(key: str, value: str) -> None:
 
 def _restart_bot() -> None:
     subprocess.run(["screen", "-S", SCREEN_BOT, "-X", "quit"], capture_output=True)
-    import time; time.sleep(1)
+    import time
+
+    time.sleep(1)
     # Limpa sessões mortas antes de criar nova
     subprocess.run(["screen", "-wipe"], capture_output=True)
-    cmd = (
-        f"cd {BASE} && PYTHONUNBUFFERED=1 {VENV_PYTHON} -u bot.py 2>&1 | tee -a logs/bot.log"
-    )
+    cmd = f"cd {BASE} && PYTHONUNBUFFERED=1 {VENV_PYTHON} -u bot.py 2>&1 | tee -a logs/bot.log"
     subprocess.run(["screen", "-dmS", SCREEN_BOT, "bash", "-c", cmd])
 
 
@@ -267,7 +342,9 @@ def _compute_risk_blocked(risk_state: dict) -> bool:
     # Check if loss_block_override is active — user unblocked via dashboard.
     if risk_state.get("loss_block_override", False):
         return False
-    return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(risk_state)
+    return float(risk_state.get("daily_net_profit", 0.0)) <= -_compute_max_loss_day(
+        risk_state
+    )
 
 
 def _get_payout_rate() -> float:
@@ -332,7 +409,7 @@ def api_status(response: Response):
         bal_float = 0.0
     ini_bal = float(risk_state.get("start_of_day_balance", 0)) or _initial_balance()
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
-    signal = _last_jump_signal()
+    signal = _last_signal()  # mode-aware: calm_accu or jump_rise_fall
     return {
         "running": _bot_running(),
         "balance": _read_balance_fast(),
@@ -364,9 +441,15 @@ def api_status(response: Response):
         "martingale_max_gales": int(_get_env("MARTINGALE_MAX_GALES") or "6"),
         "martingale_mode": _get_env("MARTINGALE_MODE") or "classic",
         "martingale_payout_rate": _get_payout_rate(),
-        "martingale_accumulated_loss": round(float(risk_state.get("martingale_accumulated_loss", 0.0)), 2),
-        "martingale_base_stake": round(float(risk_state.get("martingale_base_stake", 0.0)), 2),
-        "martingale_effective_multiplier": _compute_gale_effective_multiplier(risk_state),
+        "martingale_accumulated_loss": round(
+            float(risk_state.get("martingale_accumulated_loss", 0.0)), 2
+        ),
+        "martingale_base_stake": round(
+            float(risk_state.get("martingale_base_stake", 0.0)), 2
+        ),
+        "martingale_effective_multiplier": _compute_gale_effective_multiplier(
+            risk_state
+        ),
         "next_gale_stake": _compute_next_gale_stake(risk_state),
         "pnl_total": pnl_total,
         "initial_balance": ini_bal,
@@ -375,8 +458,16 @@ def api_status(response: Response):
         "stop_gain_pct": float(_get_env("STOP_GAIN_PCT") or "0"),
         "stake_pct": round(float(_get_env("DYNAMIC_STAKE_BASE_PCT") or "0") * 100, 2),
         "stake_value": float(_get_env("STAKE") or "0"),
-        "stop_loss_value": round(bal_float * float(_get_env("STOP_LOSS_PCT") or "0") / 100, 2) if float(_get_env("STOP_LOSS_PCT") or "0") > 0 else float(_get_env("MAX_LOSS_PER_DAY") or "0"),
-        "stop_gain_value": round(bal_float * float(_get_env("STOP_GAIN_PCT") or "0") / 100, 2) if float(_get_env("STOP_GAIN_PCT") or "0") > 0 else float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
+        "stop_loss_value": round(
+            bal_float * float(_get_env("STOP_LOSS_PCT") or "0") / 100, 2
+        )
+        if float(_get_env("STOP_LOSS_PCT") or "0") > 0
+        else float(_get_env("MAX_LOSS_PER_DAY") or "0"),
+        "stop_gain_value": round(
+            bal_float * float(_get_env("STOP_GAIN_PCT") or "0") / 100, 2
+        )
+        if float(_get_env("STOP_GAIN_PCT") or "0") > 0
+        else float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
         "account_mode": _get_env("ACCOUNT_MODE") or "demo",
         "calm_accu_threshold": _get_env("CALM_ACCU_THRESHOLD") or "7.3e-7",
         "calm_accu_lookback": _get_env("CALM_ACCU_LOOKBACK") or "10",
@@ -414,7 +505,9 @@ async def fetch_balance_from_deriv():
             await conn.send(json.dumps({"authorize": token}))
             resp = json.loads(await conn.recv())
             if "error" in resp:
-                raise HTTPException(status_code=400, detail=resp["error"].get("message", "Auth failed"))
+                raise HTTPException(
+                    status_code=400, detail=resp["error"].get("message", "Auth failed")
+                )
             auth = resp.get("authorize", {})
             bal = auth.get("balance", 0)
             # Persist to balance.json
@@ -454,14 +547,16 @@ def api_sessions(response: Response):
         losses = int((grp["result"] == "LOSS").sum())
         total = wins + losses
         pnl = round(float(grp["profit"].sum()), 2)
-        days.append({
-            "date": date,
-            "trades": total,
-            "wins": wins,
-            "losses": losses,
-            "winrate": round(wins / total * 100, 1) if total else 0.0,
-            "pnl": pnl,
-        })
+        days.append(
+            {
+                "date": date,
+                "trades": total,
+                "wins": wins,
+                "losses": losses,
+                "winrate": round(wins / total * 100, 1) if total else 0.0,
+                "pnl": pnl,
+            }
+        )
     # Monthly summary (current month)
     now = datetime.now(timezone.utc)
     month_str = now.strftime("%Y-%m")
@@ -531,8 +626,8 @@ def api_reset(scope: str = "day", response: Response = None):
     scope='day'   → remove today's rows from trades.csv + reset risk_state
     scope='month' → remove current month's rows from trades.csv + reset risk_state
     """
-    from datetime import date as _date
     import shutil
+    from datetime import date as _date
 
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
@@ -583,7 +678,9 @@ def api_reset(scope: str = "day", response: Response = None):
         if scope == "day":
             cur.execute("DELETE FROM trades WHERE timestamp::date = %s", (today,))
         elif scope == "month":
-            cur.execute("DELETE FROM trades WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,))
+            cur.execute(
+                "DELETE FROM trades WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,)
+            )
         deleted = cur.rowcount
         conn.commit()
         cur.close()
@@ -598,7 +695,9 @@ def api_reset(scope: str = "day", response: Response = None):
         if scope == "day":
             cur.execute("DELETE FROM signals WHERE timestamp::date = %s", (today,))
         elif scope == "month":
-            cur.execute("DELETE FROM signals WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,))
+            cur.execute(
+                "DELETE FROM signals WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,)
+            )
         conn.commit()
         cur.close()
         conn.close()
@@ -611,33 +710,53 @@ def api_reset(scope: str = "day", response: Response = None):
 
     # --- archive & truncate trades.log ---
     if TRADES_LOG.exists() and TRADES_LOG.stat().st_size > 0:
-        log_bak = TRADES_LOG.with_suffix(f".log.bak-reset-{now.strftime('%Y%m%d_%H%M%S')}")
+        log_bak = TRADES_LOG.with_suffix(
+            f".log.bak-reset-{now.strftime('%Y%m%d_%H%M%S')}"
+        )
         shutil.copy2(TRADES_LOG, log_bak)
         TRADES_LOG.write_bytes(b"")
 
     # --- restart bot so it picks up fresh state ---
     _restart_bot()
 
-    return {"ok": True, "scope": scope, "msg": f"Histórico '{scope}' resetado ({deleted} trades removidos do DB). Bot reiniciado."}
-
+    return {
+        "ok": True,
+        "scope": scope,
+        "msg": f"Histórico '{scope}' resetado ({deleted} trades removidos do DB). Bot reiniciado.",
+    }
 
 
 class EnvUpdate(BaseModel):
     key: str
     value: str
 
+
 ALLOWED_KEYS = {
-    "BLOCK_WEEKENDS", "STAKE", "ACCOUNT_MODE",
-    "MAX_LOSS_PER_DAY", "MAX_PROFIT_PER_DAY", "MAX_LOSS_DAY_PCT",
-    "STOP_LOSS_PCT", "STOP_GAIN_PCT", "DYNAMIC_STAKE_BASE_PCT",
-    "MAX_TICK_LATENCY_MS", "LOG_LEVEL",
-    "USE_SOROS", "SOROS_MAX_STEPS", "SOROS_PROFIT_FACTOR",
+    "BLOCK_WEEKENDS",
+    "STAKE",
+    "ACCOUNT_MODE",
+    "MAX_LOSS_PER_DAY",
+    "MAX_PROFIT_PER_DAY",
+    "MAX_LOSS_DAY_PCT",
+    "STOP_LOSS_PCT",
+    "STOP_GAIN_PCT",
+    "DYNAMIC_STAKE_BASE_PCT",
+    "MAX_TICK_LATENCY_MS",
+    "LOG_LEVEL",
+    "USE_SOROS",
+    "SOROS_MAX_STEPS",
+    "SOROS_PROFIT_FACTOR",
     "MAX_STAKE",
-    "USE_MARTINGALE", "MARTINGALE_MAX_GALES", "MARTINGALE_PAYOUT_RATE",
+    "USE_MARTINGALE",
+    "MARTINGALE_MAX_GALES",
+    "MARTINGALE_PAYOUT_RATE",
     "MARTINGALE_MODE",
     "INITIAL_BALANCE",
-    "CONTRACT_MODE", "CALM_ACCU_THRESHOLD", "CALM_ACCU_LOOKBACK",
+    "CONTRACT_MODE",
+    "CALM_ACCU_THRESHOLD",
+    "CALM_ACCU_LOOKBACK",
 }
+
 
 @app.post("/api/env")
 def update_env(body: EnvUpdate):
@@ -649,13 +768,17 @@ def update_env(body: EnvUpdate):
         if body.value == "real":
             real_token = _get_env("DERIV_REAL_TOKEN") or ""
             if not real_token:
-                raise HTTPException(status_code=400, detail="DERIV_REAL_TOKEN não configurado no .env")
+                raise HTTPException(
+                    status_code=400, detail="DERIV_REAL_TOKEN não configurado no .env"
+                )
             _set_env("DERIV_TOKEN", real_token)
             _set_env("ALLOW_REAL_TRADING", "true")
         else:
             demo_token = _get_env("DERIV_DEMO_TOKEN") or ""
             if not demo_token:
-                raise HTTPException(status_code=400, detail="DERIV_DEMO_TOKEN não configurado no .env")
+                raise HTTPException(
+                    status_code=400, detail="DERIV_DEMO_TOKEN não configurado no .env"
+                )
             _set_env("DERIV_TOKEN", demo_token)
             _set_env("ALLOW_REAL_TRADING", "false")
         # Auto-restart bot so it connects with the new token
@@ -664,13 +787,22 @@ def update_env(body: EnvUpdate):
     return {"ok": True, "key": body.key, "value": body.value}
 
 
-
 @app.get("/api/trades")
 def api_trades():
     df = _today_df()
     if df.empty:
         return []
-    cols = ["timestamp", "direction", "result", "soros_step", "gale_step", "profit", "score", "stake", "held_ticks"]
+    cols = [
+        "timestamp",
+        "direction",
+        "result",
+        "soros_step",
+        "gale_step",
+        "profit",
+        "score",
+        "stake",
+        "held_ticks",
+    ]
     available = [c for c in cols if c in df.columns]
     records = df[available].iloc[::-1].to_dict(orient="records")
     for r in records:
@@ -749,6 +881,7 @@ def api_indicators(response: Response):
 def api_history30d(balance: float = 10000.0):
     """Return last 30 days of real trade history + forward projections."""
     from datetime import timedelta
+
     pg_dsn = _pg_dsn_str()
     try:
         conn = psycopg2.connect(pg_dsn)
@@ -769,7 +902,10 @@ def api_history30d(balance: float = 10000.0):
 
     # Group by day
     from collections import defaultdict
-    daily: dict[str, dict] = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0, "stakes": []})
+
+    daily: dict[str, dict] = defaultdict(
+        lambda: {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0, "stakes": []}
+    )
     for r in rows:
         ts = r[0]
         day = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
@@ -793,16 +929,18 @@ def api_history30d(balance: float = 10000.0):
         cumulative_pnl += d["pnl"]
         wr = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] > 0 else 0
         avg_stake = sum(d["stakes"]) / len(d["stakes"]) if d["stakes"] else 0
-        days_data.append({
-            "date": day,
-            "trades": d["trades"],
-            "wins": d["wins"],
-            "losses": d["losses"],
-            "pnl": round(d["pnl"], 2),
-            "cumulative_pnl": round(cumulative_pnl, 2),
-            "winrate": wr,
-            "avg_stake": round(avg_stake, 2),
-        })
+        days_data.append(
+            {
+                "date": day,
+                "trades": d["trades"],
+                "wins": d["wins"],
+                "losses": d["losses"],
+                "pnl": round(d["pnl"], 2),
+                "cumulative_pnl": round(cumulative_pnl, 2),
+                "winrate": wr,
+                "avg_stake": round(avg_stake, 2),
+            }
+        )
         equity_curve.append(round(cumulative_pnl, 2))
 
     # Overall stats
@@ -879,8 +1017,12 @@ def api_history30d(balance: float = 10000.0):
             "projected_daily_pnl": round(projected_daily_pnl, 2),
             "pnl_per_dollar_staked": round(pnl_per_dollar_staked, 4),
             "max_drawdown": round(max_dd, 2),
-            "best_day": {"date": best_day["date"], "pnl": best_day["pnl"]} if best_day else None,
-            "worst_day": {"date": worst_day["date"], "pnl": worst_day["pnl"]} if worst_day else None,
+            "best_day": {"date": best_day["date"], "pnl": best_day["pnl"]}
+            if best_day
+            else None,
+            "worst_day": {"date": worst_day["date"], "pnl": worst_day["pnl"]}
+            if worst_day
+            else None,
         },
         "projections": projections,
         "balance": balance,
@@ -890,7 +1032,9 @@ def api_history30d(balance: float = 10000.0):
 @app.get("/", response_class=HTMLResponse)
 @app.head("/")
 def root():
-    content = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    content = (Path(__file__).parent / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
     return HTMLResponse(
         content=content,
         headers={
