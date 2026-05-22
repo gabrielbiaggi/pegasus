@@ -70,20 +70,39 @@ echo "  ✅ Pull OK"
 # ── 4. Restart do bot (opcional) ─────────────────────────────────────────────
 if [ "$DO_RESTART" = true ]; then
     echo ""
-    echo "▶ [4/4] Reiniciando bot..."
+    echo "\u25b6 [4/4] Reiniciando bot..."
     $SSH "$SERVER" "
         screen -S pegasus -X quit 2>/dev/null || true
         sleep 2
         cd $REMOTE_DIR
+
+        # Reset risk_state: zera contadores do dia e deixa start_of_day=0
+        # para que o bot use o saldo real da Deriv como referencia da sessao.
+        python3 - << 'PYEOF'
+import json, datetime, pathlib
+state = {
+    'day': datetime.date.today().isoformat(),
+    'start_of_day_balance': 0.0,
+    'daily_loss': 0.0, 'daily_net_profit': 0.0, 'daily_peak_profit': 0.0,
+    'daily_trailing_active': False, 'trades_today': 0, 'wins': 0, 'losses': 0,
+    'consecutive_losses': 0, 'max_loss_streak_today': 0,
+    'soros_step': 0, 'soros_profit': 0.0,
+    'martingale_step': 0, 'martingale_accumulated_loss': 0.0,
+    'martingale_base_stake': 0.0, 'loss_block_override': False
+}
+pathlib.Path('$REMOTE_DIR/logs/risk_state.json').write_text(json.dumps(state, indent=2))
+print('  risk_state resetado:', state['day'])
+PYEOF
+
         > logs/trades.csv
         > logs/signals.csv
         screen -dmS pegasus bash -c 'cd $REMOTE_DIR && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log'
         sleep 4
         if pgrep -f 'python.*bot.py' > /dev/null; then
-            echo '  ✅ Bot reiniciado OK'
+            echo '  \u2705 Bot reiniciado OK'
             pgrep -a -f 'python.*bot.py'
         else
-            echo '  ❌ ERRO: bot não subiu — cheque os logs!'
+            echo '  \u274c ERRO: bot nao subiu — cheque os logs!'
             tail -20 $REMOTE_DIR/logs/trades.log
             exit 1
         fi
