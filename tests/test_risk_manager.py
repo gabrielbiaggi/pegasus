@@ -258,8 +258,9 @@ class RiskManagerTest(unittest.TestCase):
             risk.update(profit=-1, buy_price=1)  # G1 perde → step=2
             risk.update(profit=-1, buy_price=1)  # G2 perde → step=3
             risk.update(profit=-1, buy_price=1)  # G3 (last gale) perde → RESET → step=0
-            self.assertFalse(risk.can_trade())
-            # Após perder o último gale, a sequência reseta para G0 (começa de novo)
+            # Após perder o último gale, a sequência reseta para G0 e o bot continua.
+            # Regra atual: somente STOP_LOSS/STOP_GAIN bloqueiam can_trade().
+            self.assertTrue(risk.can_trade())
             self.assertEqual(risk.martingale_step, 0)
             self.assertEqual(risk.martingale_accumulated_loss, 0.0)
 

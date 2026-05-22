@@ -794,31 +794,27 @@ class RiskManager:
 
         _now = time.monotonic()
 
-        # PROTEÇÃO: balance floor — se saldo abaixo do mínimo, para tudo (inclusive gale)
+        # Balance floor NÃO bloqueia operação normal.
+        # Regra do usuário: somente STOP_LOSS/STOP_GAIN podem parar o bot.
+        # Floor fica como proteção interna apenas se MARTINGALE estiver ativo e em gale.
         if (
-            self.martingale_min_balance_floor > 0
+            self.use_martingale
+            and self.martingale_step > 0
+            and self.martingale_min_balance_floor > 0
             and self.balance < self.martingale_min_balance_floor
         ):
-            if _now - self._log_ts_loss >= 60:
-                logger.warning(
-                    "⛔ Balance floor atingido: saldo=%.2f < floor=%.2f — PARANDO operacoes (inclusive gale)",
-                    self.balance,
-                    self.martingale_min_balance_floor,
-                )
-                self._log_ts_loss = _now
-            # Se estiver em gale, absorve e reseta para evitar aposta suicida
-            if self.use_martingale and self.martingale_step > 0:
-                logger.warning(
-                    "⛔ Gale %d/%d ABORTADO por balance floor — perdas=%.2f absorvidas",
-                    self.martingale_step,
-                    self.martingale_max_gales,
-                    self.martingale_accumulated_loss,
-                )
-                self.martingale_step = 0
-                self.martingale_accumulated_loss = 0.0
-                self.martingale_base_stake = 0.0
-                self._save_state()
-            return False
+            logger.warning(
+                "⛔ Gale %d/%d ABORTADO por balance floor: saldo=%.2f < floor=%.2f — perdas=%.2f absorvidas",
+                self.martingale_step,
+                self.martingale_max_gales,
+                self.balance,
+                self.martingale_min_balance_floor,
+                self.martingale_accumulated_loss,
+            )
+            self.martingale_step = 0
+            self.martingale_accumulated_loss = 0.0
+            self.martingale_base_stake = 0.0
+            self._save_state()
 
         # PROTEÇÃO: dynamic gale cap — aborta gale se próximo step exige mais que saldo disponível
         if (
@@ -935,24 +931,8 @@ class RiskManager:
             )
             return False
 
-        # Frequency-based drawdown: stop if too many losses in sliding time window
-        # Never block during martingale recovery
-        now = time.monotonic()
-        cutoff = now - self.loss_window_seconds
-        while self._recent_loss_times and self._recent_loss_times[0] < cutoff:
-            self._recent_loss_times.popleft()
-        if len(self._recent_loss_times) >= self.max_losses_in_window:
-            if not (self.use_martingale and self.martingale_step > 0):
-                if now - self._log_ts_freq >= 60:
-                    logger.warning(
-                        "Frequencia de losses excedida: %d losses nos ultimos %.0fs (limite=%d). Bot pausado.",
-                        len(self._recent_loss_times),
-                        self.loss_window_seconds,
-                        self.max_losses_in_window,
-                    )
-                    self._log_ts_freq = now
-                return False
-
+        # Frequência de losses também NÃO bloqueia mais.
+        # Fica apenas registrada em _recent_loss_times para estatística/debug.
         return True
 
     def update(self, profit: float, buy_price: float) -> None:
