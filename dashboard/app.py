@@ -156,16 +156,18 @@ def _last_jump_signal() -> dict:
 
 def _last_calm_accu_signal() -> dict:
     """Parse bot log for the latest Calm ACCU signal info."""
-    # Prefer lines with stake info (actual entry), fallback to score-only
-    for keyword in (b"Setup CALM ACCU", b"CALM ACCU ENTRY"):
-        line = _search_log_backward(keyword)
-        if line:
-            break
+    # Prefer CALM ACCU ENTRY (has score/H/cusum/P(LOSS)) over Setup line (has stake/mode only).
+    # Read both and merge: ENTRY for indicators, Setup for stake/mode.
+    line_entry = _search_log_backward(b"CALM ACCU ENTRY")
+    line_setup = _search_log_backward(b"Setup CALM ACCU")
+    line = line_entry or line_setup
     if not line:
         return {}
 
+    # Parse from the richer line (ENTRY has indicators; Setup has stake/mode).
+    # Merge both when available so we get all fields.
     # "CALM ACCU ENTRY: score=29/37 | H=0.482 | cusum=5.39 | P(LOSS)=0.0047"
-    # "Setup CALM ACCU detectado: score=29 stake=6.52 modo=SOROS 1/3 avg_ret<1.50e-06"
+    # "Setup CALM ACCU detectado: score=29 stake=6.52 modo=SOROS 1/3"
     score, score_max, p_loss, hurst, cusum, stake, mode = (
         None,
         None,
@@ -176,30 +178,32 @@ def _last_calm_accu_signal() -> dict:
         None,
     )
 
-    m = re.search(r"score=(\d+)(?:/(\d+))?", line)
-    if m:
-        score = int(m.group(1))
-        score_max = int(m.group(2)) if m.group(2) else None
-
-    m = re.search(r"P\(LOSS\)=([\d.e+-]+)", line)
-    if m:
-        p_loss = float(m.group(1))
-
-    m = re.search(r"H=([\d.]+)", line)
-    if m:
-        hurst = float(m.group(1))
-
-    m = re.search(r"cusum=([\d.]+)", line)
-    if m:
-        cusum = float(m.group(1))
-
-    m = re.search(r"stake=([\d.]+)", line)
-    if m:
-        stake = float(m.group(1))
-
-    m = re.search(r"modo=(\S+)", line)
-    if m:
-        mode = m.group(1)
+    for src in [l for l in [line_entry, line_setup] if l]:
+        if score is None:
+            m = re.search(r"score=(\d+)(?:/(\d+))?", src)
+            if m:
+                score = int(m.group(1))
+                score_max = int(m.group(2)) if m.group(2) else None
+        if p_loss is None:
+            m = re.search(r"P\(LOSS\)=([\d.e+-]+)", src)
+            if m:
+                p_loss = float(m.group(1))
+        if hurst is None:
+            m = re.search(r"H=([\d.]+)", src)
+            if m:
+                hurst = float(m.group(1))
+        if cusum is None:
+            m = re.search(r"cusum=([\d.]+)", src)
+            if m:
+                cusum = float(m.group(1))
+        if stake is None:
+            m = re.search(r"stake=([\d.]+)", src)
+            if m:
+                stake = float(m.group(1))
+        if mode is None:
+            m = re.search(r"modo=(\S+)", src)
+            if m:
+                mode = m.group(1)
 
     if score is None:
         return {}
