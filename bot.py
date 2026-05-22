@@ -17,20 +17,22 @@ from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
 from strategy import (
+    EnsembleScorer,
+    EnsembleScorerRF,
+    JumpMomentumConfig,
     calculate_tick_indicators,
     generate_accumulator_signal,
     generate_calm_accu_signal,
-    generate_rise_fall_signal,
     generate_jump_momentum_signal,
-    JumpMomentumConfig,
-    EnsembleScorer,
-    EnsembleScorerRF,
+    generate_rise_fall_signal,
 )
 
 #: Maximum acceptable tick age in seconds before an entry is skipped.
 #: Configurable via MAX_TICK_LATENCY_MS env var (default 2000ms to handle
 #: real-world network latency between Deriv servers and the bot host).
-MAX_TICK_LATENCY_SECONDS: float = float(os.getenv("MAX_TICK_LATENCY_MS", "2000")) / 1000.0
+MAX_TICK_LATENCY_SECONDS: float = (
+    float(os.getenv("MAX_TICK_LATENCY_MS", "2000")) / 1000.0
+)
 
 
 class FatalBotError(RuntimeError):
@@ -74,10 +76,14 @@ class DerivBot:
         self._waiting_since: float = 0.0
         self._gale_wait_log_ts: float = 0.0  # throttle log para aguardo do último gale
         self._gale_wait_ticks: int = 0  # contador de ticks em modo wait do último gale
-        self._sniper_wait_start: float = 0.0   # monotonic time when current gale step was first blocked by SNIPER
-        self._sniper_wait_step: int = -1        # gale step associated with _sniper_wait_start
+        self._sniper_wait_start: float = (
+            0.0  # monotonic time when current gale step was first blocked by SNIPER
+        )
+        self._sniper_wait_step: int = -1  # gale step associated with _sniper_wait_start
         self._gale_locked_direction = None  # Lock direction during gale
-        self._gale_exhaustion_epoch: int = 0  # epoch when last gale sequence exhausted (cooldown)
+        self._gale_exhaustion_epoch: int = (
+            0  # epoch when last gale sequence exhausted (cooldown)
+        )
         # Rise/Fall specific state
         self._rf_ensemble_scorer: EnsembleScorerRF | None = None
         if config.rise_fall_use_ensemble:
@@ -89,15 +95,17 @@ class DerivBot:
         self.last_rf_entry_epoch: Optional[int] = None  # cooldown for RF
         # Multi-contract gale: split gale stake across N simultaneous contracts
         # when required stake exceeds Deriv API's per-contract limit ($1,000).
-        self._gale_queue: list[float] = []           # remaining stakes to buy
-        self._gale_ids: set[int] = set()             # all contract IDs in group
+        self._gale_queue: list[float] = []  # remaining stakes to buy
+        self._gale_ids: set[int] = set()  # all contract IDs in group
         self._gale_id_stakes: dict[int, float] = {}  # {cid: buy_price} for TP tracking
-        self._gale_expected: int = 0                 # total contracts in group
-        self._gale_total_stake: float = 0.0          # nominal total (pre-split)
-        self._gale_settled: dict[int, float] = {}    # {cid: profit} settled so far
+        self._gale_expected: int = 0  # total contracts in group
+        self._gale_total_stake: float = 0.0  # nominal total (pre-split)
+        self._gale_settled: dict[int, float] = {}  # {cid: profit} settled so far
         self._gale_order: Optional[PendingOrder] = None  # first order (for logging)
         self._gale_sell_requested: set[int] = set()  # contracts already sell-requested
-        self._last_tick_time: float = 0.0  # epoch of last live tick received (for watchdog)
+        self._last_tick_time: float = (
+            0.0  # epoch of last live tick received (for watchdog)
+        )
         self._pause_log_ts: float = 0.0  # throttle "Bot pausado" log (once per 60s)
         self._balance_file = os.path.join(config.journal_dir, "balance.json")
 
@@ -112,13 +120,26 @@ class DerivBot:
             pass
 
     _LIVE_IND_KEYS = (
-        "bb_width_percent", "tick_atr_percent", "recent_move_percent",
-        "hurst_exponent", "tick_imbalance", "hawkes_intensity",
-        "velocity_zscore", "acceleration_zscore", "pmi_distance_percent",
-        "markov_p_up_given_up", "markov_p_down_given_down",
-        "shannon_entropy", "kalman_residual_zscore",
-        "bayesian_prob_up", "renyi_entropy", "fisher_information",
-        "wavelet_energy_ratio", "cusum_score", "tail_dependence", "mi_flow",
+        "bb_width_percent",
+        "tick_atr_percent",
+        "recent_move_percent",
+        "hurst_exponent",
+        "tick_imbalance",
+        "hawkes_intensity",
+        "velocity_zscore",
+        "acceleration_zscore",
+        "pmi_distance_percent",
+        "markov_p_up_given_up",
+        "markov_p_down_given_down",
+        "shannon_entropy",
+        "kalman_residual_zscore",
+        "bayesian_prob_up",
+        "renyi_entropy",
+        "fisher_information",
+        "wavelet_energy_ratio",
+        "cusum_score",
+        "tail_dependence",
+        "mi_flow",
     )
 
     def _write_live_indicators(self, df) -> None:
@@ -142,7 +163,9 @@ class DerivBot:
         except Exception:
             pass
 
-    async def send(self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]) -> None:
+    async def send(
+        self, ws: websockets.WebSocketClientProtocol, payload: dict[str, Any]
+    ) -> None:
         await ws.send(json.dumps(payload))
 
     async def authorize(self, ws: websockets.WebSocketClientProtocol) -> None:
@@ -195,7 +218,12 @@ class DerivBot:
             self.pending_order = None
             return
 
-        logger.info("Solicitando proposta ACCU | stake=%.2f | ativo=%s | epoch=%s", stake, self.config.symbol, entry_epoch)
+        logger.info(
+            "Solicitando proposta ACCU | stake=%.2f | ativo=%s | epoch=%s",
+            stake,
+            self.config.symbol,
+            entry_epoch,
+        )
         payload: dict[str, Any] = {
             "proposal": 1,
             "amount": stake,
@@ -208,7 +236,9 @@ class DerivBot:
 
         if self.config.accumulator_use_limit_order:
             payload["limit_order"] = {
-                "take_profit": round(stake * self.config.accumulator_take_profit_percent / 100, 2)
+                "take_profit": round(
+                    stake * self.config.accumulator_take_profit_percent / 100, 2
+                )
             }
 
         await self.send(ws, payload)
@@ -238,7 +268,10 @@ class DerivBot:
         if self.config.dry_run:
             logger.info(
                 "DRY_RUN RF %s score=%s stake=%.2f entry=%s. Nenhuma ordem enviada.",
-                direction, score, stake, entry_epoch,
+                direction,
+                score,
+                stake,
+                entry_epoch,
             )
             self.last_rf_entry_epoch = entry_epoch
             self.pending_order = None
@@ -246,7 +279,11 @@ class DerivBot:
 
         logger.info(
             "Solicitando proposta RF %s | stake=%.2f | ativo=%s | duration=%dt | epoch=%s",
-            direction, stake, self.config.symbol, self.config.rise_fall_duration_ticks, entry_epoch,
+            direction,
+            stake,
+            self.config.symbol,
+            self.config.rise_fall_duration_ticks,
+            entry_epoch,
         )
         payload: dict[str, Any] = {
             "proposal": 1,
@@ -260,7 +297,9 @@ class DerivBot:
         }
         await self.send(ws, payload)
 
-    async def buy_from_proposal(self, ws: websockets.WebSocketClientProtocol, proposal: dict[str, Any]) -> None:
+    async def buy_from_proposal(
+        self, ws: websockets.WebSocketClientProtocol, proposal: dict[str, Any]
+    ) -> None:
         if not self.pending_order:
             logger.warning("Proposta recebida sem ordem pendente.")
             return
@@ -275,10 +314,17 @@ class DerivBot:
         self.waiting_for_result = True
         self._waiting_since = time.monotonic()
         direction = getattr(self.pending_order, "direction", "ACCU")
-        logger.info("Comprando %s | proposal_id=%s | price=%s", direction, proposal_id, ask_price)
+        logger.info(
+            "Comprando %s | proposal_id=%s | price=%s",
+            direction,
+            proposal_id,
+            ask_price,
+        )
         await self.send(ws, {"buy": proposal_id, "price": ask_price})
 
-    async def subscribe_contract(self, ws: websockets.WebSocketClientProtocol, contract_id: int) -> None:
+    async def subscribe_contract(
+        self, ws: websockets.WebSocketClientProtocol, contract_id: int
+    ) -> None:
         await self.send(
             ws,
             {
@@ -315,7 +361,9 @@ class DerivBot:
         self.tick_buffer.append(normalized)
         return True
 
-    async def evaluate_tick(self, ws: websockets.WebSocketClientProtocol, tick_epoch: int) -> None:
+    async def evaluate_tick(
+        self, ws: websockets.WebSocketClientProtocol, tick_epoch: int
+    ) -> None:
         _is_rf_like = self.config.contract_mode in {"rise_fall", "jump_rise_fall"}
 
         if self.waiting_for_result:
@@ -333,13 +381,17 @@ class DerivBot:
                         buy_price,
                     )
                     self.risk.update(profit=-buy_price, buy_price=buy_price)
+                    self._flush_balance(
+                        self.risk.balance
+                    )  # atualiza dashboard imediatamente
                     logger.info(self.risk.stats())
                 elif self.risk:
                     # Sem pending_order mas em gale — reseta martingale para evitar step fantasma
                     if self.risk.use_martingale and self.risk.martingale_step > 0:
                         logger.warning(
                             "⚠️ Timeout sem pending_order durante gale %d/%d — resetando martingale (perdas=%.2f absorvidas)",
-                            self.risk.martingale_step, self.risk.martingale_max_gales,
+                            self.risk.martingale_step,
+                            self.risk.martingale_max_gales,
                             self.risk.martingale_accumulated_loss,
                         )
                         self.risk.martingale_step = 0
@@ -380,14 +432,20 @@ class DerivBot:
                 or (dow == 4 and tick_hour >= 21)  # Friday from 21:00 UTC
             )
             if is_blocked_period:
-                logger.info("Fim de semana bloqueado (BLOCK_WEEKENDS=true): dow=%s hour=%s", dow, tick_hour)
+                logger.info(
+                    "Fim de semana bloqueado (BLOCK_WEEKENDS=true): dow=%s hour=%s",
+                    dow,
+                    tick_hour,
+                )
                 return
 
         # Compute indicators on EVERY tick for live dashboard
         # (before cooldown/risk checks so indicators stay fresh)
         _tick_snapshot = list(self.tick_buffer)
         df = await asyncio.to_thread(
-            calculate_tick_indicators, _tick_snapshot, config=self.config.accumulator_strategy_config
+            calculate_tick_indicators,
+            _tick_snapshot,
+            config=self.config.accumulator_strategy_config,
         )
         self._write_live_indicators(df)
 
@@ -416,7 +474,8 @@ class DerivBot:
                 if ticks_since_rf <= self.config.rise_fall_cooldown_ticks:
                     logger.debug(
                         "Cooldown JumpRF ativo: %s tick(s) desde ultima entrada; minimo=%s.",
-                        ticks_since_rf, self.config.rise_fall_cooldown_ticks + 1,
+                        ticks_since_rf,
+                        self.config.rise_fall_cooldown_ticks + 1,
                     )
                     return
 
@@ -435,11 +494,17 @@ class DerivBot:
                 qg_hurst_max=self.config.rise_fall_qg_hurst_max,
             )
             signal, score, confidence = await asyncio.to_thread(
-                generate_jump_momentum_signal, _tick_snapshot, config=_jm_config, df=df,
+                generate_jump_momentum_signal,
+                _tick_snapshot,
+                config=_jm_config,
+                df=df,
             )
 
             # --- GALE DIRECTION LOCK + CONFIDENCE FILTER ---
-            _in_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+            _in_gale = (
+                getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
+            )
 
             # Cooldown after gale exhaustion: wait 30 ticks before new sequence
             if not _in_gale and self._gale_exhaustion_epoch > 0:
@@ -455,7 +520,11 @@ class DerivBot:
 
             if signal not in {"CALL", "PUT"}:
                 if _in_gale:
-                    logger.debug("GALE %d/%d: sem sinal JumpRF — aguardando.", self.risk.martingale_step, self.risk.martingale_max_gales)
+                    logger.debug(
+                        "GALE %d/%d: sem sinal JumpRF — aguardando.",
+                        self.risk.martingale_step,
+                        self.risk.martingale_max_gales,
+                    )
                 else:
                     logger.debug("Sem setup JumpRF no tick %s.", tick_epoch)
                 return
@@ -474,11 +543,16 @@ class DerivBot:
                             # Novo nível de gale — reinicia o contador
                             self._sniper_wait_start = time.monotonic()
                             self._sniper_wait_step = _step
-                        elif (time.monotonic() - self._sniper_wait_start) >= _sniper_max_secs:
+                        elif (
+                            time.monotonic() - self._sniper_wait_start
+                        ) >= _sniper_max_secs:
                             _waited = time.monotonic() - self._sniper_wait_start
                             logger.warning(
                                 "⏰ SNIPER TIMEOUT G%d: aguardando há %.0fs (limite=%ds) — absorvendo perdas=%.2f e resetando",
-                                _step, _waited, _sniper_max_secs, self.risk.martingale_accumulated_loss,
+                                _step,
+                                _waited,
+                                _sniper_max_secs,
+                                self.risk.martingale_accumulated_loss,
                             )
                             self._sniper_wait_start = 0.0
                             self._sniper_wait_step = -1
@@ -521,7 +595,9 @@ class DerivBot:
                     if _ind_valid("cusum_score") and _cusum > _max_cusum:
                         logger.info(
                             "🎯 SNIPER G%d: cusum=%.2f > %.2f — aguardando regime calmo.",
-                            _step, _cusum, _max_cusum,
+                            _step,
+                            _cusum,
+                            _max_cusum,
                         )
                         return
                     # Hurst: 0.60 no G4, -0.01/step, piso 0.48
@@ -529,7 +605,9 @@ class DerivBot:
                     if _ind_valid("hurst_exponent") and _hurst > _max_hurst:
                         logger.info(
                             "🎯 SNIPER G%d: hurst=%.3f > %.3f — aguardando mercado lateral.",
-                            _step, _hurst, _max_hurst,
+                            _step,
+                            _hurst,
+                            _max_hurst,
                         )
                         return
                     # Bayesian: contra-direction safety — só bloqueia se bayes
@@ -538,26 +616,33 @@ class DerivBot:
                     _bayes_contra = max(0.30 - (_step - 4) * 0.01, 0.20)
                     if _ind_valid("bayesian_prob_up"):
                         _bayes_block = (
-                            (_bayes < _bayes_contra and signal == "CALL")
-                            or (_bayes > (1.0 - _bayes_contra) and signal == "PUT")
-                        )
+                            _bayes < _bayes_contra and signal == "CALL"
+                        ) or (_bayes > (1.0 - _bayes_contra) and signal == "PUT")
                         if _bayes_block:
                             logger.info(
                                 "🎯 SNIPER G%d: bayes=%.3f contra %s (limite %.2f/%.2f) — aguardando.",
-                                _step, _bayes, signal, _bayes_contra, 1.0 - _bayes_contra,
+                                _step,
+                                _bayes,
+                                signal,
+                                _bayes_contra,
+                                1.0 - _bayes_contra,
                             )
                             return
                 elif _step >= 3:
                     if _ind_valid("cusum_score") and _cusum > 7.0:
                         logger.info(
                             "GALE %d/%d: cusum=%.2f > 7.0 — aguardando estabilizar.",
-                            _step, self.risk.martingale_max_gales, _cusum,
+                            _step,
+                            self.risk.martingale_max_gales,
+                            _cusum,
                         )
                         return
                     if _ind_valid("hurst_exponent") and _hurst > 0.65:
                         logger.info(
                             "GALE %d/%d: hurst=%.3f > 0.65 — aguardando.",
-                            _step, self.risk.martingale_max_gales, _hurst,
+                            _step,
+                            self.risk.martingale_max_gales,
+                            _hurst,
                         )
                         return
 
@@ -566,17 +651,23 @@ class DerivBot:
                     _wavelet = _ind("wavelet_energy_ratio", 0.0)
                     _mi = _ind("mi_flow", 0.0)
                     # Wavelet SNR: sinal limpo — skip se indicador retorna 0 (inativo)
-                    if _ind_valid("wavelet_energy_ratio") and _wavelet > 0.0 and _wavelet < 0.30:
+                    if (
+                        _ind_valid("wavelet_energy_ratio")
+                        and _wavelet > 0.0
+                        and _wavelet < 0.30
+                    ):
                         logger.info(
                             "🔬 DEEP G%d: wavelet=%.3f < 0.30 — sinal ruidoso, aguardando.",
-                            _step, _wavelet,
+                            _step,
+                            _wavelet,
                         )
                         return
                     # MI: estrutura previsível (>0.01)
                     if _ind_valid("mi_flow") and _mi < 0.01:
                         logger.info(
                             "🔬 DEEP G%d: mi_flow=%.4f < 0.01 — sem estrutura, aguardando.",
-                            _step, _mi,
+                            _step,
+                            _mi,
                         )
                         return
 
@@ -588,14 +679,16 @@ class DerivBot:
                     if _ind_valid("shannon_entropy") and _shannon > 0.95:
                         logger.info(
                             "🔬 ULTRA G%d: shannon=%.3f > 0.95 — mercado disperso, aguardando.",
-                            _step, _shannon,
+                            _step,
+                            _shannon,
                         )
                         return
                     # Fisher alto = distribuição apertada = confiável
                     if _ind_valid("fisher_information") and _fisher < 0.01:
                         logger.info(
                             "🔬 ULTRA G%d: fisher=%.4f < 0.01 — distribuição frouxa, aguardando.",
-                            _step, _fisher,
+                            _step,
+                            _fisher,
                         )
                         return
 
@@ -605,7 +698,8 @@ class DerivBot:
                     if _ind_valid("lyapunov_exponent") and _lyap > 1.0:
                         logger.info(
                             "🔬 EXTREME G%d: lyapunov=%.3f > 1.00 — mercado caótico, aguardando.",
-                            _step, _lyap,
+                            _step,
+                            _lyap,
                         )
                         return
 
@@ -619,42 +713,58 @@ class DerivBot:
                 if confidence is not None and confidence < _gale_min_conf:
                     logger.debug(
                         "GALE %d/%d: conf=%.0f%% < min=%.0f%% — aguardando sinal mais forte.",
-                        _step, self.risk.martingale_max_gales,
-                        confidence * 100, _gale_min_conf * 100,
+                        _step,
+                        self.risk.martingale_max_gales,
+                        confidence * 100,
+                        _gale_min_conf * 100,
                     )
                     return
                 if score < _gale_min_score:
                     logger.debug(
                         "GALE %d/%d: score=%d < min=%d — aguardando sinal mais forte.",
-                        _step, self.risk.martingale_max_gales,
-                        score, _gale_min_score,
+                        _step,
+                        self.risk.martingale_max_gales,
+                        score,
+                        _gale_min_score,
                     )
                     return
 
                 # ── DIRECTION LOCK: inversão precisa conf >= lock threshold ──
                 # G1-6: 80%, G7-9: 85%, G10+: 90% (mais fundo = mais difícil inverter)
                 _invert_min_conf = 0.80 if _step < 7 else (0.85 if _step < 10 else 0.90)
-                if self._gale_locked_direction is not None and signal != self._gale_locked_direction:
+                if (
+                    self._gale_locked_direction is not None
+                    and signal != self._gale_locked_direction
+                ):
                     if confidence is not None and confidence >= _invert_min_conf:
                         logger.info(
                             "GALE %d/%d: invertendo %s→%s (conf=%.0f%% >= %.0f%%)",
-                            self.risk.martingale_step, self.risk.martingale_max_gales,
-                            self._gale_locked_direction, signal, confidence * 100, _invert_min_conf * 100,
+                            self.risk.martingale_step,
+                            self.risk.martingale_max_gales,
+                            self._gale_locked_direction,
+                            signal,
+                            confidence * 100,
+                            _invert_min_conf * 100,
                         )
                         self._gale_locked_direction = signal
                     else:
                         logger.debug(
                             "GALE %d/%d: sinal %s != lock %s e conf=%.0f%% < %.0f%% — ignorando.",
-                            self.risk.martingale_step, self.risk.martingale_max_gales,
-                            signal, self._gale_locked_direction,
-                            (confidence or 0) * 100, _invert_min_conf * 100,
+                            self.risk.martingale_step,
+                            self.risk.martingale_max_gales,
+                            signal,
+                            self._gale_locked_direction,
+                            (confidence or 0) * 100,
+                            _invert_min_conf * 100,
                         )
                         return
                 elif self._gale_locked_direction is None:
                     self._gale_locked_direction = signal
                     logger.info(
                         "GALE %d/%d: travando direção=%s para sequência de gale.",
-                        self.risk.martingale_step, self.risk.martingale_max_gales, signal,
+                        self.risk.martingale_step,
+                        self.risk.martingale_max_gales,
+                        signal,
                     )
                 signal = self._gale_locked_direction
             else:
@@ -663,12 +773,17 @@ class DerivBot:
                     self._gale_locked_direction = None
 
             stake = self.risk.get_stake()
-            if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+            if (
+                getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
+            ):
                 raw_gale = self.risk.get_gale_raw_stake()
                 if raw_gale > stake:
                     logger.info(
                         "GALE JumpRF cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f)",
-                        raw_gale, stake, self.config.max_stake,
+                        raw_gale,
+                        stake,
+                        self.config.max_stake,
                     )
 
             if self._gale_wait_ticks > 0:
@@ -679,18 +794,23 @@ class DerivBot:
                 metrics["jump_confidence"] = round(confidence, 4)
             _mode = (
                 f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
-                if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+                if getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
                 else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
                 if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
                 else "NORMAL"
             )
             logger.info(
                 "Setup JumpRF %s detectado: score=%s stake=%.2f conf=%s modo=%s",
-                signal, score, stake,
+                signal,
+                score,
+                stake,
                 f"{confidence:.4f}" if confidence is not None else "N/A",
                 _mode,
             )
-            await self.request_rise_fall_proposal(ws, stake, signal, score, tick_epoch, metrics=metrics)
+            await self.request_rise_fall_proposal(
+                ws, stake, signal, score, tick_epoch, metrics=metrics
+            )
             return
 
         # ---- Rise/Fall mode ----
@@ -700,7 +820,8 @@ class DerivBot:
                 if ticks_since_rf <= self.config.rise_fall_cooldown_ticks:
                     logger.debug(
                         "Cooldown RF ativo: %s tick(s) desde ultima entrada; minimo=%s.",
-                        ticks_since_rf, self.config.rise_fall_cooldown_ticks + 1,
+                        ticks_since_rf,
+                        self.config.rise_fall_cooldown_ticks + 1,
                     )
                     return
 
@@ -716,12 +837,17 @@ class DerivBot:
                 return
 
             stake = self.risk.get_stake()
-            if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+            if (
+                getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
+            ):
                 raw_gale = self.risk.get_gale_raw_stake()
                 if raw_gale > stake:
                     logger.info(
                         "GALE RF cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f)",
-                        raw_gale, stake, self.config.max_stake,
+                        raw_gale,
+                        stake,
+                        self.config.max_stake,
                     )
 
             if self._gale_wait_ticks > 0:
@@ -730,18 +856,23 @@ class DerivBot:
             metrics = self._last_tick_metrics(df)
             _mode = (
                 f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
-                if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+                if getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
                 else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
                 if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
                 else "NORMAL"
             )
             logger.info(
                 "Setup RF %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
-                signal, score, stake,
+                signal,
+                score,
+                stake,
                 f"{p_dir:.4f}" if p_dir is not None else "N/A",
                 _mode,
             )
-            await self.request_rise_fall_proposal(ws, stake, signal, score, tick_epoch, metrics=metrics)
+            await self.request_rise_fall_proposal(
+                ws, stake, signal, score, tick_epoch, metrics=metrics
+            )
             return
 
         # ---- Calm ACCU mode (BOOM1000 calm-entry) ----
@@ -759,30 +890,44 @@ class DerivBot:
                 logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)
                 return
             stake = self.risk.get_stake()
-            if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+            if (
+                getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
+            ):
                 raw_gale = self.risk.get_gale_raw_stake()
                 if raw_gale > stake:
                     logger.info(
                         "GALE cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f) — recuperacao parcial",
-                        raw_gale, stake, self.config.max_stake,
+                        raw_gale,
+                        stake,
+                        self.config.max_stake,
                     )
             if self._gale_wait_ticks > 0:
-                logger.info("✅ Sinal seguro encontrado após %d ticks de espera", self._gale_wait_ticks)
+                logger.info(
+                    "✅ Sinal seguro encontrado após %d ticks de espera",
+                    self._gale_wait_ticks,
+                )
                 self._gale_wait_ticks = 0
                 self._gale_wait_log_ts = 0.0
             metrics = self._last_tick_metrics(df)
             _mode = (
                 f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
-                if getattr(self.risk, 'use_martingale', False) and self.risk.martingale_step > 0
+                if getattr(self.risk, "use_martingale", False)
+                and self.risk.martingale_step > 0
                 else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
-                if getattr(self.risk, 'use_soros', False) and self.risk.soros_step > 0
+                if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
                 else "NORMAL"
             )
             logger.info(
                 "Setup CALM ACCU detectado: score=%s stake=%.2f modo=%s avg_ret<%.2e",
-                score, stake, _mode, self.config.calm_accu_threshold,
+                score,
+                stake,
+                _mode,
+                self.config.calm_accu_threshold,
             )
-            await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
+            await self.request_accumulator_proposal(
+                ws, stake, score, tick_epoch, metrics=metrics
+            )
             return
 
         # ---- Accumulator mode (default) ----
@@ -798,12 +943,17 @@ class DerivBot:
             return
 
         stake = self.risk.get_stake()
-        if getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0:
+        if (
+            getattr(self.risk, "use_martingale", False)
+            and self.risk.martingale_step > 0
+        ):
             raw_gale = self.risk.get_gale_raw_stake()
             if raw_gale > stake:
                 logger.info(
                     "GALE cap: stake_full=%.2f → capped=%.2f (MAX_STAKE=%.2f) — recuperacao parcial",
-                    raw_gale, stake, self.config.max_stake,
+                    raw_gale,
+                    stake,
+                    self.config.max_stake,
                 )
             # Proteção: não entrar no último gale com P(LOSS) alto — AGUARDA sinal seguro
             max_ploss = self.config.martingale_last_gale_max_ploss
@@ -830,7 +980,11 @@ class DerivBot:
                     return
                 _now = time.monotonic()
                 if _now - self._gale_wait_log_ts >= 10.0:
-                    wait_info = f"{self._gale_wait_ticks}/{max_wait}t" if max_wait > 0 else f"{self._gale_wait_ticks}t"
+                    wait_info = (
+                        f"{self._gale_wait_ticks}/{max_wait}t"
+                        if max_wait > 0
+                        else f"{self._gale_wait_ticks}t"
+                    )
                     logger.warning(
                         "⏳ Gale %d/%d aguardando P(LOSS) < %.0f%% — atual=%.1f%% (%s) (stake salva=%.2f)",
                         self.risk.martingale_step,
@@ -843,15 +997,19 @@ class DerivBot:
                     self._gale_wait_log_ts = _now
                 return  # mantém estado do gale, aguarda próximo tick seguro
         if self._gale_wait_ticks > 0:
-            logger.info("✅ Sinal seguro encontrado após %d ticks de espera", self._gale_wait_ticks)
+            logger.info(
+                "✅ Sinal seguro encontrado após %d ticks de espera",
+                self._gale_wait_ticks,
+            )
             self._gale_wait_ticks = 0
             self._gale_wait_log_ts = 0.0
         metrics = self._last_tick_metrics(df)
         _mode = (
             f"GALE {self.risk.martingale_step}/{self.risk.martingale_max_gales}"
-            if getattr(self.risk, 'use_martingale', False) and self.risk.martingale_step > 0
+            if getattr(self.risk, "use_martingale", False)
+            and self.risk.martingale_step > 0
             else f"SOROS {self.risk.soros_step}/{self.risk.soros_max_steps}"
-            if getattr(self.risk, 'use_soros', False) and self.risk.soros_step > 0
+            if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
             else "NORMAL"
         )
         logger.info(
@@ -861,7 +1019,9 @@ class DerivBot:
             f"{p_loss:.4f}" if p_loss is not None else "N/A",
             _mode,
         )
-        await self.request_accumulator_proposal(ws, stake, score, tick_epoch, metrics=metrics)
+        await self.request_accumulator_proposal(
+            ws, stake, score, tick_epoch, metrics=metrics
+        )
 
     @staticmethod
     def _last_tick_metrics(df: Any) -> dict[str, float]:
@@ -920,7 +1080,9 @@ class DerivBot:
         self._gale_order = None
         self._gale_sell_requested = set()
 
-    async def _request_gale_proposal(self, ws: websockets.WebSocketClientProtocol, stake: float) -> None:
+    async def _request_gale_proposal(
+        self, ws: websockets.WebSocketClientProtocol, stake: float
+    ) -> None:
         """Send a proposal for the next contract in a multi-gale split sequence."""
         payload: dict[str, Any] = {
             "proposal": 1,
@@ -933,15 +1095,20 @@ class DerivBot:
         }
         if self.config.accumulator_use_limit_order:
             payload["limit_order"] = {
-                "take_profit": round(stake * self.config.accumulator_take_profit_percent / 100, 2)
+                "take_profit": round(
+                    stake * self.config.accumulator_take_profit_percent / 100, 2
+                )
             }
         logger.info(
             "GALE seq: proposta stake=%.2f (%d restantes na fila apos este)",
-            stake, len(self._gale_queue),
+            stake,
+            len(self._gale_queue),
         )
         await self.send(ws, payload)
 
-    async def handle_authorize(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+    async def handle_authorize(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
         auth = data["authorize"]
         balance = float(auth["balance"])
         loginid = str(auth.get("loginid", ""))
@@ -955,7 +1122,11 @@ class DerivBot:
             raise FatalBotError(
                 f"ACCOUNT_MODE=real, mas a API autorizou loginid={loginid}. Use token real ou mude a config."
             )
-        if not self.config.dry_run and not is_demo and not self.config.allow_real_trading:
+        if (
+            not self.config.dry_run
+            and not is_demo
+            and not self.config.allow_real_trading
+        ):
             raise FatalBotError(
                 "Conta real detectada. Defina ALLOW_REAL_TRADING=true somente depois dos testes em demo."
             )
@@ -969,11 +1140,17 @@ class DerivBot:
             max_loss_day = self.config.max_loss_per_day
         logger.info(
             "Autorizado | loginid=%s | tipo=%s | saldo=%.2f | modo=%s | max_loss_dia=%.2f",
-            loginid, account_type, balance, mode, max_loss_day,
+            loginid,
+            account_type,
+            balance,
+            mode,
+            max_loss_day,
         )
 
         # Frequency-based loss pause: disabled when LOSS_PAUSE_ENABLED=false or demo account
-        _loss_pause_window = 9999 if (is_demo or not self.config.loss_pause_enabled) else 2
+        _loss_pause_window = (
+            9999 if (is_demo or not self.config.loss_pause_enabled) else 2
+        )
         self.risk = RiskManager(
             balance=balance,
             max_loss_day=max_loss_day,
@@ -1021,7 +1198,9 @@ class DerivBot:
             self._append_tick({"epoch": epoch, "quote": quote})
         logger.info("%s ticks carregados.", len(self.tick_buffer))
 
-    async def handle_tick(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+    async def handle_tick(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
         tick = data["tick"]
         tick_time = float(tick.get("epoch", 0))
         receive_time = time.time()
@@ -1038,24 +1217,38 @@ class DerivBot:
             self._append_tick({"epoch": tick["epoch"], "quote": tick["quote"]})
             return
 
-        is_new_tick = self._append_tick({"epoch": tick["epoch"], "quote": tick["quote"]})
+        is_new_tick = self._append_tick(
+            {"epoch": tick["epoch"], "quote": tick["quote"]}
+        )
         if is_new_tick:
             try:
-                self._tick_queue.put_nowait({"epoch": int(tick["epoch"]), "quote": tick["quote"], "_ws": ws})
+                self._tick_queue.put_nowait(
+                    {"epoch": int(tick["epoch"]), "quote": tick["quote"], "_ws": ws}
+                )
             except asyncio.QueueFull:
-                logger.warning("Fila de ticks cheia. Tick %s descartado da fila de analise.", tick["epoch"])
+                logger.warning(
+                    "Fila de ticks cheia. Tick %s descartado da fila de analise.",
+                    tick["epoch"],
+                )
 
-    async def handle_buy(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+    async def handle_buy(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
         buy = data["buy"]
         contract_id = int(buy["contract_id"])
-        buy_price_actual = float(buy.get("buy_price") or (self.pending_order.stake if self.pending_order else 0.0))
+        buy_price_actual = float(
+            buy.get("buy_price")
+            or (self.pending_order.stake if self.pending_order else 0.0)
+        )
         # Atualiza saldo imediatamente com o valor confirmado pela Deriv (evita atraso do stream balance)
         if self.risk is not None:
             bal_after = buy.get("balance_after")
             if bal_after is not None:
                 new_bal = float(bal_after)
                 if abs(new_bal - self.risk.balance) > 0.01:
-                    logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
+                    logger.info(
+                        "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
+                    )
                     self.risk.balance = new_bal
                     self.risk.sync_pnl_from_balance()
                     self._flush_balance(new_bal)
@@ -1068,7 +1261,11 @@ class DerivBot:
             # Next contract is only dispatched after current one settles as WIN.
             # Deriv only allows 1 open ACCU contract at a time (OpenPositionLimitExceeded).
             self._gale_ids.add(contract_id)
-            self._gale_id_stakes[contract_id] = buy_price_actual if buy_price_actual > 0 else (self.pending_order.stake if self.pending_order else 0.0)
+            self._gale_id_stakes[contract_id] = (
+                buy_price_actual
+                if buy_price_actual > 0
+                else (self.pending_order.stake if self.pending_order else 0.0)
+            )
             if self._gale_order is None:
                 # First contract: record entry epoch and the canonical order for logging.
                 self._gale_order = self.pending_order
@@ -1077,7 +1274,10 @@ class DerivBot:
                     self.accumulator_open_epoch = self.pending_order.entry_epoch
             logger.info(
                 "GALE seq: contrato %d/%d aberto id=%s buy_price=%s — aguardando liquidacao",
-                len(self._gale_ids), self._gale_expected, contract_id, buy.get("buy_price"),
+                len(self._gale_ids),
+                self._gale_expected,
+                contract_id,
+                buy.get("buy_price"),
             )
             await self.subscribe_contract(ws, contract_id)
             # Clear pending_order so evaluate_tick does not stall on proposal check.
@@ -1090,7 +1290,12 @@ class DerivBot:
                 direction = getattr(self.pending_order, "direction", "RF")
                 self.last_rf_entry_epoch = self.pending_order.entry_epoch
                 self.accumulator_open_epoch = self.pending_order.entry_epoch
-            logger.info("Contrato RF %s aberto: id=%s buy_price=%s", direction, contract_id, buy.get("buy_price"))
+            logger.info(
+                "Contrato RF %s aberto: id=%s buy_price=%s",
+                direction,
+                contract_id,
+                buy.get("buy_price"),
+            )
             await self.subscribe_contract(ws, contract_id)
         else:
             # Normal single-contract ACCU mode (unchanged).
@@ -1099,10 +1304,16 @@ class DerivBot:
                 self.last_accumulator_entry_epoch = self.pending_order.entry_epoch
                 self.accumulator_open_epoch = self.pending_order.entry_epoch
                 self.accumulator_sell_requested = False
-            logger.info("Contrato ACCU aberto: id=%s buy_price=%s", contract_id, buy.get("buy_price"))
+            logger.info(
+                "Contrato ACCU aberto: id=%s buy_price=%s",
+                contract_id,
+                buy.get("buy_price"),
+            )
             await self.subscribe_contract(ws, contract_id)
 
-    async def handle_contract_update(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+    async def handle_contract_update(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
         if not self.risk:
             logger.warning("Resultado recebido antes do RiskManager.")
             return
@@ -1141,28 +1352,61 @@ class DerivBot:
                         if threshold > 0 and min_dist <= threshold:
                             logger.warning(
                                 "⚠️ GALE multi BARREIRA PROXIMA id=%s dist=%.5f%% — saida defensiva",
-                                contract_id, min_dist,
+                                contract_id,
+                                min_dist,
                             )
                             sell_price = float(contract.get("bid_price", 0.0) or 0.0)
                             self._gale_sell_requested.add(contract_id)
-                            await self.send(ws, {"sell": contract_id, "price": round(float(sell_price), 2)})
+                            await self.send(
+                                ws,
+                                {
+                                    "sell": contract_id,
+                                    "price": round(float(sell_price), 2),
+                                },
+                            )
                             return
                     # Per-contract TP / max-hold check.
                     stake_i = self._gale_id_stakes.get(contract_id, 0.0)
                     if stake_i > 0:
                         profit_i = float(contract.get("profit", 0.0))
-                        target_i = stake_i * self.config.accumulator_take_profit_percent / 100
-                        current_spot_time = int(contract.get("current_spot_time") or contract.get("date_start") or 0)
-                        held_ticks = max(0, current_spot_time - (self.accumulator_open_epoch or current_spot_time))
-                        if profit_i >= target_i or held_ticks >= self.config.accumulator_max_hold_ticks:
+                        target_i = (
+                            stake_i * self.config.accumulator_take_profit_percent / 100
+                        )
+                        current_spot_time = int(
+                            contract.get("current_spot_time")
+                            or contract.get("date_start")
+                            or 0
+                        )
+                        held_ticks = max(
+                            0,
+                            current_spot_time
+                            - (self.accumulator_open_epoch or current_spot_time),
+                        )
+                        if (
+                            profit_i >= target_i
+                            or held_ticks >= self.config.accumulator_max_hold_ticks
+                        ):
                             sell_price = float(contract.get("bid_price", 0.0) or 0.0)
-                            reason = "take_profit" if profit_i >= target_i else "max_hold_ticks"
+                            reason = (
+                                "take_profit"
+                                if profit_i >= target_i
+                                else "max_hold_ticks"
+                            )
                             logger.info(
                                 "GALE multi fechando id=%s por %s | profit=%.2f alvo=%.2f",
-                                contract_id, reason, profit_i, target_i,
+                                contract_id,
+                                reason,
+                                profit_i,
+                                target_i,
                             )
                             self._gale_sell_requested.add(contract_id)
-                            await self.send(ws, {"sell": contract_id, "price": round(float(sell_price), 2)})
+                            await self.send(
+                                ws,
+                                {
+                                    "sell": contract_id,
+                                    "price": round(float(sell_price), 2),
+                                },
+                            )
                 return
 
             order = self.pending_order
@@ -1179,25 +1423,42 @@ class DerivBot:
                     min_dist = min(dist_low, dist_high)
                     logger.debug(
                         "Barreira: spot=%.5f low=%.5f high=%.5f dist_min=%.5f%%",
-                        current_spot, lb, hb, min_dist,
+                        current_spot,
+                        lb,
+                        hb,
+                        min_dist,
                     )
                     threshold = self.config.accumulator_min_barrier_distance_pct
                     if threshold > 0 and min_dist <= threshold:
                         logger.warning(
                             "⚠️ BARREIRA PROXIMA! dist=%.5f%% <= %.5f%% — saida defensiva",
-                            min_dist, threshold,
+                            min_dist,
+                            threshold,
                         )
                         sell_price = float(contract.get("bid_price", 0.0) or 0.0)
                         await self.sell_contract(ws, contract_id, sell_price)
                         return
                 # --- Lucro / tempo maximo ---
                 profit = float(contract.get("profit", 0.0))
-                target_profit = order.stake * self.config.accumulator_take_profit_percent / 100
-                current_spot_time = int(contract.get("current_spot_time") or contract.get("date_start") or 0)
-                held_ticks = max(0, current_spot_time - (self.accumulator_open_epoch or current_spot_time))
-                if profit >= target_profit or held_ticks >= self.config.accumulator_max_hold_ticks:
+                target_profit = (
+                    order.stake * self.config.accumulator_take_profit_percent / 100
+                )
+                current_spot_time = int(
+                    contract.get("current_spot_time") or contract.get("date_start") or 0
+                )
+                held_ticks = max(
+                    0,
+                    current_spot_time
+                    - (self.accumulator_open_epoch or current_spot_time),
+                )
+                if (
+                    profit >= target_profit
+                    or held_ticks >= self.config.accumulator_max_hold_ticks
+                ):
                     sell_price = float(contract.get("bid_price", 0.0) or 0.0)
-                    reason = "take_profit" if profit >= target_profit else "max_hold_ticks"
+                    reason = (
+                        "take_profit" if profit >= target_profit else "max_hold_ticks"
+                    )
                     logger.info(
                         "Fechando ACCU por %s | profit=%.2f alvo=%.2f held_ticks=%s",
                         reason,
@@ -1222,7 +1483,10 @@ class DerivBot:
             is_win = profit >= 0
             logger.info(
                 "GALE seq: contrato %d/%d liquidado id=%s profit=%.2f %s",
-                len(self._gale_settled), self._gale_expected, contract_id, profit,
+                len(self._gale_settled),
+                self._gale_expected,
+                contract_id,
+                profit,
                 "WIN" if is_win else "LOSS",
             )
             if is_win and self._gale_queue:
@@ -1237,7 +1501,10 @@ class DerivBot:
                 )
                 logger.info(
                     "GALE seq: WIN %d/%d — disparando proximo stake=%.2f (%d restantes na fila)",
-                    len(self._gale_settled), self._gale_expected, next_stake, len(self._gale_queue),
+                    len(self._gale_settled),
+                    self._gale_expected,
+                    next_stake,
+                    len(self._gale_queue),
                 )
                 await self._request_gale_proposal(ws, next_stake)
                 return  # waiting_for_result stays True
@@ -1245,7 +1512,9 @@ class DerivBot:
             if not is_win and self._gale_queue:
                 logger.warning(
                     "GALE seq: LOSS em %d/%d — abortando sequencia (%d contratos nao executados)",
-                    len(self._gale_settled), self._gale_expected, len(self._gale_queue),
+                    len(self._gale_settled),
+                    self._gale_expected,
+                    len(self._gale_queue),
                 )
                 self._gale_queue = []  # discard remaining — loss already triggered
 
@@ -1253,13 +1522,28 @@ class DerivBot:
             total_profit = sum(self._gale_settled.values())
             total_buy_price = sum(self._gale_id_stakes.values())
             order = self._gale_order
-            exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
-            held_ticks = max(0, exit_epoch - order.entry_epoch) if (exit_epoch and order) else None
+            exit_epoch = (
+                int(
+                    contract.get("sell_time")
+                    or contract.get("current_spot_time")
+                    or contract.get("date_expiry")
+                    or 0
+                )
+                or None
+            )
+            held_ticks = (
+                max(0, exit_epoch - order.entry_epoch)
+                if (exit_epoch and order)
+                else None
+            )
             _pre_soros_step = self.risk.soros_step
             _pre_gale_step = self.risk.martingale_step
             logger.info(
                 "GALE seq: todos %d/%d contratos liquidados | total_profit=%.2f total_buy=%.2f",
-                len(self._gale_settled), self._gale_expected, total_profit, total_buy_price,
+                len(self._gale_settled),
+                self._gale_expected,
+                total_profit,
+                total_buy_price,
             )
             if order:
                 self.journal.log_trade(
@@ -1280,6 +1564,7 @@ class DerivBot:
                 )
             _prev_m_step = _pre_gale_step
             self.risk.update(profit=total_profit, buy_price=total_buy_price)
+            self._flush_balance(self.risk.balance)  # atualiza dashboard imediatamente
             if getattr(self.risk, "use_martingale", False):
                 if total_profit < 0 and self.risk.martingale_step > _prev_m_step:
                     logger.warning(
@@ -1288,7 +1573,10 @@ class DerivBot:
                         self.risk.martingale_max_gales,
                     )
                 elif total_profit > 0 and _prev_m_step > 0:
-                    logger.info("\u2705 GALE %d (multi) recuperado \u2014 stake volta ao normal", _prev_m_step)
+                    logger.info(
+                        "\u2705 GALE %d (multi) recuperado \u2014 stake volta ao normal",
+                        _prev_m_step,
+                    )
             logger.info(self.risk.stats())
             self._reset_gale_state()
             self.waiting_for_result = False
@@ -1307,10 +1595,15 @@ class DerivBot:
             # Count profit/loss in risk manager to keep stats accurate.
             logger.warning(
                 "Zombie trade liquidado (contract_id=%s profit=%.2f buy_price=%.2f) — contabilizando.",
-                contract_id, profit, buy_price,
+                contract_id,
+                profit,
+                buy_price,
             )
             if self.risk:
                 self.risk.update(profit=profit, buy_price=buy_price)
+                self._flush_balance(
+                    self.risk.balance
+                )  # atualiza dashboard imediatamente
                 logger.info(self.risk.stats())
             self.waiting_for_result = False
             self.current_contract_id = None
@@ -1319,8 +1612,18 @@ class DerivBot:
             # +15 offset: effective cooldown = cooldown_ticks + 16 ticks (~21s) after settlement
             self.last_accumulator_entry_epoch = int(time.time()) + 15
             return
-        exit_epoch = int(contract.get("sell_time") or contract.get("current_spot_time") or contract.get("date_expiry") or 0) or None
-        held_ticks = max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
+        exit_epoch = (
+            int(
+                contract.get("sell_time")
+                or contract.get("current_spot_time")
+                or contract.get("date_expiry")
+                or 0
+            )
+            or None
+        )
+        held_ticks = (
+            max(0, exit_epoch - order.entry_epoch) if exit_epoch is not None else None
+        )
         _pre_soros_step = self.risk.soros_step
         _pre_gale_step = self.risk.martingale_step
         self.journal.log_trade(
@@ -1341,11 +1644,16 @@ class DerivBot:
         )
         _prev_m_step = _pre_gale_step
         # Lock gale direction at LOSS time — inherit from the trade that just lost
-        if profit < 0 and getattr(self.risk, 'use_martingale', False) and order.direction in {"CALL", "PUT"}:
+        if (
+            profit < 0
+            and getattr(self.risk, "use_martingale", False)
+            and order.direction in {"CALL", "PUT"}
+        ):
             self._gale_locked_direction = order.direction
         self.risk.update(profit=profit, buy_price=buy_price)
+        self._flush_balance(self.risk.balance)  # atualiza dashboard imediatamente
         # Log gale state transitions
-        if getattr(self.risk, 'use_martingale', False):
+        if getattr(self.risk, "use_martingale", False):
             if profit < 0 and self.risk.martingale_step > _prev_m_step:
                 _raw = self.risk.get_gale_raw_stake()
                 _acum = self.risk.martingale_accumulated_loss
@@ -1358,7 +1666,10 @@ class DerivBot:
                     self._gale_locked_direction,
                 )
             elif profit > 0 and _prev_m_step > 0:
-                logger.info("\u2705 GALE %d recuperado \u2014 stake volta ao normal", _prev_m_step)
+                logger.info(
+                    "\u2705 GALE %d recuperado \u2014 stake volta ao normal",
+                    _prev_m_step,
+                )
                 self._gale_locked_direction = None
             elif profit < 0 and self.risk.martingale_step == 0 and _prev_m_step > 0:
                 # Gale sequence exhausted — set cooldown
@@ -1376,17 +1687,24 @@ class DerivBot:
         # Deriv holds the ACCU buy-lock for ~20s after WIN/LOSS — must wait before next BUY.
         self.last_accumulator_entry_epoch = int(time.time()) + 15
 
-    async def handle_message(self, ws: websockets.WebSocketClientProtocol, message: str) -> None:
+    async def handle_message(
+        self, ws: websockets.WebSocketClientProtocol, message: str
+    ) -> None:
         data = json.loads(message)
 
         if "error" in data:
             error = data["error"]
-            logger.error("Erro da API (%s): %s", error.get("code"), error.get("message"))
+            logger.error(
+                "Erro da API (%s): %s", error.get("code"), error.get("message")
+            )
             if data.get("msg_type") == "authorize":
                 raise FatalBotError(f"Falha na autorizacao: {error.get('message')}")
             if data.get("msg_type") in {"proposal", "buy"}:
                 err_code = error.get("code", "")
-                if data.get("msg_type") == "buy" and err_code == "OpenPositionLimitExceeded":
+                if (
+                    data.get("msg_type") == "buy"
+                    and err_code == "OpenPositionLimitExceeded"
+                ):
                     # Deriv rejeitou o buy pois já existe um contrato aberto.
                     # Manter waiting_for_result=True para bloquear novas tentativas,
                     # e reconciliar portfolio para encontrar e subscrever o contrato existente.
@@ -1427,7 +1745,9 @@ class DerivBot:
             if new_bal is not None and self.risk is not None:
                 new_bal = float(new_bal)
                 if abs(new_bal - self.risk.balance) > 0.01:
-                    logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
+                    logger.info(
+                        "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
+                    )
                     self.risk.balance = new_bal
                     self.risk.sync_pnl_from_balance()
                     self._flush_balance(new_bal)
@@ -1440,7 +1760,9 @@ class DerivBot:
                 if bal_after is not None:
                     new_bal = float(bal_after)
                     if abs(new_bal - self.risk.balance) > 0.01:
-                        logger.info("Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal)
+                        logger.info(
+                            "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
+                        )
                         self.risk.balance = new_bal
                         self.risk.sync_pnl_from_balance()
                         self._flush_balance(new_bal)
@@ -1464,19 +1786,31 @@ class DerivBot:
             finally:
                 self._tick_queue.task_done()
 
-    async def _reconcile_open_positions(self, ws: websockets.WebSocketClientProtocol) -> None:
+    async def _reconcile_open_positions(
+        self, ws: websockets.WebSocketClientProtocol
+    ) -> None:
         """Zombie-trade protection: check for open contracts on reconnect."""
-        logger.info("Verificando contratos abertos no portfolio (protecao zombie trade)...")
+        logger.info(
+            "Verificando contratos abertos no portfolio (protecao zombie trade)..."
+        )
         if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
             await self.send(ws, {"portfolio": 1, "contract_type": ["CALL", "PUT"]})
         else:
             await self.send(ws, {"portfolio": 1, "contract_type": ["ACCU"]})
 
-    async def handle_portfolio(self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]) -> None:
+    async def handle_portfolio(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
         portfolio = data.get("portfolio", {})
         contracts = portfolio.get("contracts", [])
-        open_contracts = [c for c in contracts if not c.get("is_sold") and not c.get("is_expired")]
-        mode_label = "RF" if self.config.contract_mode in {"rise_fall", "jump_rise_fall"} else "ACCU"
+        open_contracts = [
+            c for c in contracts if not c.get("is_sold") and not c.get("is_expired")
+        ]
+        mode_label = (
+            "RF"
+            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}
+            else "ACCU"
+        )
         if not open_contracts:
             logger.info("Portfolio: nenhum contrato %s aberto encontrado.", mode_label)
             if self.waiting_for_result or self.pending_order:
@@ -1503,13 +1837,19 @@ class DerivBot:
                         stale.stake,
                     )
                     self.risk.update(profit=-stale.stake, buy_price=stale.stake)
+                    self._flush_balance(
+                        self.risk.balance
+                    )  # atualiza dashboard imediatamente
                     logger.info(self.risk.stats())
             return
         for contract in open_contracts:
             cid = int(contract.get("contract_id", 0))
             if not cid:
                 continue
-            if self.current_contract_id is None and cid not in self.settled_contract_ids:
+            if (
+                self.current_contract_id is None
+                and cid not in self.settled_contract_ids
+            ):
                 logger.warning(
                     "Zombie trade detectado: contrato %s id=%s aberto sem rastreamento local. Subscrevendo.",
                     mode_label,
@@ -1519,7 +1859,9 @@ class DerivBot:
                 self.waiting_for_result = True
                 await self.subscribe_contract(ws, cid)
 
-    async def _tick_watchdog(self, ws: websockets.WebSocketClientProtocol, timeout: float = 60.0) -> None:
+    async def _tick_watchdog(
+        self, ws: websockets.WebSocketClientProtocol, timeout: float = 60.0
+    ) -> None:
         """Detecta ausência de ticks por mais de `timeout` segundos e força reconexão."""
         await asyncio.sleep(timeout)  # grace period inicial
         while True:
@@ -1537,7 +1879,9 @@ class DerivBot:
         while True:
             # Preserve pending state across reconnects so _reconcile_open_positions
             # can account for a trade that settled while the WebSocket was down.
-            self._stale_pending_order = self.pending_order if self.waiting_for_result else None
+            self._stale_pending_order = (
+                self.pending_order if self.waiting_for_result else None
+            )
             # Reset transient per-connection state so every reconnect starts clean.
             # _reconcile_open_positions will re-establish any genuinely open contract.
             self._reset_gale_state()
@@ -1565,14 +1909,18 @@ class DerivBot:
                     ping_timeout=20,
                     close_timeout=10,
                 ) as ws:
-                    self._last_tick_time = time.time()  # reset watchdog on every new connection
+                    self._last_tick_time = (
+                        time.time()
+                    )  # reset watchdog on every new connection
                     self._gale_wait_log_ts = 0.0  # reset throttle log
                     self._gale_wait_ticks = 0
                     self.last_rf_entry_epoch = None  # reset RF cooldown on reconnect
                     await self.authorize(ws)
                     # Start EDA consumer task and watchdog
                     consumer_task = asyncio.create_task(self._tick_consumer())
-                    watchdog_task = asyncio.create_task(self._tick_watchdog(ws, timeout=60.0))
+                    watchdog_task = asyncio.create_task(
+                        self._tick_watchdog(ws, timeout=60.0)
+                    )
                     try:
                         async for message in ws:
                             await self.handle_message(ws, message)
@@ -1592,9 +1940,17 @@ class DerivBot:
             except FatalBotError as exc:
                 logger.error("Erro fatal: %s", exc)
                 return
-            except (ConnectionClosed, OSError, RuntimeError, json.JSONDecodeError) as exc:
+            except (
+                ConnectionClosed,
+                OSError,
+                RuntimeError,
+                json.JSONDecodeError,
+            ) as exc:
                 logger.error("Conexao/execucao interrompida: %s", exc)
-                logger.info("Reconectando em %s segundos...", self.config.reconnect_delay_seconds)
+                logger.info(
+                    "Reconectando em %s segundos...",
+                    self.config.reconnect_delay_seconds,
+                )
                 await asyncio.sleep(self.config.reconnect_delay_seconds)
 
 
