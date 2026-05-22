@@ -589,21 +589,21 @@ class RiskManager:
         self._save_state()
 
     def sync_pnl_from_balance(self) -> None:
-        """Recompute daily_net_profit from actual balance vs start-of-day.
+        """Re-anchor daily_net_profit to real Deriv balance.
 
-        Called every time Deriv sends a new balance — makes P&L always match
-        the real balance change, eliminating drift from restarts or timeouts.
+        Called every time Deriv sends a balance update — always overwrites
+        the internal estimate so any drift (timeout double-count, restart,
+        late message) is immediately corrected. No threshold: always sync.
         """
         new_pnl = round(self.balance - self.start_of_day_balance, 2)
-        if abs(new_pnl - self.daily_net_profit) > 0.005:
-            self.daily_net_profit = new_pnl
-            self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
-            if (
-                self.daily_trailing_start > 0
-                and self.daily_peak_profit >= self.daily_trailing_start
-            ):
-                self.daily_trailing_active = True
-            self._save_state()
+        self.daily_net_profit = new_pnl
+        self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+        if (
+            self.daily_trailing_start > 0
+            and self.daily_peak_profit >= self.daily_trailing_start
+        ):
+            self.daily_trailing_active = True
+        self._save_state()
 
     @property
     def _start_of_day_balance(self) -> float:
@@ -966,12 +966,13 @@ class RiskManager:
         _stake_deducted = self._pending_stake_deduction
         self._pending_stake_deduction = 0.0
         self.trades_today += 1
-        # NOTE: daily_net_profit is synced from real balance in sync_pnl_from_balance().
-        # We still do an immediate += here so that risk checks within update()
-        # reflect the trade before the balance stream arrives (~100ms later).
-        # The next balance stream event will overwrite this with the truth.
-        self.daily_net_profit += profit
-        self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+        # daily_net_profit is always anchor-based: balance - start_of_day_balance.
+        # We do NOT use cumulative += profit because any desync (timeout double-count,
+        # late Deriv message, restart) would permanently corrupt the value.
+        # The balance estimate is updated at end of WIN/LOSS paths below, then we
+        # recompute net_profit from it. sync_pnl_from_balance() will re-anchor again
+        # when the real Deriv balance arrives (~100ms later).
+        # (peak/trailing updated after balance is set below)
 
         if (
             self.daily_trailing_start > 0
@@ -1068,6 +1069,14 @@ class RiskManager:
             # Production (handle_buy deducted stake): add stake back + profit.
             # Unit tests (no handle_buy): add only profit (stake was never deducted).
             self.balance = round(self.balance + _stake_deducted + profit, 2)
+            # Anchor P&L to updated balance estimate (never cumulative to avoid drift).
+            self.daily_net_profit = round(self.balance - self.start_of_day_balance, 2)
+            self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+            if (
+                self.daily_trailing_start > 0
+                and self.daily_peak_profit >= self.daily_trailing_start
+            ):
+                self.daily_trailing_active = True
             logger.info(
                 "WIN %+0.2f | saldo_estimado=%0.2f | modo=%s",
                 profit,
@@ -1133,6 +1142,9 @@ class RiskManager:
             # Unit tests (no handle_buy): deduct the stake here.
             if _stake_deducted == 0:
                 self.balance = round(self.balance - buy_price, 2)
+            # Anchor P&L to updated balance estimate (never cumulative to avoid drift).
+            self.daily_net_profit = round(self.balance - self.start_of_day_balance, 2)
+            self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
             logger.info(
                 "LOSS -%0.2f | saldo_estimado=%0.2f | perda_dia=%0.2f | modo=%s",
                 realized_loss,

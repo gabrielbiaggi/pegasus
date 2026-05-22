@@ -46,7 +46,9 @@ cd "$(dirname "$0")"
 if git diff --quiet && git diff --cached --quiet; then
     echo "  Nenhuma mudança de código para commitar."
 else
-    git add -A -- ':!.env'
+    git add -u                          # arquivos já rastreados (nunca adiciona .env)
+    git add -A -- '*.py' '*.sh' '*.md' '*.txt' '*.json' '*.html' '*.yml' '*.yaml' 2>/dev/null || true
+    git reset HEAD .env 2>/dev/null || true  # garante que .env nunca vai no commit
     git commit -m "$COMMIT_MSG"
     echo "  Commit: $COMMIT_MSG"
 fi

@@ -5,7 +5,6 @@ from pathlib import Path
 from logger import logger
 from risk_manager import RiskManager
 
-
 logger.disabled = True
 
 
@@ -38,13 +37,16 @@ class RiskManagerTest(unittest.TestCase):
             self.assertFalse(risk.can_trade())
 
     def test_blocks_after_max_trades(self) -> None:
+        """MAX_TRADES_PER_DAY já não bloqueia — somente STOP_LOSS/STOP_GAIN controlam.
+        Verifica que o bot CONTINUA operando após atingir o limite de trades."""
         with tempfile.TemporaryDirectory() as tmp:
             risk = self.make_risk(Path(tmp) / "risk.json")
             risk.update(profit=0.1, buy_price=1)
             risk.update(profit=0.1, buy_price=1)
             risk.update(profit=0.1, buy_price=1)
 
-            self.assertFalse(risk.can_trade())
+            # Bot continua — limite de trades não é mais um stop
+            self.assertTrue(risk.can_trade())
 
     def test_persists_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,10 +206,10 @@ class RiskManagerTest(unittest.TestCase):
                 dynamic_stake_base_pct=0.0001,  # 100000 * 0.0001 = 10
                 state_path=str(Path(tmp) / "risk.json"),
             )
-            s0 = risk.get_stake()   # 10.0
-            risk.update(profit=-s0, buy_price=s0)   # gale 1
+            s0 = risk.get_stake()  # 10.0
+            risk.update(profit=-s0, buy_price=s0)  # gale 1
             s1 = risk.get_stake()
-            risk.update(profit=-s1, buy_price=s1)   # gale 2
+            risk.update(profit=-s1, buy_price=s1)  # gale 2
             self.assertEqual(risk.martingale_step, 2)
             accum_before = risk.martingale_accumulated_loss  # s0 + s1
 
@@ -252,10 +254,10 @@ class RiskManagerTest(unittest.TestCase):
                 state_path=str(Path(tmp) / "risk.json"),
             )
             # 4 consecutive losses → stop (max_consecutive_losses=4)
-            risk.update(profit=-1, buy_price=1)   # G0 perde → step=1
-            risk.update(profit=-1, buy_price=1)   # G1 perde → step=2
-            risk.update(profit=-1, buy_price=1)   # G2 perde → step=3
-            risk.update(profit=-1, buy_price=1)   # G3 (last gale) perde → RESET → step=0
+            risk.update(profit=-1, buy_price=1)  # G0 perde → step=1
+            risk.update(profit=-1, buy_price=1)  # G1 perde → step=2
+            risk.update(profit=-1, buy_price=1)  # G2 perde → step=3
+            risk.update(profit=-1, buy_price=1)  # G3 (last gale) perde → RESET → step=0
             self.assertFalse(risk.can_trade())
             # Após perder o último gale, a sequência reseta para G0 (começa de novo)
             self.assertEqual(risk.martingale_step, 0)
@@ -266,7 +268,7 @@ class RiskManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             risk = RiskManager(
                 balance=1000,
-                max_loss_day=9999,       # high fixed $, should be ignored when pct > 0
+                max_loss_day=9999,  # high fixed $, should be ignored when pct > 0
                 max_profit_day=0,
                 max_trades_day=100,
                 daily_trailing_start=0,
@@ -281,13 +283,13 @@ class RiskManagerTest(unittest.TestCase):
                 soros_profit_factor=1.0,
                 max_losses_in_window=100,
                 state_path=str(Path(tmp) / "risk.json"),
-                stop_loss_pct=5.0,       # 5% of 1000 = 50
+                stop_loss_pct=5.0,  # 5% of 1000 = 50
             )
             # Simulate Deriv balance stream updating balance after loss
             risk.update(profit=-49, buy_price=49)
             risk.balance = 951  # 1000 - 49
             # start_of_day_balance = 951 - (-49) = 1000 → effective limit = 50
-            self.assertTrue(risk.can_trade())   # net=-49, limit=-50 → OK
+            self.assertTrue(risk.can_trade())  # net=-49, limit=-50 → OK
             risk.update(profit=-2, buy_price=2)
             risk.balance = 949  # 951 - 2
             # start_of_day_balance = 949 - (-51) = 1000 → effective limit = 50
@@ -299,7 +301,7 @@ class RiskManagerTest(unittest.TestCase):
             risk = RiskManager(
                 balance=1000,
                 max_loss_day=500,
-                max_profit_day=0,         # no fixed $ target
+                max_profit_day=0,  # no fixed $ target
                 max_trades_day=100,
                 daily_trailing_start=0,
                 daily_trailing_lock=0,
@@ -313,21 +315,22 @@ class RiskManagerTest(unittest.TestCase):
                 soros_profit_factor=1.0,
                 max_losses_in_window=100,
                 state_path=str(Path(tmp) / "risk.json"),
-                stop_gain_pct=10.0,       # 10% of 1000 = 100
+                stop_gain_pct=10.0,  # 10% of 1000 = 100
             )
             # Simulate Deriv balance stream updating balance after win
             risk.update(profit=99, buy_price=10)
             risk.balance = 1099  # 1000 + 99
             # start_of_day_balance = 1099 - 99 = 1000 → effective target = 100
-            self.assertTrue(risk.can_trade())    # net=99, target=100 → OK
+            self.assertTrue(risk.can_trade())  # net=99, target=100 → OK
             risk.update(profit=2, buy_price=10)
             risk.balance = 1101  # 1099 + 2
             # start_of_day_balance = 1101 - 101 = 1000 → effective target = 100
-            self.assertFalse(risk.can_trade())   # net=101, target=100 → BLOCKED
+            self.assertFalse(risk.can_trade())  # net=101, target=100 → BLOCKED
 
     def test_fibonacci_stake_sequence(self) -> None:
         """Fibonacci mode uses FIB_SEQUENCE multipliers instead of classic martingale formula."""
         from risk_manager import FIB_SEQUENCE
+
         with tempfile.TemporaryDirectory() as tmp:
             risk = RiskManager(
                 balance=100_000,
@@ -410,7 +413,7 @@ class RiskManagerTest(unittest.TestCase):
             risk.update(profit=-0.35, buy_price=0.35)  # step 0→1
             risk.update(profit=-0.35, buy_price=0.35)  # step 1→2
             risk.update(profit=-0.70, buy_price=0.70)  # step 2→3
-            self.assertEqual(risk.martingale_step, 3)   # not yet absorbed
+            self.assertEqual(risk.martingale_step, 3)  # not yet absorbed
             risk.update(profit=-1.05, buy_price=1.05)  # step 3 >= max_gales=3 → RESET
             self.assertEqual(risk.martingale_step, 0)
             self.assertEqual(risk.martingale_accumulated_loss, 0.0)
