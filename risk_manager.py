@@ -476,6 +476,21 @@ class RiskManager:
         )
         self.martingale_base_stake = float(data.get("martingale_base_stake", 0.0))
         self.loss_block_override = bool(data.get("loss_block_override", False))
+
+        # FIX 3: reativa trailing se high-water-mark ja foi atingido antes do restart.
+        # Garante que o lock de lucro nao se perde em reinicios.
+        if (
+            not self.daily_trailing_active
+            and self.daily_trailing_start > 0
+            and self.daily_peak_profit >= self.daily_trailing_start
+        ):
+            self.daily_trailing_active = True
+            logger.info(
+                "Trailing reativado apos restart: peak=%.2f >= start=%.2f — lock=%.2f",
+                self.daily_peak_profit,
+                self.daily_trailing_start,
+                self.daily_trailing_lock,
+            )
         # Segurança: estado legado sem base_stake → reseta gale (melhor pausar que calcular errado)
         if self.martingale_step > 0 and self.martingale_base_stake == 0.0:
             logger.warning(

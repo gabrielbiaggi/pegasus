@@ -76,22 +76,40 @@ if [ "$DO_RESTART" = true ]; then
         sleep 2
         cd $REMOTE_DIR
 
-        # Reset risk_state: zera contadores do dia e deixa start_of_day=0
-        # para que o bot use o saldo real da Deriv como referencia da sessao.
+        # FIX 1: Preserva start_of_day_balance se for o mesmo dia (sessao ativa).
+        # Zera contadores operacionais mas mantém a referencia de P&L do dia.
+        # Isso garante que stop loss/gain calculem sobre o inicio REAL do dia,
+        # nao sobre o saldo do momento do restart.
         python3 - << 'PYEOF'
 import json, datetime, pathlib
+today = datetime.date.today().isoformat()
+state_path = pathlib.Path('$REMOTE_DIR/logs/risk_state.json')
+
+# Tenta preservar start_of_day_balance e peak do mesmo dia
+old_sod = 0.0
+old_peak = 0.0
+try:
+    old = json.loads(state_path.read_text())
+    if old.get('day') == today:
+        old_sod = float(old.get('start_of_day_balance', 0.0))
+        old_peak = float(old.get('daily_peak_profit', 0.0))
+        print(f'  Mesmo dia: preservando start_of_day_balance={old_sod:.2f} peak={old_peak:.2f}')
+except Exception:
+    pass
+
 state = {
-    'day': datetime.date.today().isoformat(),
-    'start_of_day_balance': 0.0,
-    'daily_loss': 0.0, 'daily_net_profit': 0.0, 'daily_peak_profit': 0.0,
+    'day': today,
+    'start_of_day_balance': old_sod,  # preserva referencia do dia
+    'daily_loss': 0.0, 'daily_net_profit': 0.0,
+    'daily_peak_profit': old_peak,    # preserva high-water-mark (fix 3)
     'daily_trailing_active': False, 'trades_today': 0, 'wins': 0, 'losses': 0,
     'consecutive_losses': 0, 'max_loss_streak_today': 0,
     'soros_step': 0, 'soros_profit': 0.0,
     'martingale_step': 0, 'martingale_accumulated_loss': 0.0,
     'martingale_base_stake': 0.0, 'loss_block_override': False
 }
-pathlib.Path('$REMOTE_DIR/logs/risk_state.json').write_text(json.dumps(state, indent=2))
-print('  risk_state resetado:', state['day'])
+state_path.write_text(json.dumps(state, indent=2))
+print(f'  risk_state resetado: {today} | start_of_day={old_sod:.2f} | peak={old_peak:.2f}')
 PYEOF
 
         > logs/trades.csv
