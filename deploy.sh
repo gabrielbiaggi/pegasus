@@ -81,7 +81,7 @@ if [ "$DO_RESTART" = true ]; then
         # Isso garante que stop loss/gain calculem sobre o inicio REAL do dia,
         # nao sobre o saldo do momento do restart.
         python3 - << 'PYEOF'
-import json, datetime, pathlib
+import json, datetime, pathlib, time
 today = datetime.date.today().isoformat()
 state_path = pathlib.Path('$REMOTE_DIR/logs/risk_state.json')
 
@@ -106,7 +106,8 @@ state = {
     'consecutive_losses': 0, 'max_loss_streak_today': 0,
     'soros_step': 0, 'soros_profit': 0.0,
     'martingale_step': 0, 'martingale_accumulated_loss': 0.0,
-    'martingale_base_stake': 0.0, 'loss_block_override': False
+    'martingale_base_stake': 0.0, 'loss_block_override': False,
+    'session_start_ts': time.time()
 }
 state_path.write_text(json.dumps(state, indent=2))
 print(f'  risk_state resetado: {today} | start_of_day={old_sod:.2f} | peak={old_peak:.2f}')

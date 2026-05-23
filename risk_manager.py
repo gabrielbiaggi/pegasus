@@ -113,6 +113,7 @@ class RiskManager:
         self._log_ts_trades: float = 0.0
         self._log_ts_consec: float = 0.0
         self._log_ts_freq: float = 0.0
+        self.session_start_ts: float = time.time()
 
         self._load_state()
 
@@ -531,6 +532,7 @@ class RiskManager:
             "martingale_accumulated_loss": self.martingale_accumulated_loss,
             "martingale_base_stake": self.martingale_base_stake,
             "loss_block_override": self.loss_block_override,
+            "session_start_ts": self.session_start_ts,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -580,6 +582,7 @@ class RiskManager:
         logger.info("Novo dia detectado. Zerando contadores diarios de risco.")
         self.day = today
         self.start_of_day_balance = self.balance
+        self.session_start_ts = time.time()
         self.daily_loss = 0.0
         self.daily_net_profit = 0.0
         self.daily_peak_profit = 0.0

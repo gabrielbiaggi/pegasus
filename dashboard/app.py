@@ -249,23 +249,39 @@ _pg_trades_cache: dict = {"ts": 0.0, "today": "", "df": None}
 
 
 def _today_df() -> pd.DataFrame:
-    """Read today's trades from PostgreSQL. Cache TTL reduzido para 1s para capturar trades rapidos."""
+    """Read today's trades from PostgreSQL, filtered by current session start."""
     global _pg_trades_cache
     now = _time.monotonic()
     today = datetime.now(timezone.utc).date().isoformat()
     if (
-        now - _pg_trades_cache["ts"] < 1.0  # era 3.0 — reduzido para 1s
+        now - _pg_trades_cache["ts"] < 1.0
         and _pg_trades_cache["today"] == today
         and _pg_trades_cache["df"] is not None
     ):
         return _pg_trades_cache["df"]
+
+    # Ler session_start_ts do risk_state
+    session_start_ts = 0.0
+    try:
+        rs = _read_risk_state()
+        session_start_ts = float(rs.get("session_start_ts", 0.0))
+    except Exception:
+        pass
+
     try:
         conn = psycopg2.connect(_pg_dsn_str())
-        df = pd.read_sql(
-            "SELECT * FROM trades WHERE timestamp::date = %s ORDER BY timestamp",
-            conn,
-            params=(today,),
-        )
+        if session_start_ts > 0:
+            df = pd.read_sql(
+                "SELECT * FROM trades WHERE timestamp >= to_timestamp(%s) ORDER BY timestamp",
+                conn,
+                params=(session_start_ts,),
+            )
+        else:
+            df = pd.read_sql(
+                "SELECT * FROM trades WHERE timestamp::date = %s ORDER BY timestamp",
+                conn,
+                params=(today,),
+            )
         conn.close()
         _pg_trades_cache = {"ts": now, "today": today, "df": df}
         return df
