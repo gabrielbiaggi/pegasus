@@ -1724,7 +1724,27 @@ class DerivBot:
                 "Erro da API (%s): %s", error.get("code"), error.get("message")
             )
             if data.get("msg_type") == "authorize":
-                raise FatalBotError(f"Falha na autorizacao: {error.get('message')}")
+                err_code = error.get("code", "")
+                err_msg = error.get("message", "")
+                # Erros de CONFIGURACAO (token errado, conta errada) -> fatal, nao tem como recuperar
+                _fatal_codes = {
+                    "InvalidToken",
+                    "InvalidAppID",
+                    "AuthorizationRequired",
+                    "DisabledClient",
+                    "AccountUnavailable",
+                    "PermissionDenied",
+                }
+                if err_code in _fatal_codes:
+                    raise FatalBotError(f"Falha na autorizacao [{err_code}]: {err_msg}")
+                # Erros TRANSIENTES da Deriv (WrongResponse, server error, etc) -> loga e reconecta
+                logger.warning(
+                    "Erro transiente na autorizacao [%s]: %s — reconectando em %ss",
+                    err_code,
+                    err_msg,
+                    self.config.reconnect_delay_seconds,
+                )
+                raise ConnectionError(f"Auth transiente [{err_code}]: {err_msg}")
             if data.get("msg_type") in {"proposal", "buy"}:
                 err_code = error.get("code", "")
                 if (
