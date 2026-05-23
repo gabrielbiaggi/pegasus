@@ -114,6 +114,8 @@ class RiskManager:
         self._log_ts_consec: float = 0.0
         self._log_ts_freq: float = 0.0
         self.session_start_ts: float = time.time()
+        self.cooldown_until: float = 0.0  # 0 = sem cooldown ativo
+        self.session_cooldown_seconds: float = 10800.0  # 3h default, reloaded via env
 
         self._load_state()
 
@@ -415,6 +417,20 @@ class RiskManager:
                     new_cooldown_n,
                 )
                 self.soros_post_loss_cooldown_n = new_cooldown_n
+            # SESSION_COOLDOWN_HOURS live-reload
+            new_cooldown_h = float(
+                env_data.get(
+                    "SESSION_COOLDOWN_HOURS", str(self.session_cooldown_seconds / 3600)
+                )
+            )
+            new_cooldown_s = new_cooldown_h * 3600
+            if new_cooldown_s != self.session_cooldown_seconds:
+                logger.info(
+                    "Session cooldown atualizado: %.1fh → %.1fh",
+                    self.session_cooldown_seconds / 3600,
+                    new_cooldown_h,
+                )
+                self.session_cooldown_seconds = new_cooldown_s
             # BLOCK_WEEKENDS live-reload
             self.block_weekends = (
                 env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
@@ -533,6 +549,7 @@ class RiskManager:
             "martingale_base_stake": self.martingale_base_stake,
             "loss_block_override": self.loss_block_override,
             "session_start_ts": self.session_start_ts,
+            "cooldown_until": self.cooldown_until,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -918,14 +935,50 @@ class RiskManager:
             self.daily_trailing_active
             and self.daily_net_profit <= self.daily_trailing_lock
         ):
-            if _now - self._log_ts_trailing >= 60:
+            now_mono = _now
+            if self.cooldown_until <= 0:
+                # Primeira vez — inicia o cooldown
+                self.cooldown_until = now_mono + self.session_cooldown_seconds
                 logger.warning(
-                    "Trailing diario protegido: lucro_liquido=%.2f lock=%.2f",
+                    "🔒 Trailing lock atingido: P&L=%.2f lock=%.2f — cooldown de %.1fh iniciado",
                     self.daily_net_profit,
                     self.daily_trailing_lock,
+                    self.session_cooldown_seconds / 3600,
                 )
-                self._log_ts_trailing = _now
-            return False
+                self._save_state()
+                return False
+            elif now_mono < self.cooldown_until:
+                # Ainda em cooldown
+                remaining_min = (self.cooldown_until - now_mono) / 60
+                if now_mono - self._log_ts_trailing >= 300:  # log a cada 5 min
+                    logger.info(
+                        "⏳ Cooldown ativo: %.0f min restantes — aguardando mercado calmar",
+                        remaining_min,
+                    )
+                    self._log_ts_trailing = now_mono
+                return False
+            else:
+                # Cooldown expirou — reseta contexto de sessão e continua
+                logger.info(
+                    "✅ Cooldown expirado — resetando sessao: novo start_of_day=%.2f",
+                    self.balance,
+                )
+                self.start_of_day_balance = self.balance
+                self.daily_net_profit = 0.0
+                self.daily_peak_profit = 0.0
+                self.daily_loss = 0.0
+                self.trades_today = 0
+                self.wins = 0
+                self.losses = 0
+                self.consecutive_losses = 0
+                self.max_loss_streak_today = 0
+                self.soros_step = 0
+                self.soros_profit = 0.0
+                self.daily_trailing_active = False
+                self.cooldown_until = 0.0
+                self.session_start_ts = time.time()
+                self._save_state()
+                # Não retorna False — sessão resetada, pode operar
 
         # max_trades_day limit removed — somente STOP_LOSS e STOP_GAIN controlam parada
         # consecutive_losses é apenas métrica — não bloqueia operações
