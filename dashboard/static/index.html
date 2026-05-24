@@ -2664,18 +2664,26 @@
                     fetchSessions();
                     fetchHistory30d();
                 }
-                if (id === "modal-backtest") fetchBacktest();
+                if (id === "modal-backtest") {
+                    fetchBacktest();                          // poll imediato
+                    if (_btPollTimer) clearInterval(_btPollTimer);
+                    _btPollTimer = setInterval(pollBacktestStatus, 1000); // 1s enquanto aberto
+                }
             }
             function closeModal(id) {
                 $(id).classList.remove("active");
                 document.body.style.overflow = "";
+                if (id === "modal-backtest" && _btPollTimer) {
+                    clearInterval(_btPollTimer);  // para polling ao fechar
+                    _btPollTimer = null;
+                }
             }
             document.addEventListener("keydown", function (e) {
                 if (e.key === "Escape") {
                     document
                         .querySelectorAll(".modal-overlay.active")
                         .forEach(function (m) {
-                            m.classList.remove("active");
+                            closeModal(m.id); // usa closeModal p/ parar timers
                         });
                     document.body.style.overflow = "";
                 }
@@ -4063,13 +4071,13 @@
                 try {
                     await fetch('/api/backtest/run?start='+start+'&end='+end+'&start_balance='+bal, {method:'POST'});
                     if(_btPollTimer) clearInterval(_btPollTimer);
-                    _btPollTimer = setInterval(pollBacktestStatus, 2000);
+                    _btPollTimer = setInterval(pollBacktestStatus, 1000); // 1s
                 } catch(e) { toast('Erro ao iniciar backtest: '+e.message,'var(--red)'); }
             }
 
             async function stopBacktest() {
                 await fetch('/api/backtest/stop',{method:'POST'});
-                if(_btPollTimer){clearInterval(_btPollTimer);_btPollTimer=null;}
+                // Não mata o timer — continua atualizando pra mostrar estado final
                 var btn=$('bt-run-btn'),sbtn=$('bt-stop-btn'),badge=$('bt-status-badge');
                 if(btn) btn.style.display='inline-flex';
                 if(sbtn) sbtn.style.display='none';
@@ -4163,8 +4171,7 @@
                         if(badge) badge.textContent='Rodando '+pct+'%';
 
                     } else {
-                        // Terminado ou idle
-                        if(_btPollTimer){clearInterval(_btPollTimer);_btPollTimer=null;}
+                        // Terminado ou idle — timer continua (gerenciado pelo modal)
                         if(btn) btn.style.display='inline-flex';
                         if(sbtn) sbtn.style.display='none';
                         if(lw && status==='idle') lw.style.display='none';
