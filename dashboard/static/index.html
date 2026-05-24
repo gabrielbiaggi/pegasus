@@ -2150,6 +2150,7 @@
                                         <th>Trades</th>
                                         <th>WR</th>
                                         <th>P&amp;L</th>
+                                        <th>Saldo</th>
                                         <th>Resultado</th>
                                     </tr>
                                 </thead>
@@ -4173,15 +4174,18 @@
                                 r.date +
                                 "</td><td>" +
                                 r.trades +
-                                '</td><td class="' +
+                                "</td><td class='" +
                                 cls +
-                                '">' +
+                                "'>" +
                                 r.wr.toFixed(1) +
-                                '%</td><td class="' +
+                                "%" +
+                                "</td><td class='" +
                                 (r.pnl > 0 ? "win" : "loss") +
-                                '">' +
+                                "'>" +
                                 (r.pnl >= 0 ? "+" : "") +
                                 r.pnl.toFixed(2) +
+                                "</td><td style='font-weight:600'>$" +
+                                (r.balance || 0).toFixed(2) +
                                 "</td><td>" +
                                 flag +
                                 "</td></tr>"

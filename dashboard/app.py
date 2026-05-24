@@ -1095,19 +1095,96 @@ def api_backtest(response: Response):
             }
         )
 
-    # Resultados reais do backtest de 11 dias
+    # Resultados reais do backtest (11 dias, codigo identico ao bot live)
     real_results = [
-        {"date": "06/05", "trades": 23, "wr": 100.0, "pnl": 50.88, "doubled": True},
-        {"date": "07/05", "trades": 46, "wr": 100.0, "pnl": 102.23, "doubled": True},
-        {"date": "08/05", "trades": 95, "wr": 98.9, "pnl": 204.99, "doubled": True},
-        {"date": "09/05", "trades": 187, "wr": 99.5, "pnl": 409.58, "doubled": True},
-        {"date": "10/05", "trades": 334, "wr": 98.2, "pnl": 676.83, "doubled": False},
-        {"date": "11/05", "trades": 314, "wr": 99.7, "pnl": 692.44, "doubled": False},
-        {"date": "12/05", "trades": 306, "wr": 99.3, "pnl": 659.93, "doubled": False},
-        {"date": "13/05", "trades": 336, "wr": 99.4, "pnl": 728.84, "doubled": False},
-        {"date": "14/05", "trades": 310, "wr": 99.7, "pnl": 681.91, "doubled": False},
-        {"date": "15/05", "trades": 304, "wr": 99.3, "pnl": 657.97, "doubled": False},
-        {"date": "16/05", "trades": 319, "wr": 98.7, "pnl": 680.44, "doubled": False},
+        {
+            "date": "06/05",
+            "trades": 23,
+            "wr": 100.0,
+            "pnl": 50.88,
+            "balance": 100.88,
+            "doubled": True,
+        },
+        {
+            "date": "07/05",
+            "trades": 46,
+            "wr": 100.0,
+            "pnl": 102.23,
+            "balance": 203.11,
+            "doubled": True,
+        },
+        {
+            "date": "08/05",
+            "trades": 95,
+            "wr": 98.9,
+            "pnl": 204.99,
+            "balance": 408.10,
+            "doubled": True,
+        },
+        {
+            "date": "09/05",
+            "trades": 187,
+            "wr": 99.5,
+            "pnl": 409.58,
+            "balance": 817.68,
+            "doubled": True,
+        },
+        {
+            "date": "10/05",
+            "trades": 334,
+            "wr": 98.2,
+            "pnl": 676.83,
+            "balance": 1494.51,
+            "doubled": False,
+        },
+        {
+            "date": "11/05",
+            "trades": 314,
+            "wr": 99.7,
+            "pnl": 692.44,
+            "balance": 2186.95,
+            "doubled": False,
+        },
+        {
+            "date": "12/05",
+            "trades": 306,
+            "wr": 99.3,
+            "pnl": 659.93,
+            "balance": 2846.88,
+            "doubled": False,
+        },
+        {
+            "date": "13/05",
+            "trades": 336,
+            "wr": 99.4,
+            "pnl": 728.84,
+            "balance": 3575.72,
+            "doubled": False,
+        },
+        {
+            "date": "14/05",
+            "trades": 310,
+            "wr": 99.7,
+            "pnl": 681.91,
+            "balance": 4257.63,
+            "doubled": False,
+        },
+        {
+            "date": "15/05",
+            "trades": 304,
+            "wr": 99.3,
+            "pnl": 657.97,
+            "balance": 4915.60,
+            "doubled": False,
+        },
+        {
+            "date": "16/05",
+            "trades": 319,
+            "wr": 98.7,
+            "pnl": 680.44,
+            "balance": 5596.04,
+            "doubled": False,
+        },
     ]
 
     return {
