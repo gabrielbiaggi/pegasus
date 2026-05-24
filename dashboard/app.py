@@ -1122,7 +1122,7 @@ def api_backtest(response: Response):
             ),
         },
         "scenarios": scenario_stats,
-        "doubled_by_day": [round(v / N_PATHS * 100, 1) for v in doubled_per_day],
+        "doubled_by_day": [round(float(v) / N_PATHS * 100, 1) for v in doubled_per_day],
         "start_balance": START,
     }
 
