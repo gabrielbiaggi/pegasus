@@ -12,11 +12,14 @@ from logger import logger
 
 try:
     from scipy.integrate import trapezoid as integrate_trapezoid
-except ImportError:  # pragma: no cover - numpy keeps the bot usable without scipy installed.
+except (
+    ImportError
+):  # pragma: no cover - numpy keeps the bot usable without scipy installed.
     integrate_trapezoid = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
 
 try:
     from hmmlearn import hmm as _hmm_lib
+
     _HMM_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _HMM_AVAILABLE = False
@@ -25,12 +28,14 @@ except ImportError:  # pragma: no cover
 try:
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
+
     _SKLEARN_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _SKLEARN_AVAILABLE = False
 
 try:
     import xgboost as xgb
+
     _XGB_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _XGB_AVAILABLE = False
@@ -104,7 +109,9 @@ class AccumulatorStrategyConfig:
         )
 
 
-def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConfig | None = None) -> pd.DataFrame:
+def calculate_tick_indicators(
+    ticks: list[dict], config: AccumulatorStrategyConfig | None = None
+) -> pd.DataFrame:
     config = config or AccumulatorStrategyConfig()
     df = pd.DataFrame(ticks)
     if df.empty:
@@ -115,7 +122,11 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     if missing:
         raise ValueError(f"Ticks sem campos obrigatorios: {sorted(missing)}")
 
-    df = df.drop_duplicates(subset=["epoch"], keep="last").sort_values("epoch").reset_index(drop=True)
+    df = (
+        df.drop_duplicates(subset=["epoch"], keep="last")
+        .sort_values("epoch")
+        .reset_index(drop=True)
+    )
     df["epoch"] = df["epoch"].astype(int)
     df["close"] = pd.to_numeric(df["quote"], errors="coerce")
     df = df.dropna(subset=["close"]).reset_index(drop=True)
@@ -123,26 +134,40 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     if len(df) < config.minimum_ticks:
         return df
 
-    bb = ta.volatility.BollingerBands(df["close"], window=config.bb_window, window_dev=config.bb_std_dev)
+    bb = ta.volatility.BollingerBands(
+        df["close"], window=config.bb_window, window_dev=config.bb_std_dev
+    )
     df["bb_upper"] = bb.bollinger_hband()
     df["bb_lower"] = bb.bollinger_lband()
     df["bb_mid"] = bb.bollinger_mavg()
     df["bb_width_percent"] = (df["bb_upper"] - df["bb_lower"]) / df["close"] * 100
 
     df["abs_tick_move_percent"] = df["close"].pct_change().abs() * 100
-    df["tick_atr_percent"] = df["abs_tick_move_percent"].rolling(config.atr_window).mean()
+    df["tick_atr_percent"] = (
+        df["abs_tick_move_percent"].rolling(config.atr_window).mean()
+    )
     df["recent_move_percent"] = df["close"].pct_change(config.recent_window).abs() * 100
-    df["tick_imbalance"] = _calculate_tick_imbalance(df["close"], config.imbalance_window)
+    df["tick_imbalance"] = _calculate_tick_imbalance(
+        df["close"], config.imbalance_window
+    )
     df["hawkes_intensity"] = _calculate_hawkes_intensity(df, config)
     df["hurst_exponent"] = (
-        df["close"].rolling(config.hurst_window).apply(_hurst_exponent_from_prices, raw=True)
+        df["close"]
+        .rolling(config.hurst_window)
+        .apply(_hurst_exponent_from_prices, raw=True)
     )
     df["price_velocity"] = _finite_velocity(df["close"])
     df["price_acceleration"] = _finite_acceleration(df["close"])
-    df["velocity_zscore"] = _rolling_abs_zscore(df["price_velocity"], config.derivative_window)
-    df["acceleration_zscore"] = _rolling_abs_zscore(df["price_acceleration"], config.derivative_window)
+    df["velocity_zscore"] = _rolling_abs_zscore(
+        df["price_velocity"], config.derivative_window
+    )
+    df["acceleration_zscore"] = _rolling_abs_zscore(
+        df["price_acceleration"], config.derivative_window
+    )
     df["integral_mean_price"] = (
-        df["close"].rolling(config.integral_window).apply(_integral_mean_price, raw=True)
+        df["close"]
+        .rolling(config.integral_window)
+        .apply(_integral_mean_price, raw=True)
     )
     df["pmi_distance_percent"] = (
         (df["close"] - df["integral_mean_price"]).abs() / df["close"] * 100
@@ -155,7 +180,9 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     df["kalman_estimate"] = kalman["kalman_estimate"]
     df["kalman_covariance"] = kalman["kalman_covariance"]
     df["kalman_residual"] = kalman["kalman_residual"]
-    df["kalman_residual_zscore"] = _rolling_abs_zscore(df["kalman_residual"], config.derivative_window)
+    df["kalman_residual_zscore"] = _rolling_abs_zscore(
+        df["kalman_residual"], config.derivative_window
+    )
 
     # --- RF directional indicators (signed, direction-predictive) ---
     df["ols_slope"] = df["close"].rolling(config.ols_window).apply(_ols_slope, raw=True)
@@ -167,33 +194,51 @@ def calculate_tick_indicators(ticks: list[dict], config: AccumulatorStrategyConf
     _markov2 = _second_order_markov(df["close"], config.markov_window)
     df["markov2_puu"] = _markov2["puu"]
     df["markov2_pdd"] = _markov2["pdd"]
-    df["return_autocorr_lag1"] = _rolling_return_autocorr(df["close"], lag=1, window=config.autocorr_window)
+    df["return_autocorr_lag1"] = _rolling_return_autocorr(
+        df["close"], lag=1, window=config.autocorr_window
+    )
     df["return_skewness"] = df["close"].diff().rolling(config.skewness_window).skew()
-    df["fft_dominant_period"] = df["close"].rolling(config.fft_window).apply(_fft_dominant_period, raw=True)
+    df["fft_dominant_period"] = (
+        df["close"].rolling(config.fft_window).apply(_fft_dominant_period, raw=True)
+    )
 
     # --- Advanced calculus & statistical indicators (universal) ---
     df["price_jerk"] = _finite_jerk(df["close"])
     df["jerk_zscore"] = _rolling_abs_zscore(df["price_jerk"], config.derivative_window)
     df["price_curvature"] = _price_curvature(df["close"])
-    df["curvature_zscore"] = _rolling_abs_zscore(df["price_curvature"], config.derivative_window)
-    df["integral_momentum_div"] = _integral_momentum_divergence(
-        df["close"], _ema_slow, config.integral_window,
+    df["curvature_zscore"] = _rolling_abs_zscore(
+        df["price_curvature"], config.derivative_window
     )
-    df["derivative_energy"] = _derivative_energy(df["price_velocity"], config.derivative_window)
+    df["integral_momentum_div"] = _integral_momentum_divergence(
+        df["close"],
+        _ema_slow,
+        config.integral_window,
+    )
+    df["derivative_energy"] = _derivative_energy(
+        df["price_velocity"], config.derivative_window
+    )
     df["trend_exhaustion"] = _trend_exhaustion(df["close"], config.integral_window)
     df["return_zscore"] = _rolling_return_zscore(df["close"], config.derivative_window)
-    df["lyapunov_exponent"] = df["close"].rolling(
-        config.hurst_window
-    ).apply(_rolling_lyapunov, raw=True)
+    df["lyapunov_exponent"] = (
+        df["close"].rolling(config.hurst_window).apply(_rolling_lyapunov, raw=True)
+    )
 
     # --- Advanced mathematical intelligence filters ---
-    df["bayesian_prob_up"] = _bayesian_prob_up(df["close"], config.shannon_entropy_window)
-    df["renyi_entropy"] = _renyi_entropy(df["close"], config.shannon_entropy_window, alpha=0.5)
-    df["fisher_information"] = _fisher_information(df["close"], config.derivative_window)
+    df["bayesian_prob_up"] = _bayesian_prob_up(
+        df["close"], config.shannon_entropy_window
+    )
+    df["renyi_entropy"] = _renyi_entropy(
+        df["close"], config.shannon_entropy_window, alpha=0.5
+    )
+    df["fisher_information"] = _fisher_information(
+        df["close"], config.derivative_window
+    )
     df["wavelet_energy_ratio"] = _wavelet_energy_ratio(df["close"], window=32)
     df["cusum_score"] = _cusum_score(df["close"], config.shannon_entropy_window)
     df["tail_dependence"] = _copula_tail_dependence(df["close"], config.markov_window)
-    df["mi_flow"] = _mutual_information_flow(df["close"], config.shannon_entropy_window, lag=1)
+    df["mi_flow"] = _mutual_information_flow(
+        df["close"], config.shannon_entropy_window, lag=1
+    )
 
     return df
 
@@ -210,12 +255,19 @@ def generate_accumulator_signal(
     last = df.iloc[-1]
     score = score_accumulator_row(last, config)
 
-    if score == 0 and last[["bb_width_percent", "tick_atr_percent", "recent_move_percent"]].isna().any():
+    if (
+        score == 0
+        and last[["bb_width_percent", "tick_atr_percent", "recent_move_percent"]]
+        .isna()
+        .any()
+    ):
         return None, 0, None
 
     # --- HMM regime gate: block trades during high-variance regime ---
     if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
-        if hmm_regime_is_high_variance(df["close"], n_states=config.hmm_n_states, window=config.hmm_window):
+        if hmm_regime_is_high_variance(
+            df["close"], n_states=config.hmm_n_states, window=config.hmm_window
+        ):
             logger.info("HMM: regime de alta variancia detectado. Trade bloqueado.")
             return None, 0, None
 
@@ -248,20 +300,30 @@ def generate_accumulator_signal(
         return None, 0, None
 
     if reason != "ok":
-        logger.info("Score %d >= %d com quant parcial: %s", score, config.min_score, reason)
+        logger.info(
+            "Score %d >= %d com quant parcial: %s", score, config.min_score, reason
+        )
 
     # --- Ensemble gate (optional): replace boolean AND with probabilistic score ---
     p_loss: Optional[float] = None
     if config.use_ensemble and ensemble_scorer is not None:
         p_loss = ensemble_scorer.predict_loss_probability(last)
-        logger.info("EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob)
+        logger.info(
+            "EnsembleScorer P(LOSS)=%.4f limiar=%.4f", p_loss, config.ensemble_min_prob
+        )
         if p_loss >= config.ensemble_min_prob:
-            logger.warning("⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f", p_loss, config.ensemble_min_prob)
+            logger.warning(
+                "⛔ Sinal cancelado pela IA! P(LOSS)=%.4f >= %.4f",
+                p_loss,
+                config.ensemble_min_prob,
+            )
             return None, 0, None
     return "ACCU", score, p_loss
 
 
-def score_accumulator_row(row: pd.Series, config: AccumulatorStrategyConfig | None = None) -> int:
+def score_accumulator_row(
+    row: pd.Series, config: AccumulatorStrategyConfig | None = None
+) -> int:
     config = config or AccumulatorStrategyConfig()
     required = ["bb_width_percent", "tick_atr_percent", "recent_move_percent"]
     if row[required].isna().any():
@@ -358,7 +420,9 @@ def _calculate_tick_imbalance(close: pd.Series, window: int) -> pd.Series:
     return signs.rolling(window).sum()
 
 
-def _calculate_hawkes_intensity(df: pd.DataFrame, config: AccumulatorStrategyConfig) -> pd.Series:
+def _calculate_hawkes_intensity(
+    df: pd.DataFrame, config: AccumulatorStrategyConfig
+) -> pd.Series:
     close = df["close"].to_numpy(dtype=float)
     atr_price = (df["tick_atr_percent"].fillna(0.0).to_numpy(dtype=float) / 100) * close
     threshold = atr_price * config.hawkes_jump_atr_multiplier
@@ -420,7 +484,9 @@ def _integral_mean_price(prices: np.ndarray) -> float:
     return float(integrate_trapezoid(prices, dx=1.0) / duration)
 
 
-def _markov_transition_probabilities(close: pd.Series, window: int = 50) -> pd.DataFrame:
+def _markov_transition_probabilities(
+    close: pd.Series, window: int = 50
+) -> pd.DataFrame:
     states = np.sign(close.diff()).fillna(0.0).to_numpy(dtype=int)
     up_given_up: list[float] = [np.nan] * len(states)
     down_given_down: list[float] = [np.nan] * len(states)
@@ -432,8 +498,12 @@ def _markov_transition_probabilities(close: pd.Series, window: int = 50) -> pd.D
 
         up_mask = previous == 1
         down_mask = previous == -1
-        up_given_up[end] = float(np.mean(current[up_mask] == 1)) if np.any(up_mask) else 0.0
-        down_given_down[end] = float(np.mean(current[down_mask] == -1)) if np.any(down_mask) else 0.0
+        up_given_up[end] = (
+            float(np.mean(current[up_mask] == 1)) if np.any(up_mask) else 0.0
+        )
+        down_given_down[end] = (
+            float(np.mean(current[down_mask] == -1)) if np.any(down_mask) else 0.0
+        )
 
     return pd.DataFrame(
         {
@@ -468,7 +538,9 @@ def _normalized_entropy(categories: np.ndarray) -> float:
     return float(entropy / np.log2(5))
 
 
-def _kalman_filter_metrics(close: pd.Series, process_variance: float, measurement_variance: float) -> pd.DataFrame:
+def _kalman_filter_metrics(
+    close: pd.Series, process_variance: float, measurement_variance: float
+) -> pd.DataFrame:
     prices = close.to_numpy(dtype=float)
     estimates: list[float] = []
     covariances: list[float] = []
@@ -505,6 +577,7 @@ def _kalman_filter_metrics(close: pd.Series, process_variance: float, measuremen
 # Advanced Calculus & Statistical Helpers (universal)
 # ---------------------------------------------------------------------------
 
+
 def _finite_jerk(close: pd.Series) -> pd.Series:
     """3rd derivative of price — rate of change of acceleration.
 
@@ -524,9 +597,9 @@ def _price_curvature(close: pd.Series) -> pd.Series:
     Low curvature → straight move or flat.
     Returns absolute curvature (unsigned — direction comes from other indicators).
     """
-    v = close.diff()                # velocity
-    a = v.diff()                    # acceleration
-    denom = (1.0 + v ** 2) ** 1.5
+    v = close.diff()  # velocity
+    a = v.diff()  # acceleration
+    denom = (1.0 + v**2) ** 1.5
     # Protect against zero denominator (perfectly flat)
     denom = denom.replace(0, np.nan)
     return (a.abs() / denom).fillna(0.0)
@@ -546,9 +619,14 @@ def _integral_momentum_divergence(
     This is analogous to the MACD histogram area — accumulated divergence energy.
     """
     diff = close - ema_slow
-    return diff.rolling(window).apply(
-        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
-    ).fillna(0.0)
+    return (
+        diff.rolling(window)
+        .apply(
+            lambda x: float(integrate_trapezoid(x, dx=1.0)),
+            raw=True,
+        )
+        .fillna(0.0)
+    )
 
 
 def _derivative_energy(velocity: pd.Series, window: int) -> pd.Series:
@@ -557,10 +635,15 @@ def _derivative_energy(velocity: pd.Series, window: int) -> pd.Series:
     Analogous to kinetic energy ½mv². High energy = large sustained moves.
     Low energy = calm market. This is scale-free (no price level bias).
     """
-    v2 = velocity ** 2
-    return v2.rolling(window).apply(
-        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
-    ).fillna(0.0)
+    v2 = velocity**2
+    return (
+        v2.rolling(window)
+        .apply(
+            lambda x: float(integrate_trapezoid(x, dx=1.0)),
+            raw=True,
+        )
+        .fillna(0.0)
+    )
 
 
 def _trend_exhaustion(close: pd.Series, window: int) -> pd.Series:
@@ -574,9 +657,14 @@ def _trend_exhaustion(close: pd.Series, window: int) -> pd.Series:
     sma = close.rolling(window).mean()
     pct_dev = (close - sma) / sma.replace(0, np.nan)
     pct_dev = pct_dev.fillna(0.0)
-    return pct_dev.rolling(window).apply(
-        lambda x: float(integrate_trapezoid(x, dx=1.0)), raw=True,
-    ).fillna(0.0)
+    return (
+        pct_dev.rolling(window)
+        .apply(
+            lambda x: float(integrate_trapezoid(x, dx=1.0)),
+            raw=True,
+        )
+        .fillna(0.0)
+    )
 
 
 def _rolling_return_zscore(close: pd.Series, window: int) -> pd.Series:
@@ -635,6 +723,7 @@ def _rolling_lyapunov(prices: np.ndarray) -> float:
 # Advanced Mathematical Intelligence Filters
 # ---------------------------------------------------------------------------
 
+
 def _bayesian_prob_up(close: pd.Series, window: int = 30) -> pd.Series:
     """Sequential Bayesian posterior P(next tick up) using Beta conjugate prior.
 
@@ -647,7 +736,7 @@ def _bayesian_prob_up(close: pd.Series, window: int = 30) -> pd.Series:
     signs = (close.diff() > 0).astype(float).fillna(0.5)
 
     def _beta_prob(x: np.ndarray) -> float:
-        alpha = 1.0 + float(x.sum())          # prior=1 + observed ups
+        alpha = 1.0 + float(x.sum())  # prior=1 + observed ups
         beta = 1.0 + float(len(x) - x.sum())  # prior=1 + observed downs
         return alpha / (alpha + beta)
 
@@ -671,7 +760,9 @@ def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5) -> pd
     normalized = returns / scale
     bins = [-np.inf, -2.0, -1.0, -0.01, 0.01, 1.0, 2.0, np.inf]
     n_bins = len(bins) - 1
-    categories = pd.cut(normalized, bins=bins, labels=False, include_lowest=True).fillna(n_bins // 2)
+    categories = pd.cut(
+        normalized, bins=bins, labels=False, include_lowest=True
+    ).fillna(n_bins // 2)
 
     def _renyi(x: np.ndarray) -> float:
         counts = np.bincount(x.astype(int), minlength=n_bins).astype(float)
@@ -679,7 +770,7 @@ def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5) -> pd
         if probs.size <= 1:
             return 0.0
         # Rényi formula: H_α = 1/(1-α) * log₂(∑ p^α)
-        sum_pa = float(np.sum(probs ** alpha))
+        sum_pa = float(np.sum(probs**alpha))
         if sum_pa <= 0:
             return 0.0
         h = (1.0 / (1.0 - alpha)) * np.log2(sum_pa)
@@ -716,6 +807,7 @@ def _wavelet_energy_ratio(close: pd.Series, window: int = 32) -> pd.Series:
     Returns ratio: E_signal / E_total. High = clean trend. Low = noisy.
     Range [0, 1]. Values above 0.7 = strong signal. Below 0.3 = noise-dominated.
     """
+
     def _haar_snr(prices: np.ndarray) -> float:
         n = len(prices)
         if n < 4:
@@ -736,7 +828,7 @@ def _wavelet_energy_ratio(close: pd.Series, window: int = 32) -> pd.Series:
             for i in range(half):
                 approx[i] = (x[2 * i] + x[2 * i + 1]) / np.sqrt(2)
                 detail[i] = (x[2 * i] - x[2 * i + 1]) / np.sqrt(2)
-            detail_energy += float(np.sum(detail ** 2))
+            detail_energy += float(np.sum(detail**2))
             x[:half] = approx
             length = half
 
@@ -831,7 +923,9 @@ def _copula_tail_dependence(close: pd.Series, window: int = 50) -> pd.Series:
     return vel.rolling(window).apply(_tail_dep, raw=True).fillna(0.0)
 
 
-def _mutual_information_flow(close: pd.Series, window: int = 30, lag: int = 1) -> pd.Series:
+def _mutual_information_flow(
+    close: pd.Series, window: int = 30, lag: int = 1
+) -> pd.Series:
     """Mutual information between past returns and future returns.
 
     MI(past, future) measures how much knowing the past tick direction
@@ -880,6 +974,7 @@ def _mutual_information_flow(close: pd.Series, window: int = 30, lag: int = 1) -
 # RF directional indicator helpers
 # ---------------------------------------------------------------------------
 
+
 def _ols_slope(prices: np.ndarray) -> float:
     """OLS linear regression slope, normalised by mean price (% per tick)."""
     n = len(prices)
@@ -889,8 +984,8 @@ def _ols_slope(prices: np.ndarray) -> float:
     st = t.sum()
     sp = float(prices.sum())
     stp = float((t * prices).sum())
-    st2 = float((t ** 2).sum())
-    denom = n * st2 - st ** 2
+    st2 = float((t**2).sum())
+    denom = n * st2 - st**2
     if denom == 0:
         return 0.0
     slope = (n * stp - st * sp) / denom
@@ -922,7 +1017,7 @@ def _second_order_markov(close: pd.Series, window: int = 50) -> pd.DataFrame:
     pdd: list[float] = [np.nan] * len(states)
 
     for end in range(window, len(states)):
-        s = states[end - window + 1: end + 1]
+        s = states[end - window + 1 : end + 1]
         prev2 = s[:-2]
         prev1 = s[1:-1]
         curr = s[2:]
@@ -977,7 +1072,10 @@ def _fft_dominant_period(prices: np.ndarray) -> float:
 # HMM Regime Detection
 # ---------------------------------------------------------------------------
 
-def hmm_regime_is_high_variance(close: pd.Series, n_states: int = 2, window: int = 200) -> bool:
+
+def hmm_regime_is_high_variance(
+    close: pd.Series, n_states: int = 2, window: int = 200
+) -> bool:
     """Return True if the HMM identifies the current market as a high-variance regime.
 
     Uses a Gaussian HMM on log-returns. The state with the higher emission variance
@@ -1045,12 +1143,13 @@ class EnsembleScorer:
 
     def __init__(
         self,
-        model_path: str = "models/pegasus_xgb_v1.json",
-        features_path: str = "models/pegasus_features_v1.json",
+        model_path: str = "models/pegasus_xgb_v3_pertick.json",
+        features_path: str = "models/pegasus_features_v3_pertick.json",
     ) -> None:
         if not _XGB_AVAILABLE:
             raise RuntimeError("xgboost nao instalado. Execute: pip install xgboost")
         import json as _json
+
         with open(features_path) as _f:
             self.feature_names: list[str] = _json.load(_f)
         self.booster = xgb.Booster()
@@ -1079,24 +1178,24 @@ class EnsembleScorer:
 #: plus volatility context for the ensemble model.
 RF_FEATURES = [
     # Signed velocity / trend indicators
-    "price_velocity",        # causal finite-difference velocity (signed)
-    "ols_slope",             # OLS regression slope over window (% per tick)
-    "price_momentum",        # net return over last N ticks (%)
-    "ema_diff",              # EMA(5) - EMA(20): positive = short-term uptrend
-    "run_length",            # consecutive same-direction tick count (signed)
+    "price_velocity",  # causal finite-difference velocity (signed)
+    "ols_slope",  # OLS regression slope over window (% per tick)
+    "price_momentum",  # net return over last N ticks (%)
+    "ema_diff",  # EMA(5) - EMA(20): positive = short-term uptrend
+    "run_length",  # consecutive same-direction tick count (signed)
     # Flow imbalance
-    "tick_imbalance",        # net up-ticks minus down-ticks in window
+    "tick_imbalance",  # net up-ticks minus down-ticks in window
     # 1st-order Markov regime
     "markov_p_up_given_up",
     "markov_p_down_given_down",
     # 2nd-order Markov (run continuation)
-    "markov2_puu",           # P(up | up, up)
-    "markov2_pdd",           # P(dn | dn, dn)
+    "markov2_puu",  # P(up | up, up)
+    "markov2_pdd",  # P(dn | dn, dn)
     # Return distribution statistics
     "return_autocorr_lag1",  # lag-1 autocorrelation: + = momentum, - = mean-rev
-    "return_skewness",       # rolling skewness of returns
+    "return_skewness",  # rolling skewness of returns
     # Spectral
-    "fft_dominant_period",   # dominant cycle period in ticks
+    "fft_dominant_period",  # dominant cycle period in ticks
     # Volatility context (unsigned)
     "hurst_exponent",
     "hawkes_intensity",
@@ -1133,7 +1232,7 @@ def generate_calm_accu_signal(
     if len(prices) < lookback + 1:
         return None, 0, None
 
-    recent = prices[-(lookback + 1):]
+    recent = prices[-(lookback + 1) :]
     abs_returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent))]
     avg_abs_ret = sum(abs_returns) / len(abs_returns)
 
@@ -1143,7 +1242,8 @@ def generate_calm_accu_signal(
         if now - _calm_heartbeat_ts >= 30.0:
             logger.info(
                 "CALM ACCU: volatilidade=%.2e >= limiar=%.2e — aguardando mercado calmo",
-                avg_abs_ret, threshold,
+                avg_abs_ret,
+                threshold,
             )
             _calm_heartbeat_ts = now
         return None, 0, None
@@ -1203,7 +1303,11 @@ def generate_calm_accu_signal(
         # Layer 4: Calculus & chaos indicator votes — 10 additional points
         # Derivative energy (kinetic proxy): low = calm market = good for ACCU
         deriv_energy = _val("derivative_energy", 0.0)
-        de_median = df["derivative_energy"].median() if "derivative_energy" in df.columns else 1.0
+        de_median = (
+            df["derivative_energy"].median()
+            if "derivative_energy" in df.columns
+            else 1.0
+        )
         if de_median > 0 and deriv_energy <= de_median:
             score += 1
 
@@ -1273,7 +1377,9 @@ def generate_calm_accu_signal(
         # --- HMM regime gate ---
         if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
             if hmm_regime_is_high_variance(
-                df["close"], n_states=config.hmm_n_states, window=config.hmm_window,
+                df["close"],
+                n_states=config.hmm_n_states,
+                window=config.hmm_window,
             ):
                 logger.info("CALM ACCU BLOCKED: HMM regime de alta variância")
                 return None, 0, None
@@ -1283,7 +1389,10 @@ def generate_calm_accu_signal(
         if score < min_score:
             logger.info(
                 "CALM ACCU score=%d < min=%d/37 | H=%.3f cusum=%.2f → skip",
-                score, min_score, hurst, cusum,
+                score,
+                min_score,
+                hurst,
+                cusum,
             )
             return None, 0, None
 
@@ -1293,14 +1402,21 @@ def generate_calm_accu_signal(
             if p_loss >= config.ensemble_min_prob:
                 logger.warning(
                     "⛔ CALM ACCU BLOCKED: P(LOSS)=%.4f >= %.4f — IA vetou",
-                    p_loss, config.ensemble_min_prob,
+                    p_loss,
+                    config.ensemble_min_prob,
                 )
                 return None, 0, None
-            logger.info("CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓", p_loss, config.ensemble_min_prob)
+            logger.info(
+                "CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓",
+                p_loss,
+                config.ensemble_min_prob,
+            )
 
         logger.info(
             "CALM ACCU ENTRY: score=%d/37 | H=%.3f | cusum=%.2f | P(LOSS)=%s",
-            score, hurst, cusum,
+            score,
+            hurst,
+            cusum,
             f"{p_loss:.4f}" if p_loss is not None else "N/A",
         )
     else:
@@ -1313,10 +1429,10 @@ def generate_calm_accu_signal(
 class RiseFallStrategyConfig:
     """Configuration for Rise/Fall directional signal generation."""
 
-    min_votes: int = 4          # votes needed out of 6 direction indicators
+    min_votes: int = 4  # votes needed out of 6 direction indicators
     min_imbalance: float = 1.0  # |tick_imbalance| threshold for directional vote
     min_ols_slope: float = 0.0  # minimum |ols_slope| to count as directional
-    min_momentum: float = 0.0   # minimum |price_momentum| to count as directional
+    min_momentum: float = 0.0  # minimum |price_momentum| to count as directional
     use_ensemble: bool = False
     ensemble_min_prob: float = 0.52  # P(correct direction) threshold
 
@@ -1350,10 +1466,18 @@ def generate_rise_fall_signal(
     if config.use_ensemble and ensemble_scorer is not None:
         p_up = ensemble_scorer.predict_up_probability(last)
         if p_up >= config.ensemble_min_prob:
-            logger.info("EnsembleScorerRF P(UP)=%.4f >= %.4f → CALL", p_up, config.ensemble_min_prob)
+            logger.info(
+                "EnsembleScorerRF P(UP)=%.4f >= %.4f → CALL",
+                p_up,
+                config.ensemble_min_prob,
+            )
             return "CALL", 6, p_up
         if p_up <= 1.0 - config.ensemble_min_prob:
-            logger.info("EnsembleScorerRF P(UP)=%.4f <= %.4f → PUT", p_up, 1.0 - config.ensemble_min_prob)
+            logger.info(
+                "EnsembleScorerRF P(UP)=%.4f <= %.4f → PUT",
+                p_up,
+                1.0 - config.ensemble_min_prob,
+            )
             return "PUT", 6, 1.0 - p_up
         logger.debug("EnsembleScorerRF P(UP)=%.4f — sem sinal direcional", p_up)
         return None, 0, None
@@ -1366,11 +1490,11 @@ def generate_rise_fall_signal(
             f = default
         return default if f != f else f  # NaN guard
 
-    velocity  = _get("price_velocity")
+    velocity = _get("price_velocity")
     imbalance = _get("tick_imbalance")
-    ols       = _get("ols_slope")
-    momentum  = _get("price_momentum")
-    ema_d     = _get("ema_diff")
+    ols = _get("ols_slope")
+    momentum = _get("price_momentum")
+    ema_d = _get("ema_diff")
     markov_up = _get("markov_p_up_given_up", 0.5)
     markov_dn = _get("markov_p_down_given_down", 0.5)
 
@@ -1393,7 +1517,15 @@ def generate_rise_fall_signal(
 
     logger.debug(
         "RF vel=%.5f ols=%.5f mom=%.4f ema=%.5f imb=%.1f mUp=%.3f mDn=%.3f → up=%d dn=%d",
-        velocity, ols, momentum, ema_d, imbalance, markov_up, markov_dn, up_votes, dn_votes,
+        velocity,
+        ols,
+        momentum,
+        ema_d,
+        imbalance,
+        markov_up,
+        markov_dn,
+        up_votes,
+        dn_votes,
     )
 
     if up_votes >= config.min_votes:
@@ -1418,6 +1550,7 @@ class EnsembleScorerRF:
         if not _XGB_AVAILABLE:
             raise RuntimeError("xgboost nao instalado. Execute: pip install xgboost")
         import json as _json
+
         with open(features_path) as _f:
             self.feature_names: list[str] = _json.load(_f)
         self.booster = xgb.Booster()
@@ -1462,45 +1595,51 @@ class JumpMomentumConfig:
     """
 
     # Momentum continuation: N consecutive ticks → bet continuation
-    mom_lookback: int = 5       # how many consecutive same-direction ticks needed
-    mom_horizon: int = 5        # bet duration in ticks (Rise/Fall)
+    mom_lookback: int = 5  # how many consecutive same-direction ticks needed
+    mom_horizon: int = 5  # bet duration in ticks (Rise/Fall)
     # Short momentum
-    short_mom_lookback: int = 3 # short-term momentum window
+    short_mom_lookback: int = 3  # short-term momentum window
     # EMA crossover
-    ema_fast: int = 5           # fast EMA period
-    ema_slow: int = 20          # slow EMA period
+    ema_fast: int = 5  # fast EMA period
+    ema_slow: int = 20  # slow EMA period
     # Reversal after long streak
-    rev_lookback: int = 7       # streak length to trigger reversal bet
+    rev_lookback: int = 7  # streak length to trigger reversal bet
     # Minimum votes to trigger signal (out of 21 validators)
-    min_score: int = 7          # needs at least 7 validators agreeing
+    min_score: int = 7  # needs at least 7 validators agreeing
     # Minimum confidence ratio to trigger (winning_votes / total_votes)
     min_confidence: float = 0.60  # at least 60% of voting validators must agree
     # Minimum ticks in buffer before generating signals
     min_ticks: int = 30
     # Hard block thresholds (return None immediately)
-    lyapunov_chaos: float = 2.0         # positive lyapunov above this → too chaotic to trade
-    return_z_extreme: float = 3.0       # |return_zscore| above this = extreme move
-    cusum_regime_alert: float = 8.0     # CUSUM above this = regime shift in progress
-    jerk_regime_z: float = 3.0          # jerk z-score → regime transition, block
-    tail_dep_danger: float = 0.6        # tail dependence above this = extreme clustering, block
+    lyapunov_chaos: float = 2.0  # positive lyapunov above this → too chaotic to trade
+    return_z_extreme: float = 3.0  # |return_zscore| above this = extreme move
+    cusum_regime_alert: float = 8.0  # CUSUM above this = regime shift in progress
+    jerk_regime_z: float = 3.0  # jerk z-score → regime transition, block
+    tail_dep_danger: float = (
+        0.6  # tail dependence above this = extreme clustering, block
+    )
     # Validator thresholds
-    curvature_reversal_z: float = 2.0   # curvature z-score → high = inflection
-    energy_calm_pctile: float = 30.0    # derivative energy below this pctile = calm
-    exhaustion_extreme: float = 0.02    # |trend_exhaustion| above this = overbought/oversold
+    curvature_reversal_z: float = 2.0  # curvature z-score → high = inflection
+    energy_calm_pctile: float = 30.0  # derivative energy below this pctile = calm
+    exhaustion_extreme: float = (
+        0.02  # |trend_exhaustion| above this = overbought/oversold
+    )
     bayesian_strong_prob: float = 0.55  # P(up) above/below this = directional signal
-    renyi_low_entropy: float = 0.4      # Rényi below this = concentrated → predictable
-    fisher_info_min: float = 0.05       # Fisher info above this = tight distribution
-    wavelet_snr_min: float = 0.50       # wavelet ratio above this = clean signal
-    mi_flow_min: float = 0.03           # MI above this = exploitable predictability
-    hurst_trending: float = 0.55        # hurst above this = trending market
-    hurst_reverting: float = 0.40       # hurst below this = mean-reverting market
+    renyi_low_entropy: float = 0.4  # Rényi below this = concentrated → predictable
+    fisher_info_min: float = 0.05  # Fisher info above this = tight distribution
+    wavelet_snr_min: float = 0.50  # wavelet ratio above this = clean signal
+    mi_flow_min: float = 0.03  # MI above this = exploitable predictability
+    hurst_trending: float = 0.55  # hurst above this = trending market
+    hurst_reverting: float = 0.40  # hurst below this = mean-reverting market
     # ── Quality gate filters (post-vote rejection) ─────────────────────
     # These reject signals that pass the vote threshold but lack indicator
     # conviction.  At least ONE quality gate must pass for signal to fire.
     quality_gate_enabled: bool = True
-    qg_min_abs_imbalance: float = 6.0   # |tick_imbalance| must reach this (6+ proven profitable)
-    qg_bayes_strong: float = 0.70       # bayesian_prob_up > X or < (1-X)
-    qg_hurst_max: float = 0.50          # hurst below this for bayes+hurst combo
+    qg_min_abs_imbalance: float = (
+        6.0  # |tick_imbalance| must reach this (6+ proven profitable)
+    )
+    qg_bayes_strong: float = 0.70  # bayesian_prob_up > X or < (1-X)
+    qg_hurst_max: float = 0.50  # hurst below this for bayes+hurst combo
 
 
 def _ema_series(prices: list[float], period: int) -> list[float]:
@@ -1567,16 +1706,17 @@ def generate_jump_momentum_signal(
                 f = default
             return default if f != f else f  # NaN guard
 
-        lyap     = _g("lyapunov_exponent")
-        ret_z    = _g("return_zscore")
-        cusum    = _g("cusum_score", 0.0)
-        jerk_z   = _g("jerk_zscore")
+        lyap = _g("lyapunov_exponent")
+        ret_z = _g("return_zscore")
+        cusum = _g("cusum_score", 0.0)
+        jerk_z = _g("jerk_zscore")
         tail_dep = _g("tail_dependence", 0.0)
 
         if lyap > config.lyapunov_chaos:
             logger.debug(
                 "JumpMom BLOCK: Lyapunov=%.3f > %.3f → chaotic.",
-                lyap, config.lyapunov_chaos,
+                lyap,
+                config.lyapunov_chaos,
             )
             return None, 0, None
 
@@ -1689,25 +1829,25 @@ def generate_jump_momentum_signal(
                 f = default
             return default if f != f else f  # NaN guard
 
-        vel      = _g("price_velocity")
-        accel    = _g("price_acceleration", 0.0)
-        curv_z   = _g("curvature_zscore")
-        int_div  = _g("integral_momentum_div")
-        energy   = _g("derivative_energy")
+        vel = _g("price_velocity")
+        accel = _g("price_acceleration", 0.0)
+        curv_z = _g("curvature_zscore")
+        int_div = _g("integral_momentum_div")
+        energy = _g("derivative_energy")
         bayes_up = _g("bayesian_prob_up", 0.5)
         kalman_z = _g("kalman_residual_zscore")
-        hurst    = _g("hurst_exponent", 0.5)
-        markov_up   = _g("markov_p_up_given_up", 0.5)
-        markov_dn   = _g("markov_p_down_given_down", 0.5)
-        imbalance   = _g("tick_imbalance", 0.0)
-        shannon     = _g("shannon_entropy", 1.0)
-        renyi       = _g("renyi_entropy", 0.5)
-        mi          = _g("mi_flow", 0.0)
-        wavelet     = _g("wavelet_energy_ratio", 0.5)
-        fisher      = _g("fisher_information", 0.0)
-        exhaust     = _g("trend_exhaustion")
-        vel_z       = _g("velocity_zscore", 0.0)
-        accel_z     = _g("acceleration_zscore", 0.0)
+        hurst = _g("hurst_exponent", 0.5)
+        markov_up = _g("markov_p_up_given_up", 0.5)
+        markov_dn = _g("markov_p_down_given_down", 0.5)
+        imbalance = _g("tick_imbalance", 0.0)
+        shannon = _g("shannon_entropy", 1.0)
+        renyi = _g("renyi_entropy", 0.5)
+        mi = _g("mi_flow", 0.0)
+        wavelet = _g("wavelet_energy_ratio", 0.5)
+        fisher = _g("fisher_information", 0.0)
+        exhaust = _g("trend_exhaustion")
+        vel_z = _g("velocity_zscore", 0.0)
+        accel_z = _g("acceleration_zscore", 0.0)
 
         # ── V6: Velocity direction ─────────────────────────────────────
         if vel > 0:
@@ -1844,7 +1984,11 @@ def generate_jump_momentum_signal(
 
     if winning_votes >= config.min_score and confidence >= config.min_confidence:
         # ── QUALITY GATE: at least one indicator filter must pass ───────
-        if config.quality_gate_enabled and df is not None and len(df) >= config.min_ticks:
+        if (
+            config.quality_gate_enabled
+            and df is not None
+            and len(df) >= config.min_ticks
+        ):
             last = df.iloc[-1]
 
             def _qg(name: str, default: float = 0.0) -> float:
@@ -1863,7 +2007,9 @@ def generate_jump_momentum_signal(
             gate_imbalance = abs(qg_imbalance) >= config.qg_min_abs_imbalance
 
             # Gate 2: strong bayesian conviction
-            gate_bayes = qg_bayes > config.qg_bayes_strong or qg_bayes < (1.0 - config.qg_bayes_strong)
+            gate_bayes = qg_bayes > config.qg_bayes_strong or qg_bayes < (
+                1.0 - config.qg_bayes_strong
+            )
 
             # Gate 3: bayes + hurst combo (strongest filter: 77.8% WR)
             gate_bayes_hurst = gate_bayes and qg_hurst < config.qg_hurst_max
@@ -1872,8 +2018,10 @@ def generate_jump_momentum_signal(
                 logger.debug(
                     "JumpMom QUALITY GATE REJECT: imb=%.1f (need ±%.1f), "
                     "bayes=%.2f, hurst=%.2f",
-                    qg_imbalance, config.qg_min_abs_imbalance,
-                    qg_bayes, qg_hurst,
+                    qg_imbalance,
+                    config.qg_min_abs_imbalance,
+                    qg_bayes,
+                    qg_hurst,
                 )
                 return None, 0, None
 
@@ -1888,19 +2036,31 @@ def generate_jump_momentum_signal(
         if up_votes > dn_votes:
             logger.info(
                 "JumpMom CALL: ↑%d ↓%d (conf=%.0f%%, %d/%d votes)",
-                up_votes, dn_votes, confidence * 100, winning_votes, total_votes,
+                up_votes,
+                dn_votes,
+                confidence * 100,
+                winning_votes,
+                total_votes,
             )
             return "CALL", up_votes, confidence
         else:
             logger.info(
                 "JumpMom PUT: ↑%d ↓%d (conf=%.0f%%, %d/%d votes)",
-                up_votes, dn_votes, confidence * 100, winning_votes, total_votes,
+                up_votes,
+                dn_votes,
+                confidence * 100,
+                winning_votes,
+                total_votes,
             )
             return "PUT", dn_votes, confidence
 
     logger.debug(
         "JumpMom NO SIGNAL: ↑%d ↓%d (need %d votes @ %.0f%% conf, got %d @ %.0f%%)",
-        up_votes, dn_votes, config.min_score, config.min_confidence * 100,
-        winning_votes, confidence * 100,
+        up_votes,
+        dn_votes,
+        config.min_score,
+        config.min_confidence * 100,
+        winning_votes,
+        confidence * 100,
     )
     return None, 0, None

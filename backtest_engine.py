@@ -121,21 +121,26 @@ accu_cfg = AccumulatorStrategyConfig(
 # ── XGBoost EnsembleScorer: filtra sinais ruins (idêntico ao bot real) ─────────
 _ensemble_scorer: EnsembleScorer | None = None
 try:
-    _model_path = Path(__file__).parent / "models" / "pegasus_xgb_v1.json"
-    _feat_path = Path(__file__).parent / "models" / "pegasus_features_v1.json"
+    _model_path = Path(__file__).parent / "models" / "pegasus_xgb_v3_pertick.json"
+    _feat_path = Path(__file__).parent / "models" / "pegasus_features_v3_pertick.json"
     if _model_path.exists() and _feat_path.exists():
         _ensemble_scorer = EnsembleScorer(
             model_path=str(_model_path),
             features_path=str(_feat_path),
         )
-        print(f"  XGBoost EnsembleScorer carregado OK", flush=True)
+        print(f"  XGBoost v3 PER-TICK carregado OK", flush=True)
     else:
-        print(f"  XGBoost modelo nao encontrado, backtest sem filtro ML", flush=True)
+        # Fallback para v1
+        _model_path = Path(__file__).parent / "models" / "pegasus_xgb_v1.json"
+        _feat_path = Path(__file__).parent / "models" / "pegasus_features_v1.json"
+        if _model_path.exists():
+            _ensemble_scorer = EnsembleScorer(str(_model_path), str(_feat_path))
+            print(f"  XGBoost v1 fallback carregado", flush=True)
 except Exception as _e:
     print(f"  XGBoost nao carregou: {_e}", flush=True)
     _ensemble_scorer = None
 
-ENSEMBLE_MIN_PROB = float(os.getenv("ENSEMBLE_MIN_PROB", "0.294"))
+ENSEMBLE_MIN_PROB = float(os.getenv("ENSEMBLE_MIN_PROB", "0.30"))
 
 
 # ── Download automático de ticks ─────────────────────────────────────────────────────────────
