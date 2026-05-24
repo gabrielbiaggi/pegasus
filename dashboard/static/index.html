@@ -4627,24 +4627,24 @@
                     var results = d.results || [];
                     if (results.length === 0) return;
 
-                    // Tabela comparativa de estratégias
+                    // Descobre nomes das estratégias dos dados (dinâmico)
+                    var snames = [];
                     var summary = d.summary || {};
                     var stratSummary = summary.strategies || {};
+                    if (Object.keys(stratSummary).length > 0) {
+                        snames = Object.keys(stratSummary);
+                    } else if (results.length > 0 && results[0].strategies) {
+                        snames = Object.keys(results[0].strategies);
+                    }
+
+                    // Tabela comparativa
                     var stb = $("bt-strat-tbody");
-                    if (stb && Object.keys(stratSummary).length > 0) {
-                        var snames = [
-                            "flat",
-                            "soros",
-                            "martingale",
-                            "fibonacci",
-                            "soros_martingale",
-                            "soros_fibonacci",
-                            "dalembert",
-                        ];
-                        stb.innerHTML = snames
-                            .map(function (s) {
-                                var ss = stratSummary[s];
-                                if (!ss) return "";
+                    if (stb && snames.length > 0) {
+                        // Computa stats acumulados dos results disponíveis
+                        var rows = snames.map(function (s) {
+                            var ss = stratSummary[s];
+                            // Se tem summary final, usa
+                            if (ss) {
                                 var pnlCls = ss.total_pnl >= 0 ? "win" : "loss";
                                 var bustTxt =
                                     ss.busted_days > 0
@@ -4684,98 +4684,127 @@
                                     bustTxt +
                                     "</td></tr>"
                                 );
-                            })
-                            .join("");
-                    } else if (stb && results.length > 0) {
-                        // Sem sumário ainda (still running) — computa das results
-                        var lastR = results[results.length - 1];
-                        var strats = lastR.strategies || {};
-                        var sn2 = Object.keys(strats);
-                        stb.innerHTML = sn2
-                            .map(function (s) {
-                                var ss = strats[s];
-                                if (!ss) return "";
-                                return (
-                                    '<tr><td style="font-weight:600">' +
-                                    s +
-                                    "</td>" +
-                                    '<td class="' +
-                                    (ss.balance >= (d.start_balance || 50)
-                                        ? "win"
-                                        : "loss") +
-                                    '">$' +
-                                    ss.balance.toFixed(2) +
-                                    "</td>" +
-                                    '<td class="' +
-                                    (ss.pnl >= 0 ? "win" : "loss") +
-                                    '">' +
-                                    (ss.pnl >= 0 ? "+" : "") +
-                                    ss.pnl.toFixed(2) +
-                                    "</td>" +
-                                    "<td>&mdash;</td><td>&mdash;</td>" +
-                                    "<td>" +
-                                    (ss.busted ? "\u1f4a5" : "\u2705") +
-                                    "</td></tr>"
-                                );
-                            })
-                            .join("");
+                            }
+                            // Se ainda running, computa do último result
+                            var lastSt =
+                                results[results.length - 1].strategies || {};
+                            var ls = lastSt[s] || {};
+                            var bal = ls.balance || 0;
+                            var pnl = bal - (d.start_balance || 50);
+                            var posDays = results.filter(function (r) {
+                                var st = r.strategies || {};
+                                return st[s] && st[s].pnl > 0;
+                            }).length;
+                            var bustDays = results.filter(function (r) {
+                                var st = r.strategies || {};
+                                return st[s] && st[s].busted;
+                            }).length;
+                            var pnlCls = pnl >= 0 ? "win" : "loss";
+                            var roi = (pnl / (d.start_balance || 50)) * 100;
+                            return (
+                                '<tr><td style="font-weight:600">' +
+                                s +
+                                "</td>" +
+                                '<td class="' +
+                                (bal >= (d.start_balance || 50)
+                                    ? "win"
+                                    : "loss") +
+                                '">$' +
+                                bal.toFixed(2) +
+                                "</td>" +
+                                '<td class="' +
+                                pnlCls +
+                                '">' +
+                                (pnl >= 0 ? "+" : "") +
+                                pnl.toFixed(2) +
+                                "</td>" +
+                                '<td class="' +
+                                pnlCls +
+                                '">' +
+                                (roi >= 0 ? "+" : "") +
+                                roi.toFixed(1) +
+                                "%</td>" +
+                                "<td>" +
+                                posDays +
+                                "/" +
+                                results.length +
+                                "</td>" +
+                                "<td>" +
+                                (bustDays > 0
+                                    ? '<span style="color:var(--red)">' +
+                                      bustDays +
+                                      "</span>"
+                                    : "0") +
+                                "</td></tr>"
+                            );
+                        });
+                        stb.innerHTML = rows.join("");
                     }
 
                     // Tabela diária
                     var tb = $("bt-real-tbody");
                     if (!tb) return;
+                    // Atualiza header dinâmico
+                    var thead = tb.parentElement
+                        ? tb.parentElement.querySelector("thead tr")
+                        : null;
+                    if (thead && snames.length > 0) {
+                        thead.innerHTML =
+                            "<th>Data</th><th>Sig</th><th>WR</th>" +
+                            snames
+                                .map(function (s) {
+                                    return (
+                                        "<th>" +
+                                        s.replace("_", " ").substring(0, 10) +
+                                        "</th>"
+                                    );
+                                })
+                                .join("");
+                    }
                     tb.innerHTML = results
                         .map(function (r) {
-                            var wr =
-                                r.signal_wr != null ? r.signal_wr : r.wr || 0;
+                            var strats = r.strategies || {};
+                            // Pega WR e trades do primeiro strategy que tiver dados
+                            var firstS = strats[snames[0]] || {};
+                            var wr = firstS.signal_wr || firstS.wr || 0;
+                            var trades = firstS.trades || 0;
                             var wrCls =
                                 wr >= 80 ? "win" : wr < 60 ? "loss" : "";
-                            var strats = r.strategies || {};
-                            function fmtS(name) {
-                                var s = strats[name];
-                                if (!s) return "&mdash;";
-                                var cls = s.busted
-                                    ? "loss"
-                                    : s.pnl >= 0
-                                      ? "win"
-                                      : "loss";
-                                return (
-                                    '<span class="' +
-                                    cls +
-                                    '">$' +
-                                    s.balance.toFixed(0) +
-                                    "</span>"
-                                );
-                            }
-                            return (
-                                "<tr>" +
+                            var cells =
                                 "<td>" +
                                 r.date +
-                                "</td>" +
-                                "<td>" +
-                                (r.total_signals || r.trades || 0) +
-                                "</td>" +
-                                '<td class="' +
+                                "</td><td>" +
+                                trades +
+                                '</td><td class="' +
                                 wrCls +
                                 '">' +
                                 wr.toFixed(0) +
-                                "%</td>" +
-                                "<td>" +
-                                fmtS("flat") +
-                                "</td>" +
-                                "<td>" +
-                                fmtS("soros") +
-                                "</td>" +
-                                "<td>" +
-                                fmtS("martingale") +
-                                "</td>" +
-                                "<td>" +
-                                fmtS("fibonacci") +
-                                "</td>" +
-                                "<td>" +
-                                fmtS("dalembert") +
-                                "</td></tr>"
-                            );
+                                "%</td>";
+                            snames.forEach(function (s) {
+                                var ss = strats[s];
+                                if (!ss) {
+                                    cells += "<td>&mdash;</td>";
+                                    return;
+                                }
+                                var cls = ss.busted
+                                    ? "loss"
+                                    : ss.pnl >= 0
+                                      ? "win"
+                                      : "loss";
+                                var icon = ss.stopped_sl
+                                    ? "S"
+                                    : ss.busted
+                                      ? "X"
+                                      : "";
+                                cells +=
+                                    '<td><span class="' +
+                                    cls +
+                                    '">$' +
+                                    ss.balance.toFixed(0) +
+                                    icon +
+                                    "</span></td>";
+                            });
+                            return "<tr>" + cells + "</tr>";
                         })
                         .join("");
                 } catch (e) {
