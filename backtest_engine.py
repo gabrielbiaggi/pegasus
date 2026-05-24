@@ -308,77 +308,77 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # === TP 30% (atual) ===
+    # === PURO: sem stop-loss, deixa a matematica trabalhar ===
+    # pct2 ja protege (stake diminui com banca), nao precisa de SL
     {
-        "name": "tp30_flat_sl",
-        "tp": 0.30,
-        "score": 20,
-        "mode": "flat",
-        "sl": True,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp30_pct2_wr",
-        "tp": 0.30,
-        "score": 20,
-        "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
-    },
-    {
-        "name": "tp30_s25_pct2_wr",
-        "tp": 0.30,
-        "score": 25,
-        "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
-    },
-    # === TP 50% (14 ticks) — melhor ratio ===
-    {
-        "name": "tp50_flat_sl",
-        "tp": 0.50,
-        "score": 20,
-        "mode": "flat",
-        "sl": True,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp50_pct2_wr",
+        "name": "tp50_pct2",
         "tp": 0.50,
         "score": 20,
         "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
-    },
-    {
-        "name": "tp50_s25_pct2_wr",
-        "tp": 0.50,
-        "score": 25,
-        "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
-    },
-    # === TP 80% (20 ticks) — edge máximo ===
-    {
-        "name": "tp80_flat_sl",
-        "tp": 0.80,
-        "score": 20,
-        "mode": "flat",
-        "sl": True,
+        "sl": False,
         "wr_stop": False,
     },
     {
-        "name": "tp80_pct2_wr",
+        "name": "tp50_pct1",
+        "tp": 0.50,
+        "score": 20,
+        "mode": "pct1",
+        "sl": False,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp50_s25",
+        "tp": 0.50,
+        "score": 25,
+        "mode": "pct2",
+        "sl": False,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp80_pct2",
         "tp": 0.80,
         "score": 20,
         "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
+        "sl": False,
+        "wr_stop": False,
     },
     {
-        "name": "tp80_s25_pct2_wr",
+        "name": "tp80_pct1",
+        "tp": 0.80,
+        "score": 20,
+        "mode": "pct1",
+        "sl": False,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp80_s25",
         "tp": 0.80,
         "score": 25,
+        "mode": "pct2",
+        "sl": False,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp100_pct2",
+        "tp": 1.00,
+        "score": 20,
+        "mode": "pct2",
+        "sl": False,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp100_pct1",
+        "tp": 1.00,
+        "score": 20,
+        "mode": "pct1",
+        "sl": False,
+        "wr_stop": False,
+    },
+    # COM stop (pra comparar)
+    {
+        "name": "tp50_pct2_sl",
+        "tp": 0.50,
+        "score": 20,
         "mode": "pct2",
         "sl": True,
         "wr_stop": True,
@@ -433,6 +433,8 @@ def _replay_strategy(
         # Calcula stake
         if mode == "pct2":
             stake = round(max(0.35, bal * 0.02), 2)
+        elif mode == "pct1":
+            stake = round(max(0.35, bal * 0.01), 2)
         else:
             stake = base
         stake = round(max(0.35, min(stake, bal)), 2)
@@ -451,15 +453,17 @@ def _replay_strategy(
         if peak > 0:
             max_dd_pct = max(max_dd_pct, (peak - bal) / peak * 100)
 
-        pnl = bal - sod
-        if pnl >= sod * STOP_GAIN:
-            stop_reason = "DOBROU"
-            break
-        if not trail and pnl >= sod * TRAILING_S:
-            trail = True
-        if trail and pnl <= sod * TRAILING_L:
-            stop_reason = "TRAILING"
-            break
+        # Stop gain diario (somente se SL ativo)
+        if has_sl:
+            pnl = bal - sod
+            if pnl >= sod * STOP_GAIN:
+                stop_reason = "DOBROU"
+                break
+            if not trail and pnl >= sod * TRAILING_S:
+                trail = True
+            if trail and pnl <= sod * TRAILING_L:
+                stop_reason = "TRAILING"
+                break
 
     total = wins + losses
     return {
