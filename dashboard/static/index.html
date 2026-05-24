@@ -1016,6 +1016,13 @@
             >
                 &#x1f4c5; Sess&otilde;es
             </button>
+            <button
+                class="btn btn-outline"
+                onclick="openModal('modal-backtest')"
+                style="border-color: var(--purple); color: var(--purple)"
+            >
+                &#x1f9ea; Backtest 15d
+            </button>
             <span class="sep">|</span>
             <div class="param-row">
                 <select id="sel-account" onchange="setAccountMode(this)">
@@ -2054,6 +2061,185 @@
                 </div>
             </div>
         </div>
+        <!-- Modal: Backtest 15 Dias -->
+        <div
+            class="modal-overlay"
+            id="modal-backtest"
+            onclick="if (event.target === this) closeModal('modal-backtest');"
+        >
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>
+                        &#x1f9ea; Backtest 15 Dias &mdash;
+                        Valida&ccedil;&atilde;o da Estrat&eacute;gia
+                    </h2>
+                    <button
+                        class="modal-close"
+                        onclick="closeModal('modal-backtest')"
+                    >
+                        &#x2715;
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div
+                        id="bt-loading"
+                        style="
+                            color: var(--muted);
+                            text-align: center;
+                            padding: 20px;
+                        "
+                    >
+                        Carregando backtest...
+                    </div>
+                    <div id="bt-body" style="display: none">
+                        <!-- Resumo Real -->
+                        <h3
+                            style="
+                                font-size: 0.85rem;
+                                color: var(--muted);
+                                margin-bottom: 8px;
+                            "
+                        >
+                            &#x1f4ca; Resultado Real &mdash; 11 Dias de Ticks
+                            Deriv (c&oacute;digo id&ecirc;ntico ao bot)
+                        </h3>
+                        <div class="session-cards" style="margin-bottom: 12px">
+                            <div class="card">
+                                <div class="card-label">Dias Testados</div>
+                                <div class="card-value blue" id="bt-days">
+                                    &mdash;
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Dobrou a Banca</div>
+                                <div class="card-value" id="bt-doubled">
+                                    &mdash;
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Dias Positivos</div>
+                                <div class="card-value" id="bt-positive">
+                                    &mdash;
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">
+                                    WR M&eacute;dio Real
+                                </div>
+                                <div class="card-value" id="bt-wr">&mdash;</div>
+                            </div>
+                        </div>
+                        <div style="overflow-x: auto; margin-bottom: 20px">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Data</th>
+                                        <th>Trades</th>
+                                        <th>WR</th>
+                                        <th>P&amp;L</th>
+                                        <th>Resultado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bt-real-tbody"></tbody>
+                            </table>
+                        </div>
+                        <!-- Monte Carlo -->
+                        <h3
+                            style="
+                                font-size: 0.85rem;
+                                color: var(--muted);
+                                margin-bottom: 8px;
+                            "
+                        >
+                            &#x1f3b2; Monte Carlo (2000 simula&ccedil;&otilde;es
+                            &times; 14 dias)
+                        </h3>
+                        <div class="session-cards" style="margin-bottom: 12px">
+                            <div class="card">
+                                <div class="card-label">Saldo Mediano</div>
+                                <div class="card-value cyan" id="bt-mc-med">
+                                    &mdash;
+                                </div>
+                                <div class="card-sub">ap&oacute;s 14 dias</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">P10 (pior 10%)</div>
+                                <div class="card-value red" id="bt-mc-p10">
+                                    &mdash;
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">P90 (melhor 10%)</div>
+                                <div class="card-value green" id="bt-mc-p90">
+                                    &mdash;
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">P(Dobrar)</div>
+                                <div class="card-value purple" id="bt-mc-pd">
+                                    &mdash;
+                                </div>
+                                <div class="card-sub">em 14 dias</div>
+                            </div>
+                        </div>
+                        <!-- Por cenario -->
+                        <h3
+                            style="
+                                font-size: 0.85rem;
+                                color: var(--muted);
+                                margin-bottom: 8px;
+                            "
+                        >
+                            &#x1f4c8; Por Cen&aacute;rio de Mercado (1 dia)
+                        </h3>
+                        <div
+                            class="session-cards"
+                            style="margin-bottom: 12px"
+                            id="bt-scenarios"
+                        ></div>
+                        <!-- Prob por dia -->
+                        <h3
+                            style="
+                                font-size: 0.85rem;
+                                color: var(--muted);
+                                margin-bottom: 8px;
+                            "
+                        >
+                            &#x1f4c6; Probabilidade de Dobrar por Dia
+                        </h3>
+                        <div
+                            id="bt-days-chart"
+                            style="
+                                display: flex;
+                                gap: 4px;
+                                align-items: flex-end;
+                                height: 80px;
+                                margin-bottom: 16px;
+                            "
+                        ></div>
+                        <!-- Nota -->
+                        <div
+                            style="
+                                font-size: 0.72rem;
+                                color: var(--muted);
+                                border-top: 1px solid var(--border);
+                                padding-top: 10px;
+                            "
+                        >
+                            <b>Nota:</b> Backtest real usa 840k ticks reais da
+                            Deriv (mai/06-16) com c&oacute;digo id&ecirc;ntico
+                            ao bot live. Monte Carlo usa WR observado em
+                            sess&otilde;es reais (79-83% bom, 70% ruim) com 2000
+                            simula&ccedil;&otilde;es. WR real do backtest de
+                            ticks &eacute; 98-100% porque a
+                            detec&ccedil;&atilde;o de boom &eacute; conservadora
+                            &mdash; o WR real em produ&ccedil;&atilde;o &eacute;
+                            79-83%.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <nav class="bottom-nav">
             <div class="bottom-nav-inner">
                 <button class="nav-btn active" onclick="scrollTo(0, 0)">
@@ -2555,6 +2741,7 @@
                     fetchSessions();
                     fetchHistory30d();
                 }
+                if (id === "modal-backtest") fetchBacktest();
             }
             function closeModal(id) {
                 $(id).classList.remove("active");
@@ -3926,6 +4113,138 @@
                     blk.textContent =
                         reasons.length > 0 ? reasons.join(" | ") : "";
                 } catch (e) {}
+            }
+            async function fetchBacktest() {
+                var loading = $("bt-loading"),
+                    body = $("bt-body");
+                if (!loading) return;
+                loading.style.display = "block";
+                body.style.display = "none";
+                try {
+                    var d = await fetch("/api/backtest").then(function (r) {
+                        return r.json();
+                    });
+                    loading.style.display = "none";
+                    body.style.display = "block";
+                    // Summary cards
+                    var rs = d.real_summary || {};
+                    $("bt-days").textContent = rs.days || "?";
+                    var dbl = $("bt-doubled");
+                    dbl.textContent = (rs.doubled || 0) + "/" + (rs.days || 0);
+                    dbl.className =
+                        "card-value " +
+                        (rs.doubled >= rs.days * 0.3 ? "green" : "yellow");
+                    var pos = $("bt-positive");
+                    pos.textContent = (rs.positive || 0) + "/" + (rs.days || 0);
+                    pos.className =
+                        "card-value " +
+                        (rs.positive >= rs.days * 0.7 ? "green" : "yellow");
+                    $("bt-wr").textContent = (rs.avg_wr || 0) + "%";
+                    // Real results table
+                    var tb = $("bt-real-tbody");
+                    if (!tb) return;
+                    tb.innerHTML = (d.real_results || [])
+                        .map(function (r) {
+                            var flag = r.doubled
+                                ? "&#x1f3af; DOBROU"
+                                : r.pnl > 0
+                                  ? "&#x2705; +ve"
+                                  : "&#x274c; loss";
+                            var cls =
+                                r.wr >= 95 ? "win" : r.wr >= 80 ? "" : "loss";
+                            return (
+                                "<tr><td>" +
+                                r.date +
+                                "</td><td>" +
+                                r.trades +
+                                '</td><td class="' +
+                                cls +
+                                '">' +
+                                r.wr.toFixed(1) +
+                                '%</td><td class="' +
+                                (r.pnl > 0 ? "win" : "loss") +
+                                '">' +
+                                (r.pnl >= 0 ? "+" : "") +
+                                r.pnl.toFixed(2) +
+                                "</td><td>" +
+                                flag +
+                                "</td></tr>"
+                            );
+                        })
+                        .join("");
+                    // MC cards
+                    var mc = d.mc_summary || {};
+                    $("bt-mc-med").textContent =
+                        "$" + (mc.median_final || 0).toFixed(2);
+                    $("bt-mc-p10").textContent = "$" + (mc.p10 || 0).toFixed(2);
+                    $("bt-mc-p90").textContent = "$" + (mc.p90 || 0).toFixed(2);
+                    var pd = $("bt-mc-pd");
+                    pd.textContent = (mc.p_doubled_ever || 0) + "%";
+                    pd.className =
+                        "card-value " +
+                        ((mc.p_doubled_ever || 0) >= 30
+                            ? "green"
+                            : (mc.p_doubled_ever || 0) >= 15
+                              ? "yellow"
+                              : "red");
+                    // Scenarios
+                    var sc = $("bt-scenarios");
+                    sc.innerHTML = (d.scenarios || [])
+                        .map(function (s) {
+                            return (
+                                '<div class="card"><div class="card-label">' +
+                                s.name +
+                                "</div>" +
+                                '<div class="card-value ' +
+                                (s.p_double >= 30
+                                    ? "green"
+                                    : s.p_double >= 15
+                                      ? "yellow"
+                                      : "red") +
+                                '">' +
+                                (s.p_double || 0) +
+                                "% dobra</div>" +
+                                '<div class="card-sub">+trailing: ' +
+                                (s.p_trailing || 0) +
+                                "%</div>" +
+                                '<div class="card-sub">P&L m&eacute;d: ' +
+                                (s.avg_pnl >= 0 ? "+" : "") +
+                                s.avg_pnl.toFixed(2) +
+                                "</div></div>"
+                            );
+                        })
+                        .join("");
+                    // Days chart
+                    var ch = $("bt-days-chart");
+                    ch.innerHTML = "";
+                    var dbd = d.doubled_by_day || [];
+                    var maxV = Math.max.apply(null, dbd) || 1;
+                    dbd.forEach(function (v, i) {
+                        var h = Math.max(4, Math.round((v / maxV) * 70));
+                        var clr =
+                            v >= 30
+                                ? "var(--green)"
+                                : v >= 15
+                                  ? "var(--yellow)"
+                                  : "var(--red)";
+                        ch.innerHTML +=
+                            '<div style="display:flex;flex-direction:column;align-items:center;flex:1">' +
+                            '<div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">' +
+                            v.toFixed(0) +
+                            "%</div>" +
+                            '<div style="height:' +
+                            h +
+                            "px;background:" +
+                            clr +
+                            ';border-radius:2px;width:100%"></div>' +
+                            '<div style="font-size:.6rem;color:var(--dim);margin-top:2px">D' +
+                            (i + 1) +
+                            "</div>" +
+                            "</div>";
+                    });
+                } catch (e) {
+                    if (loading) loading.textContent = "Erro: " + e.message;
+                }
             }
             /* ---- Init & Polling ---- */
             fetchStatus();
