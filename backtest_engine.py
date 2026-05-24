@@ -289,20 +289,189 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     return df
 
 
-def _sim_day(
+# ── Estratégias de stake ─────────────────────────────────────────────────────────
+FIB_SEQ = [1, 1, 2, 3, 5, 8, 13, 21]
+
+STRATEGY_NAMES = [
+    "flat",  # stake fixo, sem recovery
+    "soros",  # bot atual: acumula lucro nos próximos stakes
+    "martingale",  # dobra stake após loss
+    "fibonacci",  # fib sequence após loss
+    "soros_martingale",  # soros em wins + martingale em losses
+    "soros_fibonacci",  # soros em wins + fib em losses
+    "dalembert",  # +1 unidade após loss, -1 após win
+]
+
+
+def _replay_strategy(
+    outcomes: list[bool],  # True=WIN, False=LOSS
+    strategy: str,
+    start_balance: float,
+) -> dict:
+    """Replay uma sequência de WIN/LOSS com uma estratégia de stake.
+    Retorna métricas da simulação.
+    """
+    base = STAKE
+    bal = start_balance
+    peak = bal
+    sod = bal
+    wins = losses = 0
+    max_dd_pct = 0.0
+    # State vars
+    sor_step = sor_profit = 0.0
+    sor_cd = 0
+    gale_step = 0
+    gale_loss_accum = 0.0
+    dale_units = 1  # D'Alembert unit counter
+    trail = False
+    stop_reason = None
+
+    for is_win in outcomes:
+        if bal < 0.35:
+            break  # bust
+
+        # Calcula stake baseado na estratégia
+        if strategy == "flat":
+            stake = base
+
+        elif strategy == "soros":
+            if sor_cd > 0:
+                stake = base
+            elif sor_step > 0:
+                stake = min(base + sor_profit, MAX_STAKE)
+            else:
+                stake = base
+
+        elif strategy == "martingale":
+            if gale_step == 0:
+                stake = base
+            else:
+                stake = min(base * (2**gale_step), bal, MAX_STAKE * 4)
+
+        elif strategy == "fibonacci":
+            if gale_step == 0:
+                stake = base
+            else:
+                idx = min(gale_step, len(FIB_SEQ) - 1)
+                stake = min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4)
+
+        elif strategy == "soros_martingale":
+            if gale_step > 0:
+                stake = min(base * (2**gale_step), bal, MAX_STAKE * 4)
+            elif sor_cd > 0:
+                stake = base
+            elif sor_step > 0:
+                stake = min(base + sor_profit, MAX_STAKE)
+            else:
+                stake = base
+
+        elif strategy == "soros_fibonacci":
+            if gale_step > 0:
+                idx = min(gale_step, len(FIB_SEQ) - 1)
+                stake = min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4)
+            elif sor_cd > 0:
+                stake = base
+            elif sor_step > 0:
+                stake = min(base + sor_profit, MAX_STAKE)
+            else:
+                stake = base
+
+        elif strategy == "dalembert":
+            stake = min(base * dale_units, bal, MAX_STAKE * 2)
+
+        else:
+            stake = base
+
+        stake = round(max(0.35, min(stake, bal)), 2)
+        if stake < 0.35:
+            break
+
+        # Aplica resultado
+        if is_win:
+            profit = round(stake * TP_PCT, 2)
+            wins += 1
+            # Update strategy state
+            if strategy in ("soros", "soros_martingale", "soros_fibonacci"):
+                sor_cd = 0
+                if sor_step < SOROS_STEPS:
+                    sor_step += 1
+                    sor_profit = round(sor_profit + profit, 2)
+                else:
+                    sor_step = 0
+                    sor_profit = 0.0
+            if strategy in (
+                "martingale",
+                "fibonacci",
+                "soros_martingale",
+                "soros_fibonacci",
+            ):
+                gale_step = 0
+                gale_loss_accum = 0.0
+            if strategy == "dalembert":
+                dale_units = max(1, dale_units - 1)
+        else:
+            profit = -stake
+            losses += 1
+            if strategy in ("soros", "soros_martingale", "soros_fibonacci"):
+                sor_step = 0
+                sor_profit = 0.0
+                sor_cd = SOROS_COOLDOWN
+            if strategy in (
+                "martingale",
+                "fibonacci",
+                "soros_martingale",
+                "soros_fibonacci",
+            ):
+                gale_step = min(gale_step + 1, 6)  # cap 6 gales
+                gale_loss_accum += stake
+            if strategy == "dalembert":
+                dale_units = min(dale_units + 1, 8)  # cap 8
+
+        bal = round(bal + profit, 2)
+        peak = max(peak, bal)
+        if peak > 0:
+            dd = (peak - bal) / peak * 100
+            max_dd_pct = max(max_dd_pct, dd)
+
+        # Stop diario
+        pnl = bal - sod
+        if pnl >= sod * STOP_GAIN:
+            stop_reason = "DOBROU"
+            break
+        if not trail and pnl >= sod * TRAILING_S:
+            trail = True
+        if trail and pnl <= sod * TRAILING_L:
+            stop_reason = "TRAILING"
+            break
+
+    total = wins + losses
+    pnl_d = bal - sod
+    return {
+        "trades": total,
+        "wins": wins,
+        "losses": losses,
+        "wr": round(wins / total * 100, 1) if total else 0.0,
+        "pnl": round(pnl_d, 2),
+        "balance": round(bal, 2),
+        "max_dd_pct": round(max_dd_pct, 1),
+        "doubled": stop_reason == "DOBROU",
+        "trailing": stop_reason == "TRAILING",
+        "busted": bal < 0.35,
+    }
+
+
+def _collect_day_outcomes(
     day: _date,
     day_df: pd.DataFrame,
-    balance: float,
     state: dict | None = None,
     out_path: Path | None = None,
     t_global: float | None = None,
-) -> dict:
-    """Simula um dia completo. Retorna dict com métricas.
-    Escreve progresso intra-dia a cada ~5s se state+out_path forem fornecidos.
+) -> tuple[list[bool], float]:
+    """Coleta WIN/LOSS outcomes de um dia SEM aplicar estratégia de stake.
+    Retorna (lista de bools True=WIN, elapsed_seconds).
     """
     t0 = time.time()
     t_last_progress = t0
-    PROGRESS_INTERVAL = 5.0  # escreve progresso a cada 5 segundos
 
     prices = day_df["quote"].values
     hours = day_df["hour"].values
@@ -314,49 +483,42 @@ def _sim_day(
     for w in range(min(TICK_COUNT, len(day_df))):
         tick_buf.append({"epoch": int(epochs[w]), "quote": float(prices[w])})
 
-    sod = bal = balance
-    peak = balance
-    trail = False
-    sor_step = sor_cd = 0
-    sor_prof = 0.0
-    wins = losses = 0
-    stop_reason = None
+    outcomes: list[bool] = []
     i = TICK_COUNT
 
     while i < len(day_df) - MAX_HOLD - 1:
-        # Progresso intra-dia: escreve estado a cada PROGRESS_INTERVAL segundos
+        # Progresso intra-dia
         now = time.time()
         if (
             state is not None
             and out_path is not None
-            and (now - t_last_progress) >= PROGRESS_INTERVAL
+            and (now - t_last_progress) >= 5.0
         ):
-            total_tr = wins + losses
+            w_count = sum(outcomes)
+            l_count = len(outcomes) - w_count
+            total_tr = len(outcomes)
             state["day_progress"] = {
                 "ticks_done": int(i),
                 "ticks_total": int(total_ticks),
                 "pct": round(i / total_ticks * 100, 1),
                 "trades": total_tr,
-                "wins": wins,
-                "losses": losses,
-                "wr": round(wins / total_tr * 100, 1) if total_tr else 0.0,
-                "bal": round(bal, 2),
-                "pnl": round(bal - sod, 2),
+                "wins": w_count,
+                "losses": l_count,
+                "wr": round(w_count / total_tr * 100, 1) if total_tr else 0.0,
                 "elapsed_day_s": round(now - t0, 1),
             }
             if t_global is not None:
                 state["elapsed_s"] = round(now - t_global, 1)
             _write_state(out_path, state)
             t_last_progress = now
-        # Adiciona tick ao buffer (sempre, para manter contexto contínuo)
+
+        # Adiciona tick ao buffer
         tick_buf.append({"epoch": int(epochs[i]), "quote": float(prices[i])})
 
-        # Filtra horário bloqueado mas mantém buffer consistente
         if hours[i] in BLOCKED_HOURS:
             i += 1
             continue
 
-        # Amostragem: avalia apenas a cada SAMPLE_EVERY ticks
         if (i - TICK_COUNT) % SAMPLE_EVERY != 0:
             i += 1
             continue
@@ -366,7 +528,6 @@ def _sim_day(
             i += 1
             continue
 
-        # Indicadores reais
         try:
             df_ind = calculate_tick_indicators(list(tick_buf), config=accu_cfg)
         except Exception:
@@ -375,10 +536,8 @@ def _sim_day(
         if df_ind is None or df_ind.empty:
             i += 1
             continue
-
         df_ind = df_ind.reset_index(drop=True)
 
-        # Sinal idêntico ao bot
         prices_list = [t["quote"] for t in list(tick_buf)]
         try:
             signal, score, p_loss = generate_calm_accu_signal(
@@ -397,7 +556,6 @@ def _sim_day(
             i += 1
             continue
 
-        # Quality gate (idêntico ao bot)
         row = df_ind.iloc[-1]
         cusum_v = float(row.get("cusum_score", 0) or 0)
         hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
@@ -405,96 +563,65 @@ def _sim_day(
             i += 1
             continue
 
-        # Stake com soros
-        if sor_cd > 0:
-            stake = STAKE
-            sor_cd -= 1
-        elif sor_step > 0:
-            stake = round(min(STAKE + sor_prof, MAX_STAKE), 2)
-        else:
-            stake = STAKE
-        stake = max(0.35, min(stake, MAX_STAKE, bal))
-        if stake < 0.35:
-            i += SAMPLE_EVERY
-            continue
-
-        # ── Barreira PER-TICK: idêntica ao Accumulator da Deriv ─────────────
-        # A cada tick, a Deriv verifica: |price[t+1] - price[t]| / price[t] < barrier
-        # Se qualquer tick exceder a barreira → contrato nocauteado → LOSS.
-        # Se sobreviver WIN_TICKS ticks → acumulou TP% → WIN.
-
-        # Slippage: contrato abre no tick i+SLIPPAGE (delay de execução)
+        # ── Barreira PER-TICK ────────────────────────────────────────
         entry_idx = i + SLIPPAGE
         if entry_idx >= len(prices) - WIN_TICKS:
             i += 1
             continue
 
-        # Simula WIN_TICKS ticks — check per-tick
-        profit = -stake
-        is_win = False
-        hold = WIN_TICKS + SLIPPAGE  # assume perda por padrão
+        is_win = True
+        hold = WIN_TICKS + SLIPPAGE
         for j in range(1, WIN_TICKS + 1):
             prev_idx = entry_idx + j - 1
             curr_idx = entry_idx + j
             if curr_idx >= len(prices):
-                break  # sem dados → LOSS
+                is_win = False
+                hold = SLIPPAGE + j
+                break
             tick_move = abs(prices[curr_idx] - prices[prev_idx]) / prices[prev_idx]
             if tick_move >= PER_TICK_BARRIER:
-                # Barreira atingida → LOSS (exatamente como Deriv)
-                hold = SLIPPAGE + j
-                break
-            if j >= WIN_TICKS:
-                # Sobreviveu todos os ticks → WIN
-                profit = round(stake * TP_PCT, 2)
-                is_win = True
+                is_win = False
                 hold = SLIPPAGE + j
                 break
 
-        if is_win:
-            wins += 1
-            sor_cd = 0
-            if sor_step < SOROS_STEPS:
-                sor_step += 1
-                sor_prof = round(sor_prof + profit, 2)
-            else:
-                sor_step = 0
-                sor_prof = 0.0
-        else:
-            losses += 1
-            sor_step = 0
-            sor_prof = 0.0
-            sor_cd = SOROS_COOLDOWN
+        outcomes.append(is_win)
+        i += hold + SOROS_COOLDOWN
 
-        bal = round(bal + profit, 2)
-        peak = max(peak, bal)
-        pnl = bal - sod
-        i += hold + SOROS_COOLDOWN  # avança past do hold + cooldown (fiel ao bot)
+    elapsed = round(time.time() - t0, 1)
+    return outcomes, elapsed
 
-        if pnl >= sod * STOP_GAIN:
-            stop_reason = "DOBROU"
-            break
-        if not trail and pnl >= sod * TRAILING_S:
-            trail = True
-        if trail and pnl <= sod * TRAILING_L:
-            stop_reason = "TRAILING"
-            break
 
-    total = wins + losses
-    pnl_d = bal - sod
-    return {
+def _sim_day_multi(
+    day: _date,
+    day_df: pd.DataFrame,
+    balances: dict[str, float],
+    state: dict | None = None,
+    out_path: Path | None = None,
+    t_global: float | None = None,
+) -> dict:
+    """Simula um dia com TODAS as estratégias. Retorna resultados comparativos."""
+    outcomes, elapsed = _collect_day_outcomes(day, day_df, state, out_path, t_global)
+
+    w = sum(outcomes)
+    total = len(outcomes)
+    day_result = {
         "date": day.isoformat(),
-        "trades": total,
-        "wins": wins,
-        "losses": losses,
-        "wr": round(wins / total * 100, 1) if total else 0.0,
-        "pnl": round(pnl_d, 2),
-        "pnl_pct": round(pnl_d / sod * 100, 1) if sod > 0 else 0.0,
-        "peak_pct": round((peak - sod) / sod * 100, 1) if sod > 0 else 0.0,
-        "balance": round(bal, 2),
-        "doubled": stop_reason == "DOBROU",
-        "trailing": stop_reason == "TRAILING",
-        "elapsed_s": round(time.time() - t0, 1),
+        "total_signals": total,
+        "signal_wins": w,
+        "signal_losses": total - w,
+        "signal_wr": round(w / total * 100, 1) if total else 0.0,
+        "elapsed_s": elapsed,
+        "strategies": {},
     }
+
+    for strat in STRATEGY_NAMES:
+        bal = balances.get(strat, 50.0)
+        r = _replay_strategy(outcomes, strat, bal)
+        r["start_balance"] = round(bal, 2)
+        day_result["strategies"][strat] = r
+        balances[strat] = r["balance"]
+
+    return day_result
 
 
 def main() -> None:
@@ -551,8 +678,12 @@ def main() -> None:
     state["total_days"] = len(days_with_data)
     print(f"  {len(days_with_data)}/{len(days)} dias com dados", flush=True)
 
-    # Fase 2: simulação
-    print("\n[2/2] Simulando...", flush=True)
+    # Fase 2: simulação MULTI-ESTRATÉGIA
+    print("\n[2/2] Simulando 7 estratégias...", flush=True)
+    print(f"  Estratégias: {', '.join(STRATEGY_NAMES)}")
+
+    # Cada estratégia mantém seu próprio saldo
+    balances = {s: start_balance for s in STRATEGY_NAMES}
 
     for day in days_with_data:
         state["current_day"] = day.isoformat()
@@ -565,57 +696,68 @@ def main() -> None:
             continue
 
         print(f"  {day}: simulando...", end=" ", flush=True)
-        result = _sim_day(
+        result = _sim_day_multi(
             day,
             day_df,
-            balance,
+            balances,
             state=state,
             out_path=out_path,
             t_global=t_global,
         )
-        balance = result["balance"]
 
-        # Limpa progresso intra-dia ao concluir o dia
+        # Limpa progresso intra-dia
         state.pop("day_progress", None)
-        state["current_balance"] = balance
         state["results"].append(result)
+        state["current_balance"] = balances.get("soros", start_balance)
 
-        flag = (
-            "🎯 DOBROU"
-            if result["doubled"]
-            else (
-                "🔒 TRAILING"
-                if result["trailing"]
-                else ("✅" if result["pnl"] >= 0 else "❌")
-            )
-        )
-        print(
-            f"{result['trades']} trades | WR {result['wr']:.1f}% | "
-            f"P&L {result['pnl']:+.2f} | Bal ${balance:.2f}  {flag}  [{result['elapsed_s']:.0f}s]",
-            flush=True,
-        )
+        # Print resumo do dia
+        wr = result["signal_wr"]
+        line = f"{result['total_signals']}T WR {wr:.0f}% | "
+        for s in STRATEGY_NAMES:
+            sr = result["strategies"][s]
+            emoji = "✅" if sr["pnl"] > 0 else ("💥" if sr["busted"] else "❌")
+            line += f"{s}:{emoji}${sr['balance']:.0f} "
+        print(f"{line} [{result['elapsed_s']:.0f}s]", flush=True)
 
-    # Calcula sumário final
+    # Sumário final
     results = state["results"]
     n = len(results)
     if n > 0:
-        doubled = sum(1 for r in results if r["doubled"])
-        positive = sum(1 for r in results if r["pnl"] > 0)
-        total_wr = sum(r["wr"] for r in results)
-        state["summary"] = {
-            "total_days": n,
-            "doubled": doubled,
-            "positive": positive,
-            "avg_wr": round(total_wr / n, 1),
-            "final_balance": round(balance, 2),
-        }
+        summary = {"total_days": n, "strategies": {}}
+        for s in STRATEGY_NAMES:
+            final_bal = balances[s]
+            total_pnl = round(final_bal - start_balance, 2)
+            busted_days = sum(1 for r in results if r["strategies"][s]["busted"])
+            pos_days = sum(1 for r in results if r["strategies"][s]["pnl"] > 0)
+            avg_wr = round(sum(r["signal_wr"] for r in results) / n, 1)
+            summary["strategies"][s] = {
+                "final_balance": round(final_bal, 2),
+                "total_pnl": total_pnl,
+                "roi_pct": round(total_pnl / start_balance * 100, 1),
+                "positive_days": pos_days,
+                "busted_days": busted_days,
+                "avg_signal_wr": avg_wr,
+            }
+        state["summary"] = summary
+
+        # Tabela final no console
+        print("\n" + "=" * 80)
+        print(
+            f"  {'Estratégia':<20} {'Saldo':>8} {'PnL':>8} {'ROI':>7} {'Bust':>5} {'Dias+':>6}"
+        )
+        print("-" * 80)
+        for s in STRATEGY_NAMES:
+            ss = summary["strategies"][s]
+            print(
+                f"  {s:<20} ${ss['final_balance']:>7.2f} {ss['total_pnl']:>+7.2f} {ss['roi_pct']:>+6.1f}% {ss['busted_days']:>5} {ss['positive_days']:>5}/{n}"
+            )
+        print("=" * 80)
 
     state["status"] = "done"
     state["elapsed_s"] = round(time.time() - t_global, 1)
-    state["current_balance"] = round(balance, 2)
     _write_state(out_path, state)
 
-    print(f"\n✅ Concluído em {state['elapsed_s']:.0f}s | Saldo final: ${balance:.2f}")
+    print(f"\n✅ Concluído em {state['elapsed_s']:.0f}s")
 
 
 if __name__ == "__main__":

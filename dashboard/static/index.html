@@ -2075,92 +2075,436 @@
             </div>
         </div>
         <!-- Modal: Backtest Real -->
-        <div class="modal-overlay" id="modal-backtest" onclick="if(event.target===this)closeModal('modal-backtest')">
-        <div class="modal-content" style="max-width:960px">
-          <div class="modal-header">
-            <h2>&#x1f9ea; Backtest Real &mdash; Dados 100% Deriv</h2>
-            <button class="modal-close" onclick="closeModal('modal-backtest')">&#x2715;</button>
-          </div>
-          <div class="modal-body">
-            <!-- Controles -->
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:var(--radius-sm)">
-              <div class="param-row">De: <input type="date" id="bt-start" value="2026-05-06" style="background:var(--bg);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:4px 8px;font-size:.8rem"/></div>
-              <div class="param-row">Até: <input type="date" id="bt-end" style="background:var(--bg);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:4px 8px;font-size:.8rem"/></div>
-              <div class="param-row">Saldo inicial: $<input type="number" id="bt-start-bal" value="50" min="1" step="1" style="width:70px;background:var(--bg);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:4px 6px;font-size:.8rem"/></div>
-              <button class="btn btn-purple" id="bt-run-btn" onclick="runBacktest()" style="background:var(--purple);color:#fff">&#x25b6; Rodar Backtest</button>
-              <button class="btn btn-outline" id="bt-stop-btn" onclick="stopBacktest()" style="display:none">&#x25a0; Parar</button>
-              <span id="bt-status-badge" style="font-size:.72rem;color:var(--muted)"></span>
-            </div>
-            <!-- Painel live de progresso -->
-            <div id="bt-live-wrap" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-              <!-- Barra geral: dias -->
-              <div style="height:8px;background:var(--bg3);position:relative">
-                <div id="bt-progress-bar" style="height:100%;background:var(--purple);width:0%;transition:width 1s"></div>
-              </div>
-              <div style="padding:12px;background:var(--bg2)">
-                <!-- Linha 1: dia atual + elapsed -->
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                  <span style="font-size:.8rem;font-weight:600" id="bt-live-day">&mdash;</span>
-                  <span style="font-size:.72rem;color:var(--muted)" id="bt-live-elapsed">&mdash;</span>
+        <div
+            class="modal-overlay"
+            id="modal-backtest"
+            onclick="if (event.target === this) closeModal('modal-backtest');"
+        >
+            <div class="modal-content" style="max-width: 960px">
+                <div class="modal-header">
+                    <h2>&#x1f9ea; Backtest Real &mdash; Dados 100% Deriv</h2>
+                    <button
+                        class="modal-close"
+                        onclick="closeModal('modal-backtest')"
+                    >
+                        &#x2715;
+                    </button>
                 </div>
-                <!-- Barra intra-dia: ticks -->
-                <div id="bt-day-prog-wrap" style="margin-bottom:8px">
-                  <div style="height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:3px">
-                    <div id="bt-day-progress-bar" style="height:100%;background:var(--blue);width:0%;transition:width 1s"></div>
-                  </div>
-                  <div style="font-size:.67rem;color:var(--muted)" id="bt-day-progress-txt">&mdash;</div>
+                <div class="modal-body">
+                    <!-- Controles -->
+                    <div
+                        style="
+                            display: flex;
+                            gap: 8px;
+                            align-items: center;
+                            flex-wrap: wrap;
+                            margin-bottom: 16px;
+                            padding: 12px;
+                            background: var(--bg3);
+                            border-radius: var(--radius-sm);
+                        "
+                    >
+                        <div class="param-row">
+                            De:
+                            <input
+                                type="date"
+                                id="bt-start"
+                                value="2026-05-06"
+                                style="
+                                    background: var(--bg);
+                                    border: 1px solid var(--border);
+                                    color: var(--fg);
+                                    border-radius: 6px;
+                                    padding: 4px 8px;
+                                    font-size: 0.8rem;
+                                "
+                            />
+                        </div>
+                        <div class="param-row">
+                            Até:
+                            <input
+                                type="date"
+                                id="bt-end"
+                                style="
+                                    background: var(--bg);
+                                    border: 1px solid var(--border);
+                                    color: var(--fg);
+                                    border-radius: 6px;
+                                    padding: 4px 8px;
+                                    font-size: 0.8rem;
+                                "
+                            />
+                        </div>
+                        <div class="param-row">
+                            Saldo inicial: $<input
+                                type="number"
+                                id="bt-start-bal"
+                                value="50"
+                                min="1"
+                                step="1"
+                                style="
+                                    width: 70px;
+                                    background: var(--bg);
+                                    border: 1px solid var(--border);
+                                    color: var(--fg);
+                                    border-radius: 6px;
+                                    padding: 4px 6px;
+                                    font-size: 0.8rem;
+                                "
+                            />
+                        </div>
+                        <button
+                            class="btn btn-purple"
+                            id="bt-run-btn"
+                            onclick="runBacktest()"
+                            style="background: var(--purple); color: #fff"
+                        >
+                            &#x25b6; Rodar Backtest
+                        </button>
+                        <button
+                            class="btn btn-outline"
+                            id="bt-stop-btn"
+                            onclick="stopBacktest()"
+                            style="display: none"
+                        >
+                            &#x25a0; Parar
+                        </button>
+                        <span
+                            id="bt-status-badge"
+                            style="font-size: 0.72rem; color: var(--muted)"
+                        ></span>
+                    </div>
+                    <!-- Painel live de progresso -->
+                    <div
+                        id="bt-live-wrap"
+                        style="
+                            display: none;
+                            margin-bottom: 14px;
+                            border: 1px solid var(--border);
+                            border-radius: var(--radius);
+                            overflow: hidden;
+                        "
+                    >
+                        <!-- Barra geral: dias -->
+                        <div
+                            style="
+                                height: 8px;
+                                background: var(--bg3);
+                                position: relative;
+                            "
+                        >
+                            <div
+                                id="bt-progress-bar"
+                                style="
+                                    height: 100%;
+                                    background: var(--purple);
+                                    width: 0%;
+                                    transition: width 1s;
+                                "
+                            ></div>
+                        </div>
+                        <div style="padding: 12px; background: var(--bg2)">
+                            <!-- Linha 1: dia atual + elapsed -->
+                            <div
+                                style="
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                    margin-bottom: 8px;
+                                "
+                            >
+                                <span
+                                    style="font-size: 0.8rem; font-weight: 600"
+                                    id="bt-live-day"
+                                    >&mdash;</span
+                                >
+                                <span
+                                    style="
+                                        font-size: 0.72rem;
+                                        color: var(--muted);
+                                    "
+                                    id="bt-live-elapsed"
+                                    >&mdash;</span
+                                >
+                            </div>
+                            <!-- Barra intra-dia: ticks -->
+                            <div
+                                id="bt-day-prog-wrap"
+                                style="margin-bottom: 8px"
+                            >
+                                <div
+                                    style="
+                                        height: 4px;
+                                        background: var(--bg3);
+                                        border-radius: 2px;
+                                        overflow: hidden;
+                                        margin-bottom: 3px;
+                                    "
+                                >
+                                    <div
+                                        id="bt-day-progress-bar"
+                                        style="
+                                            height: 100%;
+                                            background: var(--blue);
+                                            width: 0%;
+                                            transition: width 1s;
+                                        "
+                                    ></div>
+                                </div>
+                                <div
+                                    style="
+                                        font-size: 0.67rem;
+                                        color: var(--muted);
+                                    "
+                                    id="bt-day-progress-txt"
+                                >
+                                    &mdash;
+                                </div>
+                            </div>
+                            <!-- Stats em tempo real do dia atual -->
+                            <div
+                                style="
+                                    display: grid;
+                                    grid-template-columns: repeat(4, 1fr);
+                                    gap: 6px;
+                                    margin-bottom: 8px;
+                                "
+                            >
+                                <div
+                                    style="
+                                        text-align: center;
+                                        padding: 4px;
+                                        background: var(--bg3);
+                                        border-radius: 4px;
+                                    "
+                                >
+                                    <div
+                                        style="
+                                            font-size: 0.6rem;
+                                            color: var(--muted);
+                                            margin-bottom: 2px;
+                                        "
+                                    >
+                                        TRADES
+                                    </div>
+                                    <div
+                                        style="
+                                            font-size: 0.95rem;
+                                            font-weight: 700;
+                                            color: var(--blue);
+                                        "
+                                        id="bt-live-trades"
+                                    >
+                                        0
+                                    </div>
+                                </div>
+                                <div
+                                    style="
+                                        text-align: center;
+                                        padding: 4px;
+                                        background: var(--bg3);
+                                        border-radius: 4px;
+                                    "
+                                >
+                                    <div
+                                        style="
+                                            font-size: 0.6rem;
+                                            color: var(--muted);
+                                            margin-bottom: 2px;
+                                        "
+                                    >
+                                        WIN RATE
+                                    </div>
+                                    <div
+                                        style="
+                                            font-size: 0.95rem;
+                                            font-weight: 700;
+                                            color: var(--green);
+                                        "
+                                        id="bt-live-wr"
+                                    >
+                                        &mdash;
+                                    </div>
+                                </div>
+                                <div
+                                    style="
+                                        text-align: center;
+                                        padding: 4px;
+                                        background: var(--bg3);
+                                        border-radius: 4px;
+                                    "
+                                >
+                                    <div
+                                        style="
+                                            font-size: 0.6rem;
+                                            color: var(--muted);
+                                            margin-bottom: 2px;
+                                        "
+                                    >
+                                        P&amp;L DIA
+                                    </div>
+                                    <div
+                                        style="
+                                            font-size: 0.95rem;
+                                            font-weight: 700;
+                                        "
+                                        id="bt-live-pnl"
+                                    >
+                                        &mdash;
+                                    </div>
+                                </div>
+                                <div
+                                    style="
+                                        text-align: center;
+                                        padding: 4px;
+                                        background: var(--bg3);
+                                        border-radius: 4px;
+                                    "
+                                >
+                                    <div
+                                        style="
+                                            font-size: 0.6rem;
+                                            color: var(--muted);
+                                            margin-bottom: 2px;
+                                        "
+                                    >
+                                        SALDO
+                                    </div>
+                                    <div
+                                        style="
+                                            font-size: 0.95rem;
+                                            font-weight: 700;
+                                            color: var(--cyan);
+                                        "
+                                        id="bt-live-bal"
+                                    >
+                                        &mdash;
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Rodapé: staleness + ETA -->
+                            <div
+                                style="
+                                    display: flex;
+                                    justify-content: space-between;
+                                    font-size: 0.68rem;
+                                "
+                            >
+                                <span
+                                    id="bt-stale-warn"
+                                    style="color: var(--muted)"
+                                ></span>
+                                <span
+                                    id="bt-eta"
+                                    style="color: var(--muted)"
+                                ></span>
+                            </div>
+                            <!-- Status de download -->
+                            <div
+                                id="bt-dl-status"
+                                style="
+                                    display: none;
+                                    font-size: 0.72rem;
+                                    color: var(--blue);
+                                    margin-top: 5px;
+                                    padding: 4px 8px;
+                                    background: rgba(100, 149, 237, 0.1);
+                                    border-radius: 4px;
+                                "
+                            ></div>
+                        </div>
+                    </div>
+                    <!-- Tabela comparativa de estratégias -->
+                    <div style="overflow-x: auto; margin-bottom: 14px">
+                        <h3
+                            style="
+                                font-size: 0.82rem;
+                                color: var(--muted);
+                                margin-bottom: 6px;
+                            "
+                        >
+                            🏆 Comparação de Estratégias
+                        </h3>
+                        <table
+                            id="bt-strat-table"
+                            style="font-size: 0.75rem; width: 100%"
+                        >
+                            <thead>
+                                <tr>
+                                    <th>Estratégia</th>
+                                    <th>Saldo</th>
+                                    <th>P&amp;L</th>
+                                    <th>ROI</th>
+                                    <th>Dias+</th>
+                                    <th>Bust</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bt-strat-tbody">
+                                <tr>
+                                    <td
+                                        colspan="6"
+                                        style="
+                                            color: var(--muted);
+                                            text-align: center;
+                                        "
+                                    >
+                                        Aguardando...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Tabela de resultados por dia -->
+                    <details>
+                        <summary
+                            style="
+                                cursor: pointer;
+                                font-size: 0.82rem;
+                                color: var(--muted);
+                                font-weight: 600;
+                                margin-bottom: 6px;
+                            "
+                        >
+                            📅 Detalhes por Dia
+                        </summary>
+                        <div style="overflow-x: auto">
+                            <table id="bt-table" style="font-size: 0.75rem">
+                                <thead>
+                                    <tr>
+                                        <th>Data</th>
+                                        <th>Trades</th>
+                                        <th>WR</th>
+                                        <th>flat</th>
+                                        <th>soros</th>
+                                        <th>mart.</th>
+                                        <th>fib</th>
+                                        <th>dale.</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bt-real-tbody"></tbody>
+                            </table>
+                        </div>
+                    </details>
+                    <!-- Nota -->
+                    <div
+                        style="
+                            font-size: 0.68rem;
+                            color: var(--muted);
+                            margin-top: 12px;
+                            border-top: 1px solid var(--border);
+                            padding-top: 8px;
+                        "
+                    >
+                        &#x1f4cc; Backtest usa <b>ticks reais da Deriv</b> +
+                        código idêntico ao bot (strategy.py, indicadores,
+                        quality gate). Se os ticks do período não existirem
+                        localmente, serão baixados automaticamente. Taxa de
+                        acerto no backtest é maior que ao vivo porque a detecção
+                        de boom usa limiar conservador &mdash; o WR real em
+                        produção é 79-83%.
+                    </div>
                 </div>
-                <!-- Stats em tempo real do dia atual -->
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
-                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
-                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">TRADES</div>
-                    <div style="font-size:.95rem;font-weight:700;color:var(--blue)" id="bt-live-trades">0</div>
-                  </div>
-                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
-                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">WIN RATE</div>
-                    <div style="font-size:.95rem;font-weight:700;color:var(--green)" id="bt-live-wr">&mdash;</div>
-                  </div>
-                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
-                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">P&amp;L DIA</div>
-                    <div style="font-size:.95rem;font-weight:700" id="bt-live-pnl">&mdash;</div>
-                  </div>
-                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
-                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">SALDO</div>
-                    <div style="font-size:.95rem;font-weight:700;color:var(--cyan)" id="bt-live-bal">&mdash;</div>
-                  </div>
-                </div>
-                <!-- Rodapé: staleness + ETA -->
-                <div style="display:flex;justify-content:space-between;font-size:.68rem">
-                  <span id="bt-stale-warn" style="color:var(--muted)"></span>
-                  <span id="bt-eta" style="color:var(--muted)"></span>
-                </div>
-                <!-- Status de download -->
-                <div id="bt-dl-status" style="display:none;font-size:.72rem;color:var(--blue);margin-top:5px;padding:4px 8px;background:rgba(100,149,237,.1);border-radius:4px"></div>
-              </div>
             </div>
-            <!-- Resumo cards -->
-            <div class="session-cards" style="margin-bottom:12px" id="bt-summary-cards" style="display:none"></div>
-              <div class="card"><div class="card-label">Dias</div><div class="card-value blue" id="bt-days">&mdash;</div></div>
-              <div class="card"><div class="card-label">Dobrou</div><div class="card-value" id="bt-doubled">&mdash;</div></div>
-              <div class="card"><div class="card-label">Positivos</div><div class="card-value" id="bt-positive">&mdash;</div></div>
-              <div class="card"><div class="card-label">WR Médio</div><div class="card-value" id="bt-wr">&mdash;</div></div>
-              <div class="card"><div class="card-label">Saldo Final</div><div class="card-value green" id="bt-final-bal">&mdash;</div></div>
-            </div>
-            <!-- Tabela de resultados -->
-            <div style="overflow-x:auto">
-            <table id="bt-table" style="font-size:.8rem">
-              <thead><tr><th>Data</th><th>Trades</th><th>WR</th><th>P&amp;L</th><th>Saldo</th><th>Pico</th><th>Parou</th></tr></thead>
-              <tbody id="bt-real-tbody"></tbody>
-            </table>
-            </div>
-            <!-- Nota -->
-            <div style="font-size:.68rem;color:var(--muted);margin-top:12px;border-top:1px solid var(--border);padding-top:8px">
-              &#x1f4cc; Backtest usa <b>ticks reais da Deriv</b> + código idêntico ao bot (strategy.py, indicadores, quality gate).
-              Se os ticks do período não existirem localmente, serão baixados automaticamente.
-              Taxa de acerto no backtest é maior que ao vivo porque a detecção de boom usa limiar conservador &mdash; o WR real em produção é 79-83%.
-            </div>
-          </div>
-        </div>
         </div>
         <nav class="bottom-nav">
             <div class="bottom-nav-inner">
@@ -2665,7 +3009,7 @@
                     fetchHistory30d();
                 }
                 if (id === "modal-backtest") {
-                    fetchBacktest();                          // poll imediato
+                    fetchBacktest(); // poll imediato
                     if (_btPollTimer) clearInterval(_btPollTimer);
                     _btPollTimer = setInterval(pollBacktestStatus, 1000); // 1s enquanto aberto
                 }
@@ -2674,7 +3018,7 @@
                 $(id).classList.remove("active");
                 document.body.style.overflow = "";
                 if (id === "modal-backtest" && _btPollTimer) {
-                    clearInterval(_btPollTimer);  // para polling ao fechar
+                    clearInterval(_btPollTimer); // para polling ao fechar
                     _btPollTimer = null;
                 }
             }
@@ -4052,178 +4396,400 @@
 
             function fetchBacktest() {
                 // Ao abrir o modal, define a data final como hoje e checa status
-                var today = new Date().toISOString().slice(0,10);
-                var endEl = $('bt-end'); if(endEl && !endEl.value) endEl.value = today;
+                var today = new Date().toISOString().slice(0, 10);
+                var endEl = $("bt-end");
+                if (endEl && !endEl.value) endEl.value = today;
                 pollBacktestStatus();
             }
 
             async function runBacktest() {
-                var start = ($('bt-start')||{}).value || '2026-05-06';
-                var end   = ($('bt-end')||{}).value   || new Date().toISOString().slice(0,10);
-                var bal   = parseFloat(($('bt-start-bal')||{}).value || '50');
-                var btn   = $('bt-run-btn'), sbtn = $('bt-stop-btn');
-                var badge = $('bt-status-badge');
-                if(btn) btn.style.display='none';
-                if(sbtn) sbtn.style.display='inline-flex';
-                if(badge) badge.textContent = 'Iniciando...';
-                var pw = $('bt-progress-wrap'); if(pw) pw.style.display='block';
-                var pb = $('bt-progress-bar'); if(pb) pb.style.width='0%';
+                var start = ($("bt-start") || {}).value || "2026-05-06";
+                var end =
+                    ($("bt-end") || {}).value ||
+                    new Date().toISOString().slice(0, 10);
+                var bal = parseFloat(($("bt-start-bal") || {}).value || "50");
+                var btn = $("bt-run-btn"),
+                    sbtn = $("bt-stop-btn");
+                var badge = $("bt-status-badge");
+                if (btn) btn.style.display = "none";
+                if (sbtn) sbtn.style.display = "inline-flex";
+                if (badge) badge.textContent = "Iniciando...";
+                var pw = $("bt-progress-wrap");
+                if (pw) pw.style.display = "block";
+                var pb = $("bt-progress-bar");
+                if (pb) pb.style.width = "0%";
                 try {
-                    await fetch('/api/backtest/run?start='+start+'&end='+end+'&start_balance='+bal, {method:'POST'});
-                    if(_btPollTimer) clearInterval(_btPollTimer);
+                    await fetch(
+                        "/api/backtest/run?start=" +
+                            start +
+                            "&end=" +
+                            end +
+                            "&start_balance=" +
+                            bal,
+                        { method: "POST" },
+                    );
+                    if (_btPollTimer) clearInterval(_btPollTimer);
                     _btPollTimer = setInterval(pollBacktestStatus, 1000); // 1s
-                } catch(e) { toast('Erro ao iniciar backtest: '+e.message,'var(--red)'); }
+                } catch (e) {
+                    toast(
+                        "Erro ao iniciar backtest: " + e.message,
+                        "var(--red)",
+                    );
+                }
             }
 
             async function stopBacktest() {
-                await fetch('/api/backtest/stop',{method:'POST'});
+                await fetch("/api/backtest/stop", { method: "POST" });
                 // Não mata o timer — continua atualizando pra mostrar estado final
-                var btn=$('bt-run-btn'),sbtn=$('bt-stop-btn'),badge=$('bt-status-badge');
-                if(btn) btn.style.display='inline-flex';
-                if(sbtn) sbtn.style.display='none';
-                if(badge) badge.textContent='Parado.';
+                var btn = $("bt-run-btn"),
+                    sbtn = $("bt-stop-btn"),
+                    badge = $("bt-status-badge");
+                if (btn) btn.style.display = "inline-flex";
+                if (sbtn) sbtn.style.display = "none";
+                if (badge) badge.textContent = "Parado.";
             }
 
             async function pollBacktestStatus() {
                 try {
-                    var d = await fetch('/api/backtest/status').then(function(r){return r.json();});
-                    var status = d.status || 'idle';
-                    var badge = $('bt-status-badge'), btn=$('bt-run-btn'), sbtn=$('bt-stop-btn');
-                    var lw=$('bt-live-wrap'), pb=$('bt-progress-bar');
+                    var d = await fetch("/api/backtest/status").then(
+                        function (r) {
+                            return r.json();
+                        },
+                    );
+                    var status = d.status || "idle";
+                    var badge = $("bt-status-badge"),
+                        btn = $("bt-run-btn"),
+                        sbtn = $("bt-stop-btn");
+                    var lw = $("bt-live-wrap"),
+                        pb = $("bt-progress-bar");
 
-                    if(status==='running'){
-                        if(btn) btn.style.display='none';
-                        if(sbtn) sbtn.style.display='inline-flex';
-                        if(lw) lw.style.display='block';
+                    if (status === "running") {
+                        if (btn) btn.style.display = "none";
+                        if (sbtn) sbtn.style.display = "inline-flex";
+                        if (lw) lw.style.display = "block";
 
-                        var results = d.results||[];
-                        var total   = Math.max(d.total_days||1,1);
+                        var results = d.results || [];
+                        var total = Math.max(d.total_days || 1, 1);
                         var daysDone = results.length;
-                        var pct     = Math.round(daysDone/total*100);
+                        var pct = Math.round((daysDone / total) * 100);
 
                         // Barra geral (dias)
-                        if(pb){ pb.style.width=pct+'%'; pb.style.background='var(--purple)'; }
+                        if (pb) {
+                            pb.style.width = pct + "%";
+                            pb.style.background = "var(--purple)";
+                        }
 
                         // === Download de ticks em andamento ===
-                        var dlEl=$('bt-dl-status');
-                        if(d.download_status){
-                            if(dlEl){dlEl.style.display='block'; dlEl.textContent='\u1f4e5 '+d.download_status;}
-                            if(pb) pb.style.background='var(--blue)';
-                            if(badge) badge.textContent='\u23eb Baixando ticks...';
+                        var dlEl = $("bt-dl-status");
+                        if (d.download_status) {
+                            if (dlEl) {
+                                dlEl.style.display = "block";
+                                dlEl.textContent =
+                                    "\u1f4e5 " + d.download_status;
+                            }
+                            if (pb) pb.style.background = "var(--blue)";
+                            if (badge)
+                                badge.textContent = "\u23eb Baixando ticks...";
                         } else {
-                            if(dlEl) dlEl.style.display='none';
+                            if (dlEl) dlEl.style.display = "none";
                         }
 
                         // === Linha superior: dia + elapsed ===
-                        var elapsed = d.elapsed_s||0;
-                        var lday=$('bt-live-day'), lel=$('bt-live-elapsed');
-                        if(lday) lday.innerHTML='<b>'+d.current_day+'</b>&nbsp;<span style="font-weight:400;color:var(--muted);font-size:.72rem">'+daysDone+'/'+total+' dias</span>';
-                        if(lel)  lel.textContent=_fmtTime(elapsed);
+                        var elapsed = d.elapsed_s || 0;
+                        var lday = $("bt-live-day"),
+                            lel = $("bt-live-elapsed");
+                        if (lday)
+                            lday.innerHTML =
+                                "<b>" +
+                                d.current_day +
+                                '</b>&nbsp;<span style="font-weight:400;color:var(--muted);font-size:.72rem">' +
+                                daysDone +
+                                "/" +
+                                total +
+                                " dias</span>";
+                        if (lel) lel.textContent = _fmtTime(elapsed);
 
                         // === Progresso intra-dia (day_progress do engine) ===
                         var dp = d.day_progress;
-                        var dpBar=$('bt-day-progress-bar'), dpTxt=$('bt-day-progress-txt');
-                        if(dp){
-                            if(dpBar) dpBar.style.width=dp.pct+'%';
-                            if(dpTxt) dpTxt.innerHTML=
-                                '&#x23f3; Ticks '+dp.ticks_done.toLocaleString()+'/'+dp.ticks_total.toLocaleString()
-                                +' &bull; '+dp.pct+'% &bull; '+_fmtTime(dp.elapsed_day_s)+' no dia';
+                        var dpBar = $("bt-day-progress-bar"),
+                            dpTxt = $("bt-day-progress-txt");
+                        if (dp) {
+                            if (dpBar) dpBar.style.width = dp.pct + "%";
+                            if (dpTxt)
+                                dpTxt.innerHTML =
+                                    "&#x23f3; Ticks " +
+                                    dp.ticks_done.toLocaleString() +
+                                    "/" +
+                                    dp.ticks_total.toLocaleString() +
+                                    " &bull; " +
+                                    dp.pct +
+                                    "% &bull; " +
+                                    _fmtTime(dp.elapsed_day_s) +
+                                    " no dia";
 
                             // Stat cards ao vivo
-                            var ltr=$('bt-live-trades'), lwr=$('bt-live-wr');
-                            var lpnl=$('bt-live-pnl'), lbal=$('bt-live-bal');
-                            if(ltr) ltr.textContent=dp.trades;
-                            if(lwr){
-                                lwr.textContent=dp.trades>0?dp.wr.toFixed(1)+'%':'&mdash;';
-                                lwr.style.color=dp.wr>=90?'var(--green)':dp.wr>=70?'var(--yellow)':'var(--red)';
+                            var ltr = $("bt-live-trades"),
+                                lwr = $("bt-live-wr");
+                            var lpnl = $("bt-live-pnl"),
+                                lbal = $("bt-live-bal");
+                            if (ltr) ltr.textContent = dp.trades;
+                            if (lwr) {
+                                lwr.textContent =
+                                    dp.trades > 0
+                                        ? dp.wr.toFixed(1) + "%"
+                                        : "&mdash;";
+                                lwr.style.color =
+                                    dp.wr >= 90
+                                        ? "var(--green)"
+                                        : dp.wr >= 70
+                                          ? "var(--yellow)"
+                                          : "var(--red)";
                             }
-                            if(lpnl){
-                                lpnl.textContent=(dp.pnl>=0?'+':'')+dp.pnl.toFixed(2);
-                                lpnl.style.color=dp.pnl>=0?'var(--green)':'var(--red)';
+                            if (lpnl) {
+                                lpnl.textContent =
+                                    (dp.pnl >= 0 ? "+" : "") +
+                                    dp.pnl.toFixed(2);
+                                lpnl.style.color =
+                                    dp.pnl >= 0 ? "var(--green)" : "var(--red)";
                             }
-                            if(lbal){
-                                lbal.textContent='$'+dp.bal.toFixed(2);
-                                lbal.style.color=dp.bal>=(d.start_balance||50)?'var(--cyan)':'var(--red)';
+                            if (lbal) {
+                                lbal.textContent = "$" + dp.bal.toFixed(2);
+                                lbal.style.color =
+                                    dp.bal >= (d.start_balance || 50)
+                                        ? "var(--cyan)"
+                                        : "var(--red)";
                             }
                         } else {
                             // Sem progresso intra-dia ainda (fase de download ou iniío)
-                            if(dpBar) dpBar.style.width='0%';
-                            if(dpTxt) dpTxt.textContent='Aguardando simulação...';
+                            if (dpBar) dpBar.style.width = "0%";
+                            if (dpTxt)
+                                dpTxt.textContent = "Aguardando simulação...";
                         }
 
                         // === Staleness: quanto tempo desde o último update ===
-                        var stale=$('bt-stale-warn'), eta=$('bt-eta');
-                        if(d.last_update){
-                            var ago = Math.round(Date.now()/1000 - d.last_update);
-                            if(stale){
-                                if(ago>20) stale.innerHTML='&#x26a0;&#xfe0f; última atualização '+ago+'s atrás';
-                                else       stale.innerHTML='&#x1f7e2; atualizado '+ago+'s atrás';
-                                stale.style.color=ago>20?'var(--yellow)':'var(--muted)';
+                        var stale = $("bt-stale-warn"),
+                            eta = $("bt-eta");
+                        if (d.last_update) {
+                            var ago = Math.round(
+                                Date.now() / 1000 - d.last_update,
+                            );
+                            if (stale) {
+                                if (ago > 20)
+                                    stale.innerHTML =
+                                        "&#x26a0;&#xfe0f; última atualização " +
+                                        ago +
+                                        "s atrás";
+                                else
+                                    stale.innerHTML =
+                                        "&#x1f7e2; atualizado " +
+                                        ago +
+                                        "s atrás";
+                                stale.style.color =
+                                    ago > 20 ? "var(--yellow)" : "var(--muted)";
                             }
                         }
                         // === ETA ===
-                        if(eta && daysDone>0 && elapsed>0){
-                            var secPerDay = elapsed/daysDone;
-                            var remaining = (total-daysDone)*secPerDay;
-                            eta.textContent='ETA: ~'+_fmtTime(remaining);
+                        if (eta && daysDone > 0 && elapsed > 0) {
+                            var secPerDay = elapsed / daysDone;
+                            var remaining = (total - daysDone) * secPerDay;
+                            eta.textContent = "ETA: ~" + _fmtTime(remaining);
                         }
 
-                        if(badge) badge.textContent='Rodando '+pct+'%';
-
+                        if (badge) badge.textContent = "Rodando " + pct + "%";
                     } else {
                         // Terminado ou idle — timer continua (gerenciado pelo modal)
-                        if(btn) btn.style.display='inline-flex';
-                        if(sbtn) sbtn.style.display='none';
-                        if(lw && status==='idle') lw.style.display='none';
-                        if(lw && status==='done') lw.style.display='block';
-                        if(pb){pb.style.width='100%';pb.style.background='var(--green)';}
+                        if (btn) btn.style.display = "inline-flex";
+                        if (sbtn) sbtn.style.display = "none";
+                        if (lw && status === "idle") lw.style.display = "none";
+                        if (lw && status === "done") lw.style.display = "block";
+                        if (pb) {
+                            pb.style.width = "100%";
+                            pb.style.background = "var(--green)";
+                        }
                         // Oculta barra intra-dia quando terminar
-                        var dpw=$('bt-day-prog-wrap'); if(dpw) dpw.style.display='none';
-                        var stale=$('bt-stale-warn'); if(stale) stale.textContent='';
-                        var eta=$('bt-eta'); if(eta) eta.textContent='';
-                        if(badge) badge.innerHTML = status==='done'
-                            ? '&#x2705; Concluído em '+_fmtTime(d.elapsed_s||0)
-                            : status==='idle'?'':status;
+                        var dpw = $("bt-day-prog-wrap");
+                        if (dpw) dpw.style.display = "none";
+                        var stale = $("bt-stale-warn");
+                        if (stale) stale.textContent = "";
+                        var eta = $("bt-eta");
+                        if (eta) eta.textContent = "";
+                        if (badge)
+                            badge.innerHTML =
+                                status === "done"
+                                    ? "&#x2705; Concluído em " +
+                                      _fmtTime(d.elapsed_s || 0)
+                                    : status === "idle"
+                                      ? ""
+                                      : status;
                     }
 
-                    // === Tabela + Cards de resumo ===
+                    // === Tabela comparativa + Tabela diária (multi-strategy) ===
                     var results = d.results || [];
-                    if(results.length===0) return;
+                    if (results.length === 0) return;
 
-                    var nd=results.filter(function(r){return r.doubled;}).length;
-                    var np=results.filter(function(r){return r.pnl>0;}).length;
-                    var aw=results.reduce(function(a,r){return a+r.wr;},0)/results.length;
-                    var lastBal = d.current_balance || (results.length?results[results.length-1].balance:d.start_balance);
-                    var sd=$('bt-days'),sd2=$('bt-doubled'),sp=$('bt-positive'),sw=$('bt-wr'),sf=$('bt-final-bal');
-                    if(sd)  sd.textContent=results.length+(status==='running'?'/'+Math.max(d.total_days||1,1):'');
-                    if(sd2){sd2.textContent=nd+'/'+results.length; sd2.className='card-value '+(nd/results.length>=0.3?'green':'yellow');}
-                    if(sp) {sp.textContent=np+'/'+results.length; sp.className='card-value '+(np/results.length>=0.7?'green':'yellow');}
-                    if(sw)  sw.textContent=aw.toFixed(1)+'%';
-                    if(sf) {sf.textContent='$'+lastBal.toFixed(2); sf.className='card-value '+(lastBal>=(d.start_balance||50)?'green':'red');}
+                    // Tabela comparativa de estratégias
+                    var summary = d.summary || {};
+                    var stratSummary = summary.strategies || {};
+                    var stb = $("bt-strat-tbody");
+                    if (stb && Object.keys(stratSummary).length > 0) {
+                        var snames = [
+                            "flat",
+                            "soros",
+                            "martingale",
+                            "fibonacci",
+                            "soros_martingale",
+                            "soros_fibonacci",
+                            "dalembert",
+                        ];
+                        stb.innerHTML = snames
+                            .map(function (s) {
+                                var ss = stratSummary[s];
+                                if (!ss) return "";
+                                var pnlCls = ss.total_pnl >= 0 ? "win" : "loss";
+                                var bustTxt =
+                                    ss.busted_days > 0
+                                        ? '<span style="color:var(--red)">' +
+                                          ss.busted_days +
+                                          "</span>"
+                                        : "0";
+                                return (
+                                    '<tr><td style="font-weight:600">' +
+                                    s +
+                                    "</td>" +
+                                    '<td class="' +
+                                    (ss.final_balance >= (d.start_balance || 50)
+                                        ? "win"
+                                        : "loss") +
+                                    '">$' +
+                                    ss.final_balance.toFixed(2) +
+                                    "</td>" +
+                                    '<td class="' +
+                                    pnlCls +
+                                    '">' +
+                                    (ss.total_pnl >= 0 ? "+" : "") +
+                                    ss.total_pnl.toFixed(2) +
+                                    "</td>" +
+                                    '<td class="' +
+                                    pnlCls +
+                                    '">' +
+                                    (ss.roi_pct >= 0 ? "+" : "") +
+                                    ss.roi_pct.toFixed(1) +
+                                    "%</td>" +
+                                    "<td>" +
+                                    ss.positive_days +
+                                    "/" +
+                                    summary.total_days +
+                                    "</td>" +
+                                    "<td>" +
+                                    bustTxt +
+                                    "</td></tr>"
+                                );
+                            })
+                            .join("");
+                    } else if (stb && results.length > 0) {
+                        // Sem sumário ainda (still running) — computa das results
+                        var lastR = results[results.length - 1];
+                        var strats = lastR.strategies || {};
+                        var sn2 = Object.keys(strats);
+                        stb.innerHTML = sn2
+                            .map(function (s) {
+                                var ss = strats[s];
+                                if (!ss) return "";
+                                return (
+                                    '<tr><td style="font-weight:600">' +
+                                    s +
+                                    "</td>" +
+                                    '<td class="' +
+                                    (ss.balance >= (d.start_balance || 50)
+                                        ? "win"
+                                        : "loss") +
+                                    '">$' +
+                                    ss.balance.toFixed(2) +
+                                    "</td>" +
+                                    '<td class="' +
+                                    (ss.pnl >= 0 ? "win" : "loss") +
+                                    '">' +
+                                    (ss.pnl >= 0 ? "+" : "") +
+                                    ss.pnl.toFixed(2) +
+                                    "</td>" +
+                                    "<td>&mdash;</td><td>&mdash;</td>" +
+                                    "<td>" +
+                                    (ss.busted ? "\u1f4a5" : "\u2705") +
+                                    "</td></tr>"
+                                );
+                            })
+                            .join("");
+                    }
 
-                    var tb=$('bt-real-tbody'); if(!tb) return;
-                    tb.innerHTML=results.map(function(r){
-                        var flag=r.doubled?'&#x1f3af; dobrou':r.trailing?'&#x1f512; trailing':r.pnl>0?'&#x2705;':'&#x274c;';
-                        var wrCls=r.wr>=95?'win':r.wr<70?'loss':'';
-                        var pnlCls=r.pnl>0?'win':'loss';
-                        return '<tr>'
-                            +'<td>'+r.date+'</td>'
-                            +'<td>'+r.trades+'</td>'
-                            +'<td class="'+wrCls+'">'+r.wr.toFixed(1)+'%</td>'
-                            +'<td class="'+pnlCls+'">'+(r.pnl>=0?'+':'')+r.pnl.toFixed(2)+'</td>'
-                            +'<td style="font-weight:600">$'+r.balance.toFixed(2)+'</td>'
-                            +'<td>'+(r.peak_pct!=null?'+'+r.peak_pct.toFixed(1)+'%':'&mdash;')+'</td>'
-                            +'<td>'+flag+'</td></tr>';
-                    }).join('');
-                } catch(e){ console.warn('pollBacktestStatus err:',e); }
+                    // Tabela diária
+                    var tb = $("bt-real-tbody");
+                    if (!tb) return;
+                    tb.innerHTML = results
+                        .map(function (r) {
+                            var wr =
+                                r.signal_wr != null ? r.signal_wr : r.wr || 0;
+                            var wrCls =
+                                wr >= 80 ? "win" : wr < 60 ? "loss" : "";
+                            var strats = r.strategies || {};
+                            function fmtS(name) {
+                                var s = strats[name];
+                                if (!s) return "&mdash;";
+                                var cls = s.busted
+                                    ? "loss"
+                                    : s.pnl >= 0
+                                      ? "win"
+                                      : "loss";
+                                return (
+                                    '<span class="' +
+                                    cls +
+                                    '">$' +
+                                    s.balance.toFixed(0) +
+                                    "</span>"
+                                );
+                            }
+                            return (
+                                "<tr>" +
+                                "<td>" +
+                                r.date +
+                                "</td>" +
+                                "<td>" +
+                                (r.total_signals || r.trades || 0) +
+                                "</td>" +
+                                '<td class="' +
+                                wrCls +
+                                '">' +
+                                wr.toFixed(0) +
+                                "%</td>" +
+                                "<td>" +
+                                fmtS("flat") +
+                                "</td>" +
+                                "<td>" +
+                                fmtS("soros") +
+                                "</td>" +
+                                "<td>" +
+                                fmtS("martingale") +
+                                "</td>" +
+                                "<td>" +
+                                fmtS("fibonacci") +
+                                "</td>" +
+                                "<td>" +
+                                fmtS("dalembert") +
+                                "</td></tr>"
+                            );
+                        })
+                        .join("");
+                } catch (e) {
+                    console.warn("pollBacktestStatus err:", e);
+                }
             }
 
             // Formata segundos como '1m 23s' ou '45s'
-            function _fmtTime(s){
-                s=Math.max(0,Math.round(s||0));
-                if(s<60) return s+'s';
-                var m=Math.floor(s/60); var ss=s%60;
-                return m+'m '+(ss<10?'0':'')+ss+'s';
+            function _fmtTime(s) {
+                s = Math.max(0, Math.round(s || 0));
+                if (s < 60) return s + "s";
+                var m = Math.floor(s / 60);
+                var ss = s % 60;
+                return m + "m " + (ss < 10 ? "0" : "") + ss + "s";
             }
             /* ---- Init & Polling ---- */
             fetchStatus();
