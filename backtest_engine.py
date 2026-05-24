@@ -8,13 +8,15 @@ Usa arquivos data/ticks_BOOM1000_YYYY-MM-DD.csv quando disponíveis,
 senão filtra data/ticks_BOOM1000_max.csv por data.
 """
 
+import asyncio
 import json
 import os
 import sys
 import time
 from collections import deque
 from datetime import date as _date
-from datetime import timedelta
+from datetime import datetime as _datetime
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +32,11 @@ from strategy import (
 )
 
 load_dotenv()
+
+# ── Credenciais Deriv para download automático de ticks ───────────────────────
+TOKEN = os.getenv("DERIV_TOKEN", "")
+APP_ID = os.getenv("DERIV_APP_ID", "1089")
+WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
 # ── Parâmetros fixos ────────────────────────────────────────────────────────
 STAKE = 5.0
@@ -92,6 +99,134 @@ accu_cfg = AccumulatorStrategyConfig(
     ensemble_min_prob=0.294,
     calm_min_score=CALM_MIN_SCORE,
 )
+
+
+# ── Download automático de ticks ─────────────────────────────────────────────────────────────
+async def _download_day_async(day: _date, out_path: Path) -> int:
+    """Baixa ticks de um dia completo da Deriv em chunks de 1 hora."""
+    try:
+        import websockets  # opcional — não falha se não instalado
+    except ImportError:
+        return 0
+
+    dt = _datetime.combine(day, _datetime.min.time()).replace(tzinfo=timezone.utc)
+    start_epoch = int(dt.timestamp())
+    end_epoch = start_epoch + 86400 - 1
+    ticks: list[str] = []
+
+    try:
+        async with websockets.connect(WS_URL, ping_interval=30, open_timeout=15) as ws:
+            # Autoriza com o token do bot
+            await ws.send(json.dumps({"authorize": TOKEN}))
+            resp = json.loads(await ws.recv())
+            if "error" in resp:
+                print(f"Auth Deriv falhou: {resp['error']['message']}", flush=True)
+                return 0
+
+            # Busca em blocos de 1 hora (máx 5000 ticks cada)
+            start = start_epoch
+            while start < end_epoch:
+                chunk_end = min(start + 3600, end_epoch)
+                await ws.send(
+                    json.dumps(
+                        {
+                            "ticks_history": "BOOM1000",
+                            "start": start,
+                            "end": chunk_end,
+                            "style": "ticks",
+                            "count": 5000,
+                        }
+                    )
+                )
+                resp = json.loads(await ws.recv())
+                if "error" in resp:
+                    break
+                hist = resp.get("history", {})
+                prices = hist.get("prices", [])
+                times = hist.get("times", [])
+                for t, p in zip(times, prices):
+                    ticks.append(f"{t},{p}")
+                if not times:
+                    break
+                start = max(times) + 1
+    except Exception as e:
+        print(f"  Websocket erro: {e}", flush=True)
+        return 0
+
+    if len(ticks) > 10:
+        out_path.write_text("epoch,quote\n" + "\n".join(ticks))
+    return len(ticks)
+
+
+# Cache da cobertura do max.csv: lemos apenas uma vez o range de datas
+_max_csv_range: tuple[_date, _date] | None = None  # (day_min, day_max)
+
+
+def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
+    """Lê o range de DATAS do max.csv uma única vez e guarda em cache."""
+    global _max_csv_range
+    if _max_csv_range is not None:
+        return _max_csv_range
+    max_path = data_dir / "ticks_BOOM1000_max.csv"
+    if not max_path.exists():
+        return None
+    try:
+        epochs = pd.read_csv(max_path, usecols=["epoch"])["epoch"]
+        min_ep, max_ep = int(epochs.min()), int(epochs.max())
+        day_min = _datetime.fromtimestamp(min_ep, tz=timezone.utc).date()
+        day_max = _datetime.fromtimestamp(max_ep, tz=timezone.utc).date()
+        _max_csv_range = (day_min, day_max)
+        print(f"  max.csv cobre: {day_min} → {day_max}", flush=True)
+        return _max_csv_range
+    except Exception:
+        return None
+
+
+def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> bool:
+    """
+    Garante que ticks do dia existem.
+    1. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
+    2. Checa se max.csv cobre o dia (cache do range de epochs)
+    3. Tenta baixar da Deriv se TOKEN disponível
+    Retorna True se dados estão disponíveis.
+    """
+    if day.weekday() >= 5:  # sábado/domingo — mercado fechado
+        return False
+
+    daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
+    if daily.exists() and daily.stat().st_size > 5_000:
+        return True
+
+    # Checa cobertura do max.csv (leitura única, depois usa cache de datas)
+    csv_range = _get_max_csv_range(data_dir)
+    if csv_range is not None:
+        day_min, day_max = csv_range
+        if day_min <= day <= day_max:
+            return True  # dia coberto pelo max.csv
+
+    # Não temos os dados — tenta baixar
+    if not TOKEN:
+        print(f"  {day}: sem ticks e DERIV_TOKEN não configurado — pulando", flush=True)
+        return False
+
+    msg = f"  {day}: ticks ausentes, baixando da Deriv..."
+    print(msg, end=" ", flush=True)
+    if state is not None:
+        state["download_status"] = f"Baixando ticks de {day}..."
+
+    try:
+        n = asyncio.run(_download_day_async(day, daily))
+        if n > 100:
+            print(f"{n} ticks OK", flush=True)
+            if state is not None:
+                state.pop("download_status", None)
+            return True
+        else:
+            print(f"poucos ticks ({n}) — dia provavelmente sem mercado", flush=True)
+            return False
+    except Exception as e:
+        print(f"ERRO: {e}", flush=True)
+        return False
 
 
 def _write_state(out_path: Path, state: dict) -> None:
@@ -336,7 +471,24 @@ def main() -> None:
 
     balance = start_balance
 
+    # Fase 1: verifica e baixa ticks faltantes ANTES de simular
+    print("\n[1/2] Verificando ticks disponíveis...", flush=True)
+    days_with_data: list[_date] = []
     for day in days:
+        state["current_day"] = day.isoformat()
+        state["download_status"] = f"Verificando {day}..."
+        _write_state(out_path, state)
+        ok = _ensure_day_ticks(day, data_dir, state)
+        if ok:
+            days_with_data.append(day)
+    state.pop("download_status", None)
+    state["total_days"] = len(days_with_data)
+    print(f"  {len(days_with_data)}/{len(days)} dias com dados", flush=True)
+
+    # Fase 2: simulação
+    print("\n[2/2] Simulando...", flush=True)
+
+    for day in days_with_data:
         state["current_day"] = day.isoformat()
         state["elapsed_s"] = round(time.time() - t_global, 1)
         _write_state(out_path, state)

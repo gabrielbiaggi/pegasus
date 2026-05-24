@@ -4047,17 +4047,26 @@
                         if(btn) btn.style.display='none';
                         if(sbtn) sbtn.style.display='inline-flex';
                         if(pw) pw.style.display='block';
-                        var results=d.results||[]; var total=d.total_days||1;
+                        var results=d.results||[]; var total=Math.max(d.total_days||1,1);
                         var pct=Math.round(results.length/total*100);
                         if(pb) pb.style.width=pct+'%';
-                        if(pt) pt.textContent='Dia '+d.current_day+' ('+results.length+'/'+total+') — '+Math.round(d.elapsed_s||0)+'s';
-                        if(badge) badge.textContent='&#x23f3; Rodando '+pct+'%';
+                        // Mostra status de download se estiver baixando ticks
+                        var progressTxt;
+                        if(d.download_status) {
+                            progressTxt = '&#x1f4e5; ' + d.download_status;
+                            if(pb) pb.style.background='var(--blue)';
+                        } else {
+                            progressTxt = '&#x23f3; Dia '+d.current_day+' ('+results.length+'/'+total+') — '+Math.round(d.elapsed_s||0)+'s';
+                            if(pb) pb.style.background='var(--purple)';
+                        }
+                        if(pt) pt.innerHTML=progressTxt;
+                        if(badge) badge.textContent='Rodando '+pct+'%';
                     } else {
                         if(_btPollTimer){clearInterval(_btPollTimer);_btPollTimer=null;}
                         if(btn) btn.style.display='inline-flex';
                         if(sbtn) sbtn.style.display='none';
                         if(pw && status!=='done') pw.style.display='none';
-                        if(pb) pb.style.width='100%';
+                        if(pb){pb.style.width='100%';pb.style.background='var(--purple)';}
                         if(badge) badge.textContent = status==='done'?'✅ Concluído':status==='idle'?'':status;
                     }
 
