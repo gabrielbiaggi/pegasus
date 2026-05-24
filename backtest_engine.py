@@ -751,15 +751,20 @@ def main() -> None:
         # Limpa progresso intra-dia
         state.pop("day_progress", None)
         state["results"].append(result)
-        state["current_balance"] = balances.get("soros", start_balance)
+        # Pega saldo da primeira estrategia como referencia
+        first_strat = STRATEGY_NAMES[0]
+        state["current_balance"] = balances.get(first_strat, start_balance)
 
         # Print resumo do dia
-        wr = result["signal_wr"]
-        line = f"{result['total_signals']}T WR {wr:.0f}% | "
+        first_sr = result["strategies"].get(first_strat, {})
+        wr = first_sr.get("signal_wr", 0)
+        line = f"{first_sr.get('trades', 0)}T WR {wr:.0f}% | "
         for s in STRATEGY_NAMES:
-            sr = result["strategies"][s]
-            emoji = "✅" if sr["pnl"] > 0 else ("💥" if sr["busted"] else "❌")
-            line += f"{s}:{emoji}${sr['balance']:.0f} "
+            sr = result["strategies"].get(s, {})
+            emoji = (
+                "✅" if sr.get("pnl", 0) > 0 else ("💥" if sr.get("busted") else "❌")
+            )
+            line += f"{s[:6]}:${sr.get('balance', 0):.0f}{emoji} "
         print(f"{line} [{result['elapsed_s']:.0f}s]", flush=True)
 
     # Sumário final
@@ -770,9 +775,14 @@ def main() -> None:
         for s in STRATEGY_NAMES:
             final_bal = balances[s]
             total_pnl = round(final_bal - start_balance, 2)
-            busted_days = sum(1 for r in results if r["strategies"][s]["busted"])
-            pos_days = sum(1 for r in results if r["strategies"][s]["pnl"] > 0)
-            avg_wr = round(sum(r["signal_wr"] for r in results) / n, 1)
+            busted_days = sum(
+                1 for r in results if r["strategies"].get(s, {}).get("busted", False)
+            )
+            pos_days = sum(
+                1 for r in results if r["strategies"].get(s, {}).get("pnl", 0) > 0
+            )
+            wrs = [r["strategies"].get(s, {}).get("signal_wr", 0) for r in results]
+            avg_wr = round(sum(wrs) / len(wrs), 1) if wrs else 0
             summary["strategies"][s] = {
                 "final_balance": round(final_bal, 2),
                 "total_pnl": total_pnl,
