@@ -1211,6 +1211,88 @@ def api_backtest(response: Response):
     }
 
 
+# ── Backtest real: run / status / stop ─────────────────────────────────────
+
+_backtest_proc: "subprocess.Popen | None" = None
+
+
+@app.post("/api/backtest/run")
+def backtest_run(
+    start: str = "2026-05-06",
+    end: str | None = None,
+    start_balance: float = 50.0,
+    response: Response = None,
+):
+    """Inicia backtest em background. Retorna imediatamente."""
+    global _backtest_proc
+    if response:
+        response.headers["Cache-Control"] = "no-store"
+    if _backtest_proc and _backtest_proc.poll() is None:
+        return {"status": "already_running", "msg": "Backtest ja em andamento"}
+
+    from datetime import date as _date
+
+    if end is None:
+        end = _date.today().isoformat()
+
+    out_file = str(BASE / "logs" / "backtest_live.json")
+    # Escreve estado inicial
+    import json as _json
+
+    with open(out_file, "w") as f:
+        _json.dump(
+            {
+                "status": "starting",
+                "start_date": start,
+                "end_date": end,
+                "start_balance": start_balance,
+                "results": [],
+                "current_day": start,
+            },
+            f,
+        )
+
+    cmd = [
+        str(BASE / ".venv" / "bin" / "python"),
+        str(BASE / "backtest_engine.py"),
+        start,
+        end,
+        str(start_balance),
+        out_file,
+    ]
+    _backtest_proc = subprocess.Popen(cmd, cwd=str(BASE))
+    return {"status": "started", "start": start, "end": end, "output": out_file}
+
+
+@app.get("/api/backtest/status")
+def backtest_status(response: Response):
+    """Retorna o estado atual do backtest (polling a cada 2s)."""
+    if response:
+        response.headers["Cache-Control"] = "no-store"
+    out_file = BASE / "logs" / "backtest_live.json"
+    try:
+        if out_file.exists():
+            data = json.loads(out_file.read_text())
+            global _backtest_proc
+            if _backtest_proc and _backtest_proc.poll() is not None:
+                if data.get("status") == "running":
+                    data["status"] = "done"
+                    out_file.write_text(json.dumps(data))
+            return data
+    except Exception:
+        pass
+    return {"status": "idle", "results": []}
+
+
+@app.post("/api/backtest/stop")
+def backtest_stop():
+    global _backtest_proc
+    if _backtest_proc:
+        _backtest_proc.terminate()
+        _backtest_proc = None
+    return {"status": "stopped"}
+
+
 @app.get("/api/history30d")
 def api_history30d(balance: float = 10000.0):
     """Return last 30 days of real trade history + forward projections."""
