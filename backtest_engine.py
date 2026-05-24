@@ -308,81 +308,13 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # === PURO: sem stop-loss, deixa a matematica trabalhar ===
-    # pct2 ja protege (stake diminui com banca), nao precisa de SL
-    {
-        "name": "tp50_pct2",
-        "tp": 0.50,
-        "score": 20,
-        "mode": "pct2",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp50_pct1",
-        "tp": 0.50,
-        "score": 20,
-        "mode": "pct1",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp50_s25",
-        "tp": 0.50,
-        "score": 25,
-        "mode": "pct2",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp80_pct2",
-        "tp": 0.80,
-        "score": 20,
-        "mode": "pct2",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp80_pct1",
-        "tp": 0.80,
-        "score": 20,
-        "mode": "pct1",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp80_s25",
-        "tp": 0.80,
-        "score": 25,
-        "mode": "pct2",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp100_pct2",
-        "tp": 1.00,
-        "score": 20,
-        "mode": "pct2",
-        "sl": False,
-        "wr_stop": False,
-    },
-    {
-        "name": "tp100_pct1",
-        "tp": 1.00,
-        "score": 20,
-        "mode": "pct1",
-        "sl": False,
-        "wr_stop": False,
-    },
-    # COM stop (pra comparar)
-    {
-        "name": "tp50_pct2_sl",
-        "tp": 0.50,
-        "score": 20,
-        "mode": "pct2",
-        "sl": True,
-        "wr_stop": True,
-    },
+    # Todas com: SL 30%, SG 100% (dobrar), Trailing start 30% lock 5%
+    {"name": "TP50 2%", "tp": 0.50, "score": 20, "mode": "pct2"},
+    {"name": "TP50 1%", "tp": 0.50, "score": 20, "mode": "pct1"},
+    {"name": "TP80 2%", "tp": 0.80, "score": 20, "mode": "pct2"},
+    {"name": "TP80 1%", "tp": 0.80, "score": 20, "mode": "pct1"},
+    {"name": "TP100 2%", "tp": 1.00, "score": 20, "mode": "pct2"},
+    {"name": "TP100 1%", "tp": 1.00, "score": 20, "mode": "pct1"},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -393,42 +325,41 @@ def _replay_strategy(
     config: dict,
     start_balance: float,
 ) -> dict:
-    """Replay WIN/LOSS com uma config de estratégia."""
+    """Replay WIN/LOSS com SL 30%, SG 100%, Trailing 30%/5% SEMPRE."""
     tp_pct = config["tp"]
     mode = config["mode"]
-    has_sl = config.get("sl", False)
-    wr_stop = config.get("wr_stop", False)
     base = STAKE
     bal = start_balance
-    peak = bal
-    sod = bal
+    sod = bal  # start of day
+    peak_pnl = 0.0  # pico de lucro no dia
     wins = losses = 0
-    consec_loss = 0
-    max_dd_pct = 0.0
-    trail = False
+    trail_active = False
     stop_reason = None
 
     for is_win in outcomes:
         if bal < 0.35:
+            stop_reason = "BUST"
             break
 
-        # Opção C: stop-loss diário
-        if has_sl and (sod - bal) >= sod * DAILY_SL_PCT:
-            stop_reason = "SL_DIA"
+        # === STOP LOSS 30%: protege capital ===
+        pnl = bal - sod
+        if pnl <= -(sod * DAILY_SL_PCT):
+            stop_reason = "SL"
             break
 
-        # Opção C: se WR < 70% após 20+ trades, para
-        total_so_far = wins + losses
-        if wr_stop and total_so_far >= 20:
-            current_wr = wins / total_so_far * 100
-            if current_wr < 70:
-                stop_reason = "WR_STOP"
-                break
+        # === STOP GAIN 100%: dobrou a banca, para ===
+        if pnl >= sod * STOP_GAIN:
+            stop_reason = "DOBROU"
+            break
 
-        # Opção C: 3 losses seguidos → pula próximos 5 trades
-        if wr_stop and consec_loss >= 3:
-            consec_loss = 0
-            continue  # pula este trade (cooldown)
+        # === TRAILING: preserva lucro no pico ===
+        if pnl > peak_pnl:
+            peak_pnl = pnl
+        if not trail_active and pnl >= sod * TRAILING_S:
+            trail_active = True
+        if trail_active and pnl <= sod * TRAILING_L:
+            stop_reason = "TRAIL"
+            break
 
         # Calcula stake
         if mode == "pct2":
@@ -442,42 +373,26 @@ def _replay_strategy(
         if is_win:
             profit = round(stake * tp_pct, 2)
             wins += 1
-            consec_loss = 0
         else:
             profit = -stake
             losses += 1
-            consec_loss += 1
 
         bal = round(bal + profit, 2)
-        peak = max(peak, bal)
-        if peak > 0:
-            max_dd_pct = max(max_dd_pct, (peak - bal) / peak * 100)
-
-        # Stop gain diario (somente se SL ativo)
-        if has_sl:
-            pnl = bal - sod
-            if pnl >= sod * STOP_GAIN:
-                stop_reason = "DOBROU"
-                break
-            if not trail and pnl >= sod * TRAILING_S:
-                trail = True
-            if trail and pnl <= sod * TRAILING_L:
-                stop_reason = "TRAILING"
-                break
 
     total = wins + losses
+    final_pnl = round(bal - sod, 2)
     return {
         "trades": total,
         "wins": wins,
         "losses": losses,
         "wr": round(wins / total * 100, 1) if total else 0.0,
-        "pnl": round(bal - sod, 2),
+        "pnl": final_pnl,
         "balance": round(bal, 2),
-        "max_dd_pct": round(max_dd_pct, 1),
+        "peak_pnl": round(peak_pnl, 2),
         "doubled": stop_reason == "DOBROU",
-        "trailing": stop_reason == "TRAILING",
+        "trailing": stop_reason == "TRAIL",
         "busted": bal < 0.35,
-        "stopped_sl": stop_reason in ("SL_DIA", "WR_STOP"),
+        "stop": stop_reason or "",
     }
 
 
@@ -756,19 +671,32 @@ def main() -> None:
         state.pop("day_progress", None)
         state["results"].append(result)
         # Pega saldo da primeira estrategia como referencia
-        first_strat = STRATEGY_NAMES[0]
-        state["current_balance"] = balances.get(first_strat, start_balance)
-
         # Print resumo do dia
+        first_strat = STRATEGY_NAMES[0]
         first_sr = result["strategies"].get(first_strat, {})
         wr = first_sr.get("signal_wr", 0)
         line = f"{first_sr.get('trades', 0)}T WR {wr:.0f}% | "
         for s in STRATEGY_NAMES:
             sr = result["strategies"].get(s, {})
-            emoji = (
-                "✅" if sr.get("pnl", 0) > 0 else ("💥" if sr.get("busted") else "❌")
+            stop = sr.get("stop", "")
+            icon = (
+                "🎯"
+                if stop == "DOBROU"
+                else (
+                    "🔒"
+                    if stop == "TRAIL"
+                    else (
+                        "⛔"
+                        if stop == "SL"
+                        else (
+                            "💥"
+                            if stop == "BUST"
+                            else ("✅" if sr.get("pnl", 0) >= 0 else "❌")
+                        )
+                    )
+                )
             )
-            line += f"{s[:6]}:${sr.get('balance', 0):.0f}{emoji} "
+            line += f"{s}:{icon}${sr.get('balance', 0):.0f} "
         print(f"{line} [{result['elapsed_s']:.0f}s]", flush=True)
 
     # Sumário final
