@@ -1063,6 +1063,19 @@
                             " /><span class="slider"></span></label
                     >Martingale
                 </div>
+                <div
+                    class="toggle-row"
+                    title="Bloquear madrugada (02h-06h BRT = 05h-09h UTC). Desative para operar 24h."
+                >
+                    <label class="toggle"
+                        ><input
+                            type="checkbox"
+                            id="tog-block-hours"
+                            onchange="
+                                setEnvToggle('BLOCK_HOURS_ENABLED', this)
+                            " /><span class="slider"></span></label
+                    >&#x1f319; Block Madrugada
+                </div>
             </div>
             <div class="ctrl-row">
                 <div class="param-row">
@@ -2469,6 +2482,7 @@
                     await _postEnv(key, v);
                     var ll = {
                         BLOCK_WEEKENDS: "Bloquear FDS",
+                        BLOCK_HOURS_ENABLED: "Block Madrugada",
                         USE_SOROS: "Soros",
                         USE_MARTINGALE: "Martingale",
                     };
@@ -3360,6 +3374,8 @@
                         $("tog-weekends").checked = !!d.block_weekends;
                         $("tog-soros").checked = !!d.use_soros;
                         $("tog-martingale").checked = !!d.use_martingale;
+                        var tbh = $("tog-block-hours");
+                        if (tbh) tbh.checked = d.block_hours_enabled !== false;
                         var as = $("sel-account");
                         if (d.account_mode && document.activeElement !== as) {
                             as.value = d.account_mode;

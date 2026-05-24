@@ -419,8 +419,12 @@ class DerivBot:
 
         tick_dt = datetime.fromtimestamp(tick_epoch, UTC)
         tick_hour = tick_dt.hour
-        if tick_hour in self.config.blocked_utc_hours:
-            logger.info("Hora UTC bloqueada para novas entradas: %s", tick_hour)
+        # BLOCK_HOURS_ENABLED=false desativa completamente o bloqueio de hora
+        _block_hours_enabled = (
+            os.getenv("BLOCK_HOURS_ENABLED", "true").strip().lower() != "false"
+        )
+        if _block_hours_enabled and tick_hour in self.config.blocked_utc_hours:
+            logger.debug("Hora UTC bloqueada: %s", tick_hour)
             return
 
         # Block weekends: Friday 21:00 UTC → Sunday 21:00 UTC

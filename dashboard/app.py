@@ -443,6 +443,11 @@ def api_status(response: Response):
         "pnl": pnl,
         "last_trade_ts": last_ts,
         "block_weekends": _get_env("BLOCK_WEEKENDS") == "true",
+        "block_hours_enabled": (_get_env("BLOCK_HOURS_ENABLED") or "true")
+        .strip()
+        .lower()
+        != "false",
+        "blocked_utc_hours": _get_env("BLOCKED_UTC_HOURS") or "5,6,7,8,9",
         "stake": _get_env("STAKE") or "50.00",
         "use_soros": _get_env("USE_SOROS") == "true",
         "soros_max_steps": _get_env("SOROS_MAX_STEPS") or "3",
@@ -753,6 +758,8 @@ class EnvUpdate(BaseModel):
 
 ALLOWED_KEYS = {
     "BLOCK_WEEKENDS",
+    "BLOCK_HOURS_ENABLED",
+    "BLOCKED_UTC_HOURS",
     "STAKE",
     "ACCOUNT_MODE",
     "MAX_LOSS_PER_DAY",
