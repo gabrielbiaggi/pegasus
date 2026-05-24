@@ -291,15 +291,18 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
 
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
 FIB_SEQ = [1, 1, 2, 3, 5, 8, 13, 21]
+DAILY_SL_PCT = 0.30  # stop-loss diário: para de operar se perder 30% da banca do dia
 
 STRATEGY_NAMES = [
-    "flat",  # stake fixo, sem recovery
-    "soros",  # bot atual: acumula lucro nos próximos stakes
-    "martingale",  # dobra stake após loss
+    "flat",  # stake fixo $5, sem SL
+    "flat_sl",  # stake fixo $5 + stop-loss 30% dia
+    "soros",  # bot atual
+    "martingale",  # dobra após loss
+    "mart_sl",  # martingale + stop-loss 30% dia
     "fibonacci",  # fib sequence após loss
-    "soros_martingale",  # soros em wins + martingale em losses
-    "soros_fibonacci",  # soros em wins + fib em losses
-    "dalembert",  # +1 unidade após loss, -1 após win
+    "pct2",  # 2% da banca por trade (adaptativo)
+    "pct2_mart",  # 2% da banca + martingale
+    "dalembert",  # +1 unidade após loss, -1 win
 ]
 
 
@@ -308,77 +311,59 @@ def _replay_strategy(
     strategy: str,
     start_balance: float,
 ) -> dict:
-    """Replay uma sequência de WIN/LOSS com uma estratégia de stake.
-    Retorna métricas da simulação.
-    """
+    """Replay uma sequência de WIN/LOSS com uma estratégia de stake."""
     base = STAKE
     bal = start_balance
     peak = bal
     sod = bal
     wins = losses = 0
     max_dd_pct = 0.0
-    # State vars
     sor_step = sor_profit = 0.0
     sor_cd = 0
     gale_step = 0
-    gale_loss_accum = 0.0
-    dale_units = 1  # D'Alembert unit counter
+    dale_units = 1
     trail = False
     stop_reason = None
 
+    # Flags derivadas do nome da estratégia
+    has_sl = "_sl" in strategy  # stop-loss diário
+    is_pct = strategy.startswith("pct")  # stake proporcional
+    has_mart = "mart" in strategy and strategy != "soros"  # martingale recovery
+    has_fib = "fib" in strategy and "soros" not in strategy
+    has_soros = "soros" in strategy
+    has_dale = "dale" in strategy
+    pct_rate = 0.02 if "pct2" in strategy else 0.05 if "pct5" in strategy else 0
+
     for is_win in outcomes:
         if bal < 0.35:
-            break  # bust
+            break
 
-        # Calcula stake baseado na estratégia
-        if strategy == "flat":
-            stake = base
+        # Stop-loss diário: para se perdeu >30% da banca do dia
+        if has_sl and (sod - bal) >= sod * DAILY_SL_PCT:
+            stop_reason = "SL_DIA"
+            break
 
-        elif strategy == "soros":
+        # === Calcula stake ===
+        if is_pct:
+            # Proporcional: X% da banca atual (nunca arrisca mais que isso)
+            raw = bal * pct_rate
+            if has_mart and gale_step > 0:
+                raw = raw * (2**gale_step)
+            stake = max(0.35, min(round(raw, 2), bal))
+        elif has_dale:
+            stake = round(min(base * dale_units, bal, MAX_STAKE * 2), 2)
+        elif has_mart and gale_step > 0:
+            stake = round(min(base * (2**gale_step), bal, MAX_STAKE * 4), 2)
+        elif has_fib and gale_step > 0:
+            idx = min(gale_step, len(FIB_SEQ) - 1)
+            stake = round(min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4), 2)
+        elif has_soros:
             if sor_cd > 0:
                 stake = base
             elif sor_step > 0:
-                stake = min(base + sor_profit, MAX_STAKE)
+                stake = round(min(base + sor_profit, MAX_STAKE), 2)
             else:
                 stake = base
-
-        elif strategy == "martingale":
-            if gale_step == 0:
-                stake = base
-            else:
-                stake = min(base * (2**gale_step), bal, MAX_STAKE * 4)
-
-        elif strategy == "fibonacci":
-            if gale_step == 0:
-                stake = base
-            else:
-                idx = min(gale_step, len(FIB_SEQ) - 1)
-                stake = min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4)
-
-        elif strategy == "soros_martingale":
-            if gale_step > 0:
-                stake = min(base * (2**gale_step), bal, MAX_STAKE * 4)
-            elif sor_cd > 0:
-                stake = base
-            elif sor_step > 0:
-                stake = min(base + sor_profit, MAX_STAKE)
-            else:
-                stake = base
-
-        elif strategy == "soros_fibonacci":
-            if gale_step > 0:
-                idx = min(gale_step, len(FIB_SEQ) - 1)
-                stake = min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4)
-            elif sor_cd > 0:
-                stake = base
-            elif sor_step > 0:
-                stake = min(base + sor_profit, MAX_STAKE)
-            else:
-                stake = base
-
-        elif strategy == "dalembert":
-            stake = min(base * dale_units, bal, MAX_STAKE * 2)
-
         else:
             stake = base
 
@@ -386,12 +371,11 @@ def _replay_strategy(
         if stake < 0.35:
             break
 
-        # Aplica resultado
+        # === Aplica resultado ===
         if is_win:
             profit = round(stake * TP_PCT, 2)
             wins += 1
-            # Update strategy state
-            if strategy in ("soros", "soros_martingale", "soros_fibonacci"):
+            if has_soros:
                 sor_cd = 0
                 if sor_step < SOROS_STEPS:
                     sor_step += 1
@@ -399,33 +383,21 @@ def _replay_strategy(
                 else:
                     sor_step = 0
                     sor_profit = 0.0
-            if strategy in (
-                "martingale",
-                "fibonacci",
-                "soros_martingale",
-                "soros_fibonacci",
-            ):
+            if has_mart or has_fib:
                 gale_step = 0
-                gale_loss_accum = 0.0
-            if strategy == "dalembert":
+            if has_dale:
                 dale_units = max(1, dale_units - 1)
         else:
             profit = -stake
             losses += 1
-            if strategy in ("soros", "soros_martingale", "soros_fibonacci"):
+            if has_soros:
                 sor_step = 0
                 sor_profit = 0.0
                 sor_cd = SOROS_COOLDOWN
-            if strategy in (
-                "martingale",
-                "fibonacci",
-                "soros_martingale",
-                "soros_fibonacci",
-            ):
-                gale_step = min(gale_step + 1, 6)  # cap 6 gales
-                gale_loss_accum += stake
-            if strategy == "dalembert":
-                dale_units = min(dale_units + 1, 8)  # cap 8
+            if has_mart or has_fib:
+                gale_step = min(gale_step + 1, 6)
+            if has_dale:
+                dale_units = min(dale_units + 1, 8)
 
         bal = round(bal + profit, 2)
         peak = max(peak, bal)
@@ -433,7 +405,7 @@ def _replay_strategy(
             dd = (peak - bal) / peak * 100
             max_dd_pct = max(max_dd_pct, dd)
 
-        # Stop diario
+        # Stop gain diário / trailing
         pnl = bal - sod
         if pnl >= sod * STOP_GAIN:
             stop_reason = "DOBROU"
@@ -445,18 +417,18 @@ def _replay_strategy(
             break
 
     total = wins + losses
-    pnl_d = bal - sod
     return {
         "trades": total,
         "wins": wins,
         "losses": losses,
         "wr": round(wins / total * 100, 1) if total else 0.0,
-        "pnl": round(pnl_d, 2),
+        "pnl": round(bal - sod, 2),
         "balance": round(bal, 2),
         "max_dd_pct": round(max_dd_pct, 1),
         "doubled": stop_reason == "DOBROU",
         "trailing": stop_reason == "TRAILING",
         "busted": bal < 0.35,
+        "stopped_sl": stop_reason == "SL_DIA",
     }
 
 
