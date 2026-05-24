@@ -33,7 +33,9 @@ TRAILING_L = 0.05
 BLOCKED_HOURS = set(range(0, 6))
 TICK_COUNT = 100
 CUSUM_MAX = 5.0
-HURST_MIN = 0.45
+HURST_MIN = (
+    0.0  # Sem filtro de Hurst minimo — dados historicos pre-22maio nao tinham este gate
+)
 CALM_THRESH = 1.5e-6
 CALM_MIN_SCORE = 20
 BOOM_THRESH = 0.000242
@@ -128,16 +130,22 @@ for day in days:
     i = TICK_COUNT
 
     while i < len(day_df) - MAX_HOLD - 1:
-        # Sempre atualiza buffer (todos os ticks)
+        # SEMPRE adiciona tick ao buffer (consecutivo, sem gaps)
         tick_buf.append({"epoch": int(epochs[i]), "quote": float(prices[i])})
 
-        # Filtros rápidos sem indicadores
+        # Filtra horário bloqueado mas CONTINUA adicionando ticks ao buffer
         if hours[i] in BLOCKED_HOURS:
-            i += SAMPLE_EVERY
+            i += 1
+            continue  # avança 1 a 1 para manter buffer consistente
+
+        # Amostragem: só avalia a cada SAMPLE_EVERY ticks
+        if (i - TICK_COUNT) % SAMPLE_EVERY != 0:
+            i += 1
             continue
+
         avg = avgs[i]
         if np.isnan(avg) or avg >= CALM_THRESH:
-            i += SAMPLE_EVERY
+            i += 1
             continue
 
         # Chama código REAL do bot
@@ -145,10 +153,10 @@ for day in days:
             df_ind = calculate_tick_indicators(list(tick_buf), config=accu_cfg)
             total_calls += 1
         except Exception:
-            i += SAMPLE_EVERY
+            i += 1
             continue
         if df_ind is None or df_ind.empty:
-            i += SAMPLE_EVERY
+            i += 1
             continue
 
         # RESET INDEX — obrigatorio para indicadores funcionarem
@@ -166,11 +174,11 @@ for day in days:
                 ensemble_scorer=None,
             )
         except Exception:
-            i += SAMPLE_EVERY
+            i += 1
             continue
 
         if signal != "ACCU":
-            i += SAMPLE_EVERY
+            i += 1
             continue
 
         # Quality gate (idêntico ao bot)
@@ -178,7 +186,7 @@ for day in days:
         cusum_v = float(row.get("cusum_score", 0) or 0)
         hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
         if cusum_v > CUSUM_MAX or hurst_v < HURST_MIN:
-            i += SAMPLE_EVERY
+            i += 1
             continue
 
         # Stake com soros
