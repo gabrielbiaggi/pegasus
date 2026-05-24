@@ -38,24 +38,40 @@ TOKEN = os.getenv("DERIV_TOKEN", "")
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
-# ── Parâmetros fixos ────────────────────────────────────────────────────────
-STAKE = 5.0
-TP_PCT = 0.30
-MAX_HOLD = 80
-GROWTH_RATE = 0.03
-MAX_STAKE = 10.0
-SOROS_STEPS = 3
-SOROS_COOLDOWN = 2
+# ── Parâmetros — lidos do .env para garantir fidel. ao bot real ─────────────────
+STAKE = float(os.getenv("STAKE", "5"))
+MAX_STAKE = float(os.getenv("MAX_STAKE", "10"))
+GROWTH_RATE = float(os.getenv("ACCUMULATOR_GROWTH_RATE", "0.03"))
+TP_PCT = float(os.getenv("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30")) / 100.0
+MAX_HOLD = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "80"))
+SOROS_STEPS = int(os.getenv("SOROS_MAX_STEPS", "3"))
+SOROS_COOLDOWN = int(os.getenv("ACCUMULATOR_COOLDOWN_TICKS", "5"))
 STOP_GAIN = 1.00
 TRAILING_S = 0.30
 TRAILING_L = 0.05
-CUSUM_MAX = 5.0
-HURST_MIN = 0.45
-CALM_THRESH = 1.5e-6
-BOOM_THRESH = 0.000242
+CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
+HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
+CALM_THRESH = float(os.getenv("CALM_ACCU_THRESHOLD", "1.5e-6"))
 SAMPLE_EVERY = 60
-TICK_COUNT = 100
-CALM_MIN_SCORE = 20
+TICK_COUNT = int(os.getenv("TICK_COUNT", "100"))
+CALM_MIN_SCORE = int(os.getenv("CALM_ACCU_MIN_SCORE", "20"))
+
+# ── Simulação de barreira REAL (idêntica ao shadow_collect) ─────────────────
+# O bot real perde quando o preço se afasta ± barrier_pct do PREÇO DE ENTRADA
+# (não por retorno per-tick). A barreira é estimada como ATR × multiplicador.
+_ATR_MULT = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER", "5.0"))
+_BAR_MIN = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT", "0.03")) / 100.0
+_BAR_MAX = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT", "0.10")) / 100.0
+SLIPPAGE = 1  # 1 tick de delay de execução (latência do bot real)
+
+# WIN_TICKS: quantos ticks para atingir TP (30% com 3%/tick = 9 ticks)
+_v = 1.0
+WIN_TICKS = MAX_HOLD
+for _j in range(1, MAX_HOLD + 1):
+    _v *= 1 + GROWTH_RATE
+    if _v - 1.0 >= TP_PCT:
+        WIN_TICKS = _j
+        break
 
 # Lê BLOCKED_UTC_HOURS do .env (padrão: 5,6,7,8,9)
 _blocked_raw = os.getenv("BLOCKED_UTC_HOURS", "5,6,7,8,9")
@@ -190,9 +206,7 @@ def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> 
     3. Tenta baixar da Deriv se TOKEN disponível
     Retorna True se dados estão disponíveis.
     """
-    if day.weekday() >= 5:  # sábado/domingo — mercado fechado
-        return False
-
+    # BOOM1000 opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
     daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
     if daily.exists() and daily.stat().st_size > 5_000:
         return True
@@ -268,7 +282,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     q = df["quote"].values
     rets = np.zeros(len(q))
     rets[1:] = np.abs(np.diff(q) / q[:-1])
-    df["boom"] = rets > BOOM_THRESH
+    # avg_ret: usado pelo filtro calm (nao mais BOOM_THRESH por tick)
     df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
 
     return df
@@ -292,7 +306,6 @@ def _sim_day(
     prices = day_df["quote"].values
     hours = day_df["hour"].values
     avgs = day_df["avg_ret"].values
-    booms = day_df["boom"].values
     epochs = day_df["epoch"].values
     total_ticks = len(day_df)
 
@@ -404,21 +417,40 @@ def _sim_day(
             i += SAMPLE_EVERY
             continue
 
-        # Simula trade com ticks reais
+        # ── Barreira REAL: idêntica ao shadow_collect / Deriv ────────────────
+        # A barreira mede o afastamento acumulado do PREÇO DE ENTRADA,
+        # não o retorno per-tick. Estimamos com ATR do momento da entrada.
+        # (row já definido no quality gate acima)
+        tick_atr = float(row.get("tick_atr_percent", 0) or 0)
+        if tick_atr <= 0:
+            tick_atr = _BAR_MIN * 100  # fallback: barrier mínima
+        barrier_pct = max(_BAR_MIN, min(_BAR_MAX, tick_atr / 100.0 * _ATR_MULT))
+
+        # Slippage: contrato abre no tick i+SLIPPAGE (delay de execução)
+        entry_idx = i + SLIPPAGE
+        if entry_idx >= len(prices) - WIN_TICKS:
+            i += 1
+            continue
+        entry_price = prices[entry_idx]
+
+        # Simula WIN_TICKS ticks a partir da entrada
         profit = -stake
         is_win = False
-        hold = MAX_HOLD
-        for j in range(1, MAX_HOLD + 1):
-            if i + j >= len(prices):
+        hold = WIN_TICKS + SLIPPAGE  # assume perda por padrão
+        for j in range(1, WIN_TICKS + 1):
+            check_idx = entry_idx + j
+            if check_idx >= len(prices):
+                break  # sem dados suficientes → LOSS
+            move = abs(prices[check_idx] - entry_price) / entry_price
+            if move >= barrier_pct:
+                # Barreira atingida → LOSS (exatamente como Deriv)
+                hold = SLIPPAGE + j
                 break
-            if booms[i + j]:
-                hold = j
-                break
-            cv = stake * ((1 + GROWTH_RATE) ** j)
-            if cv - stake >= stake * TP_PCT:
+            if j >= WIN_TICKS:
+                # Sobreviveu todos os ticks → WIN
                 profit = round(stake * TP_PCT, 2)
                 is_win = True
-                hold = j
+                hold = SLIPPAGE + j
                 break
 
         if is_win:
@@ -439,7 +471,7 @@ def _sim_day(
         bal = round(bal + profit, 2)
         peak = max(peak, bal)
         pnl = bal - sod
-        i += hold + 6  # pula o hold + cooldown de barrier reset
+        i += hold + SOROS_COOLDOWN  # avança past do hold + cooldown (fiel ao bot)
 
         if pnl >= sod * STOP_GAIN:
             stop_reason = "DOBROU"
@@ -482,12 +514,11 @@ def main() -> None:
     out_path = Path(sys.argv[4])
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Constrói lista de dias úteis (exclui fins de semana)
+    # BOOM1000 opera 24/7 — inclui fins de semana (fiel ao bot real: BLOCK_WEEKENDS=false)
     days: list[_date] = []
     cur = start_date
     while cur <= end_date:
-        if cur.weekday() < 5:  # 0=seg … 4=sex
-            days.append(cur)
+        days.append(cur)
         cur += timedelta(days=1)
 
     data_dir = Path(__file__).parent / "data"
