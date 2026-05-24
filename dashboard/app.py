@@ -1039,7 +1039,7 @@ def api_backtest(response: Response):
             "balance": bal,
             "pnl": round(bal - sod, 2),
             "pnl_pct": round((bal - sod) / sod * 100, 1) if sod > 0 else 0,
-            "peak_pct": round((peak - sod) / sod * 100, 1),
+            "peak_pct": round((peak - sod) / sod * 100, 1) if sod > 0 else 0,
             "wr": round(wins / total * 100, 1) if total else 0,
             "trades": total,
             "doubled": stop == "DOBROU",
