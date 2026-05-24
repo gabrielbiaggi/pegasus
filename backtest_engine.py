@@ -291,121 +291,166 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
 
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
 FIB_SEQ = [1, 1, 2, 3, 5, 8, 13, 21]
-DAILY_SL_PCT = 0.30  # stop-loss diário: para de operar se perder 30% da banca do dia
+DAILY_SL_PCT = 0.30
 
-STRATEGY_NAMES = [
-    "flat",  # stake fixo $5, sem SL
-    "flat_sl",  # stake fixo $5 + stop-loss 30% dia
-    "soros",  # bot atual
-    "martingale",  # dobra após loss
-    "mart_sl",  # martingale + stop-loss 30% dia
-    "fibonacci",  # fib sequence após loss
-    "pct2",  # 2% da banca por trade (adaptativo)
-    "pct2_mart",  # 2% da banca + martingale
-    "dalembert",  # +1 unidade após loss, -1 win
+# Cada config: (nome, tp_pct, win_ticks, min_score, stake_mode, daily_sl, wr_stop)
+# stake_mode: 'flat'=fixo $5, 'pct2'=2% da banca
+# wr_stop: se WR < 70% após 20 trades, para o dia (Opção C)
+
+
+def _calc_win_ticks(tp_pct: float) -> int:
+    v = 1.0
+    for j in range(1, 200):
+        v *= 1 + GROWTH_RATE
+        if v - 1.0 >= tp_pct:
+            return j
+    return 80
+
+
+STRATEGY_CONFIGS = [
+    # === TP 30% (atual) ===
+    {
+        "name": "tp30_flat_sl",
+        "tp": 0.30,
+        "score": 20,
+        "mode": "flat",
+        "sl": True,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp30_pct2_wr",
+        "tp": 0.30,
+        "score": 20,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
+    {
+        "name": "tp30_s25_pct2_wr",
+        "tp": 0.30,
+        "score": 25,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
+    # === TP 50% (14 ticks) — melhor ratio ===
+    {
+        "name": "tp50_flat_sl",
+        "tp": 0.50,
+        "score": 20,
+        "mode": "flat",
+        "sl": True,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp50_pct2_wr",
+        "tp": 0.50,
+        "score": 20,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
+    {
+        "name": "tp50_s25_pct2_wr",
+        "tp": 0.50,
+        "score": 25,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
+    # === TP 80% (20 ticks) — edge máximo ===
+    {
+        "name": "tp80_flat_sl",
+        "tp": 0.80,
+        "score": 20,
+        "mode": "flat",
+        "sl": True,
+        "wr_stop": False,
+    },
+    {
+        "name": "tp80_pct2_wr",
+        "tp": 0.80,
+        "score": 20,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
+    {
+        "name": "tp80_s25_pct2_wr",
+        "tp": 0.80,
+        "score": 25,
+        "mode": "pct2",
+        "sl": True,
+        "wr_stop": True,
+    },
 ]
+
+STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
 def _replay_strategy(
-    outcomes: list[bool],  # True=WIN, False=LOSS
-    strategy: str,
+    outcomes: list[bool],
+    config: dict,
     start_balance: float,
 ) -> dict:
-    """Replay uma sequência de WIN/LOSS com uma estratégia de stake."""
+    """Replay WIN/LOSS com uma config de estratégia."""
+    tp_pct = config["tp"]
+    mode = config["mode"]
+    has_sl = config.get("sl", False)
+    wr_stop = config.get("wr_stop", False)
     base = STAKE
     bal = start_balance
     peak = bal
     sod = bal
     wins = losses = 0
+    consec_loss = 0
     max_dd_pct = 0.0
-    sor_step = sor_profit = 0.0
-    sor_cd = 0
-    gale_step = 0
-    dale_units = 1
     trail = False
     stop_reason = None
-
-    # Flags derivadas do nome da estratégia
-    has_sl = "_sl" in strategy  # stop-loss diário
-    is_pct = strategy.startswith("pct")  # stake proporcional
-    has_mart = "mart" in strategy and strategy != "soros"  # martingale recovery
-    has_fib = "fib" in strategy and "soros" not in strategy
-    has_soros = "soros" in strategy
-    has_dale = "dale" in strategy
-    pct_rate = 0.02 if "pct2" in strategy else 0.05 if "pct5" in strategy else 0
 
     for is_win in outcomes:
         if bal < 0.35:
             break
 
-        # Stop-loss diário: para se perdeu >30% da banca do dia
+        # Opção C: stop-loss diário
         if has_sl and (sod - bal) >= sod * DAILY_SL_PCT:
             stop_reason = "SL_DIA"
             break
 
-        # === Calcula stake ===
-        if is_pct:
-            # Proporcional: X% da banca atual (nunca arrisca mais que isso)
-            raw = bal * pct_rate
-            if has_mart and gale_step > 0:
-                raw = raw * (2**gale_step)
-            stake = max(0.35, min(round(raw, 2), bal))
-        elif has_dale:
-            stake = round(min(base * dale_units, bal, MAX_STAKE * 2), 2)
-        elif has_mart and gale_step > 0:
-            stake = round(min(base * (2**gale_step), bal, MAX_STAKE * 4), 2)
-        elif has_fib and gale_step > 0:
-            idx = min(gale_step, len(FIB_SEQ) - 1)
-            stake = round(min(base * FIB_SEQ[idx], bal, MAX_STAKE * 4), 2)
-        elif has_soros:
-            if sor_cd > 0:
-                stake = base
-            elif sor_step > 0:
-                stake = round(min(base + sor_profit, MAX_STAKE), 2)
-            else:
-                stake = base
+        # Opção C: se WR < 70% após 20+ trades, para
+        total_so_far = wins + losses
+        if wr_stop and total_so_far >= 20:
+            current_wr = wins / total_so_far * 100
+            if current_wr < 70:
+                stop_reason = "WR_STOP"
+                break
+
+        # Opção C: 3 losses seguidos → pula próximos 5 trades
+        if wr_stop and consec_loss >= 3:
+            consec_loss = 0
+            continue  # pula este trade (cooldown)
+
+        # Calcula stake
+        if mode == "pct2":
+            stake = round(max(0.35, bal * 0.02), 2)
         else:
             stake = base
-
         stake = round(max(0.35, min(stake, bal)), 2)
-        if stake < 0.35:
-            break
 
-        # === Aplica resultado ===
         if is_win:
-            profit = round(stake * TP_PCT, 2)
+            profit = round(stake * tp_pct, 2)
             wins += 1
-            if has_soros:
-                sor_cd = 0
-                if sor_step < SOROS_STEPS:
-                    sor_step += 1
-                    sor_profit = round(sor_profit + profit, 2)
-                else:
-                    sor_step = 0
-                    sor_profit = 0.0
-            if has_mart or has_fib:
-                gale_step = 0
-            if has_dale:
-                dale_units = max(1, dale_units - 1)
+            consec_loss = 0
         else:
             profit = -stake
             losses += 1
-            if has_soros:
-                sor_step = 0
-                sor_profit = 0.0
-                sor_cd = SOROS_COOLDOWN
-            if has_mart or has_fib:
-                gale_step = min(gale_step + 1, 6)
-            if has_dale:
-                dale_units = min(dale_units + 1, 8)
+            consec_loss += 1
 
         bal = round(bal + profit, 2)
         peak = max(peak, bal)
         if peak > 0:
-            dd = (peak - bal) / peak * 100
-            max_dd_pct = max(max_dd_pct, dd)
+            max_dd_pct = max(max_dd_pct, (peak - bal) / peak * 100)
 
-        # Stop gain diário / trailing
         pnl = bal - sod
         if pnl >= sod * STOP_GAIN:
             stop_reason = "DOBROU"
@@ -428,7 +473,7 @@ def _replay_strategy(
         "doubled": stop_reason == "DOBROU",
         "trailing": stop_reason == "TRAILING",
         "busted": bal < 0.35,
-        "stopped_sl": stop_reason == "SL_DIA",
+        "stopped_sl": stop_reason in ("SL_DIA", "WR_STOP"),
     }
 
 
@@ -438,9 +483,9 @@ def _collect_day_outcomes(
     state: dict | None = None,
     out_path: Path | None = None,
     t_global: float | None = None,
-) -> tuple[list[bool], float]:
-    """Coleta WIN/LOSS outcomes de um dia SEM aplicar estratégia de stake.
-    Retorna (lista de bools True=WIN, elapsed_seconds).
+) -> tuple[dict[str, list[bool]], float]:
+    """Coleta WIN/LOSS outcomes para TODAS as configs de TP e score.
+    Retorna {config_name: [bools]}, elapsed.
     """
     t0 = time.time()
     t_last_progress = t0
@@ -455,28 +500,35 @@ def _collect_day_outcomes(
     for w in range(min(TICK_COUNT, len(day_df))):
         tick_buf.append({"epoch": int(epochs[w]), "quote": float(prices[w])})
 
-    outcomes: list[bool] = []
-    i = TICK_COUNT
+    # Pre-calcula win_ticks para cada TP unico
+    tp_to_wt: dict[float, int] = {}
+    for c in STRATEGY_CONFIGS:
+        tp = c["tp"]
+        if tp not in tp_to_wt:
+            tp_to_wt[tp] = _calc_win_ticks(tp)
+    max_wt = max(tp_to_wt.values())
 
-    while i < len(day_df) - MAX_HOLD - 1:
-        # Progresso intra-dia
+    # Score levels unicos
+    score_levels = sorted(set(c["score"] for c in STRATEGY_CONFIGS))
+
+    # Outcomes: uma lista separada para cada (tp, score)
+    outcomes: dict[str, list[bool]] = {c["name"]: [] for c in STRATEGY_CONFIGS}
+    i = TICK_COUNT
+    total_signals = 0
+
+    while i < len(day_df) - max_wt - SLIPPAGE - 1:
         now = time.time()
         if (
             state is not None
             and out_path is not None
             and (now - t_last_progress) >= 5.0
         ):
-            w_count = sum(outcomes)
-            l_count = len(outcomes) - w_count
-            total_tr = len(outcomes)
+            total_oc = max((len(v) for v in outcomes.values()), default=0)
             state["day_progress"] = {
                 "ticks_done": int(i),
                 "ticks_total": int(total_ticks),
                 "pct": round(i / total_ticks * 100, 1),
-                "trades": total_tr,
-                "wins": w_count,
-                "losses": l_count,
-                "wr": round(w_count / total_tr * 100, 1) if total_tr else 0.0,
+                "trades": total_signals,
                 "elapsed_day_s": round(now - t0, 1),
             }
             if t_global is not None:
@@ -484,17 +536,14 @@ def _collect_day_outcomes(
             _write_state(out_path, state)
             t_last_progress = now
 
-        # Adiciona tick ao buffer
         tick_buf.append({"epoch": int(epochs[i]), "quote": float(prices[i])})
 
         if hours[i] in BLOCKED_HOURS:
             i += 1
             continue
-
         if (i - TICK_COUNT) % SAMPLE_EVERY != 0:
             i += 1
             continue
-
         avg = avgs[i]
         if np.isnan(avg) or avg >= CALM_THRESH:
             i += 1
@@ -535,29 +584,52 @@ def _collect_day_outcomes(
             i += 1
             continue
 
-        # ── Barreira PER-TICK ────────────────────────────────────────
+        # Score do sinal
+        actual_score = score
+        total_signals += 1
+
+        # Entry idx com slippage
         entry_idx = i + SLIPPAGE
-        if entry_idx >= len(prices) - WIN_TICKS:
+        if entry_idx >= len(prices) - max_wt:
             i += 1
             continue
 
-        is_win = True
-        hold = WIN_TICKS + SLIPPAGE
-        for j in range(1, WIN_TICKS + 1):
+        # Verifica outcome para cada (TP, score) combo
+        # Checa per-tick barrier para diferentes durações
+        max_hold = max_wt
+        barrier_hit_at = None  # tick onde a barreira foi atingida
+        for j in range(1, max_hold + 1):
             prev_idx = entry_idx + j - 1
             curr_idx = entry_idx + j
             if curr_idx >= len(prices):
-                is_win = False
-                hold = SLIPPAGE + j
+                barrier_hit_at = j
                 break
             tick_move = abs(prices[curr_idx] - prices[prev_idx]) / prices[prev_idx]
             if tick_move >= PER_TICK_BARRIER:
-                is_win = False
-                hold = SLIPPAGE + j
+                barrier_hit_at = j
                 break
 
-        outcomes.append(is_win)
-        i += hold + SOROS_COOLDOWN
+        # Para cada config, determina WIN/LOSS baseado no win_ticks e score
+        best_hold = 0
+        for c in STRATEGY_CONFIGS:
+            wt = tp_to_wt[c["tp"]]
+            if actual_score < c["score"]:
+                continue  # score insuficiente para esta config
+            if barrier_hit_at is not None and barrier_hit_at <= wt:
+                outcomes[c["name"]].append(False)  # LOSS
+            else:
+                outcomes[c["name"]].append(True)  # WIN
+            best_hold = max(best_hold, wt)
+
+        i += (
+            (
+                barrier_hit_at
+                if barrier_hit_at and barrier_hit_at <= best_hold
+                else best_hold
+            )
+            + SLIPPAGE
+            + SOROS_COOLDOWN
+        )
 
     elapsed = round(time.time() - t0, 1)
     return outcomes, elapsed
@@ -572,26 +644,25 @@ def _sim_day_multi(
     t_global: float | None = None,
 ) -> dict:
     """Simula um dia com TODAS as estratégias. Retorna resultados comparativos."""
-    outcomes, elapsed = _collect_day_outcomes(day, day_df, state, out_path, t_global)
+    all_outcomes, elapsed = _collect_day_outcomes(
+        day, day_df, state, out_path, t_global
+    )
 
-    w = sum(outcomes)
-    total = len(outcomes)
     day_result = {
         "date": day.isoformat(),
-        "total_signals": total,
-        "signal_wins": w,
-        "signal_losses": total - w,
-        "signal_wr": round(w / total * 100, 1) if total else 0.0,
         "elapsed_s": elapsed,
         "strategies": {},
     }
 
-    for strat in STRATEGY_NAMES:
-        bal = balances.get(strat, 50.0)
-        r = _replay_strategy(outcomes, strat, bal)
+    for c in STRATEGY_CONFIGS:
+        name = c["name"]
+        oc = all_outcomes.get(name, [])
+        bal = balances.get(name, 50.0)
+        r = _replay_strategy(oc, c, bal)
         r["start_balance"] = round(bal, 2)
-        day_result["strategies"][strat] = r
-        balances[strat] = r["balance"]
+        r["signal_wr"] = round(sum(oc) / len(oc) * 100, 1) if oc else 0.0
+        day_result["strategies"][name] = r
+        balances[name] = r["balance"]
 
     return day_result
 
