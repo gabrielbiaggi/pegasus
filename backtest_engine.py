@@ -56,12 +56,13 @@ SAMPLE_EVERY = 60
 TICK_COUNT = int(os.getenv("TICK_COUNT", "100"))
 CALM_MIN_SCORE = int(os.getenv("CALM_ACCU_MIN_SCORE", "20"))
 
-# ── Simulação de barreira REAL (idêntica ao shadow_collect) ─────────────────
-# O bot real perde quando o preço se afasta ± barrier_pct do PREÇO DE ENTRADA
-# (não por retorno per-tick). A barreira é estimada como ATR × multiplicador.
-_ATR_MULT = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_ATR_MULTIPLIER", "5.0"))
-_BAR_MIN = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_MIN_PERCENT", "0.03")) / 100.0
-_BAR_MAX = float(os.getenv("ACCUMULATOR_SHADOW_BARRIER_MAX_PERCENT", "0.10")) / 100.0
+# ── Simulação de barreira REAL (per-tick, idêntica ao Accumulator da Deriv) ───────
+# A Deriv recalcula a barreira A CADA TICK: o preço não pode mover mais que
+# ±barrier_pct do tick ANTERIOR. Não é cumulativo desde a entrada.
+# P50 real do shadow_ticks: 0.000245% = 0.00000245 ratio.
+# Usamos 0.0000025 como padrão (calibrado para WR ~76% em dados reais,
+# que com o calm filter do bot chega a ~80-83%).
+PER_TICK_BARRIER = float(os.getenv("BACKTEST_PER_TICK_BARRIER", "0.0000025"))
 SLIPPAGE = 1  # 1 tick de delay de execução (latência do bot real)
 
 # WIN_TICKS: quantos ticks para atingir TP (30% com 3%/tick = 9 ticks)
@@ -417,32 +418,28 @@ def _sim_day(
             i += SAMPLE_EVERY
             continue
 
-        # ── Barreira REAL: idêntica ao shadow_collect / Deriv ────────────────
-        # A barreira mede o afastamento acumulado do PREÇO DE ENTRADA,
-        # não o retorno per-tick. Estimamos com ATR do momento da entrada.
-        # (row já definido no quality gate acima)
-        tick_atr = float(row.get("tick_atr_percent", 0) or 0)
-        if tick_atr <= 0:
-            tick_atr = _BAR_MIN * 100  # fallback: barrier mínima
-        barrier_pct = max(_BAR_MIN, min(_BAR_MAX, tick_atr / 100.0 * _ATR_MULT))
+        # ── Barreira PER-TICK: idêntica ao Accumulator da Deriv ─────────────
+        # A cada tick, a Deriv verifica: |price[t+1] - price[t]| / price[t] < barrier
+        # Se qualquer tick exceder a barreira → contrato nocauteado → LOSS.
+        # Se sobreviver WIN_TICKS ticks → acumulou TP% → WIN.
 
         # Slippage: contrato abre no tick i+SLIPPAGE (delay de execução)
         entry_idx = i + SLIPPAGE
         if entry_idx >= len(prices) - WIN_TICKS:
             i += 1
             continue
-        entry_price = prices[entry_idx]
 
-        # Simula WIN_TICKS ticks a partir da entrada
+        # Simula WIN_TICKS ticks — check per-tick
         profit = -stake
         is_win = False
         hold = WIN_TICKS + SLIPPAGE  # assume perda por padrão
         for j in range(1, WIN_TICKS + 1):
-            check_idx = entry_idx + j
-            if check_idx >= len(prices):
-                break  # sem dados suficientes → LOSS
-            move = abs(prices[check_idx] - entry_price) / entry_price
-            if move >= barrier_pct:
+            prev_idx = entry_idx + j - 1
+            curr_idx = entry_idx + j
+            if curr_idx >= len(prices):
+                break  # sem dados → LOSS
+            tick_move = abs(prices[curr_idx] - prices[prev_idx]) / prices[prev_idx]
+            if tick_move >= PER_TICK_BARRIER:
                 # Barreira atingida → LOSS (exatamente como Deriv)
                 hold = SLIPPAGE + j
                 break
