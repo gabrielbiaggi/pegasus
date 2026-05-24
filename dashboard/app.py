@@ -979,7 +979,7 @@ def api_backtest(response: Response):
     TS = 0.30
     TL = 0.05
     N_DAYS = 14
-    N_PATHS = 2000
+    N_PATHS = 500  # reduzido para resposta rapida (<2s)
 
     WR_SCENARIOS = [(0.83, 0.03), (0.79, 0.03), (0.70, 0.04)]
     SC_PROBS = [0.40, 0.40, 0.20]
