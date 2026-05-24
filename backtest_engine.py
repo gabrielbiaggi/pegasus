@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).parent))
 from strategy import (
     AccumulatorStrategyConfig,
+    EnsembleScorer,
     calculate_tick_indicators,
     generate_calm_accu_signal,
 )
@@ -116,6 +117,25 @@ accu_cfg = AccumulatorStrategyConfig(
     ensemble_min_prob=0.294,
     calm_min_score=CALM_MIN_SCORE,
 )
+
+# ── XGBoost EnsembleScorer: filtra sinais ruins (idêntico ao bot real) ─────────
+_ensemble_scorer: EnsembleScorer | None = None
+try:
+    _model_path = Path(__file__).parent / "models" / "pegasus_xgb_v1.json"
+    _feat_path = Path(__file__).parent / "models" / "pegasus_features_v1.json"
+    if _model_path.exists() and _feat_path.exists():
+        _ensemble_scorer = EnsembleScorer(
+            model_path=str(_model_path),
+            features_path=str(_feat_path),
+        )
+        print(f"  XGBoost EnsembleScorer carregado OK", flush=True)
+    else:
+        print(f"  XGBoost modelo nao encontrado, backtest sem filtro ML", flush=True)
+except Exception as _e:
+    print(f"  XGBoost nao carregou: {_e}", flush=True)
+    _ensemble_scorer = None
+
+ENSEMBLE_MIN_PROB = float(os.getenv("ENSEMBLE_MIN_PROB", "0.294"))
 
 
 # ── Download automático de ticks ─────────────────────────────────────────────────────────────
@@ -486,7 +506,7 @@ def _collect_day_outcomes(
                 lookback=10,
                 df=df_ind,
                 config=accu_cfg,
-                ensemble_scorer=None,
+                ensemble_scorer=_ensemble_scorer,
             )
         except Exception:
             i += 1
@@ -495,6 +515,12 @@ def _collect_day_outcomes(
         if signal != "ACCU":
             i += 1
             continue
+
+        # XGBoost P(LOSS) filter — idêntico ao bot real
+        if _ensemble_scorer is not None and p_loss is not None:
+            if p_loss > ENSEMBLE_MIN_PROB:
+                i += 1
+                continue  # sinal fraco, pula
 
         row = df_ind.iloc[-1]
         cusum_v = float(row.get("cusum_score", 0) or 0)
