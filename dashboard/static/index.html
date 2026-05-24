@@ -2091,12 +2091,52 @@
               <button class="btn btn-outline" id="bt-stop-btn" onclick="stopBacktest()" style="display:none">&#x25a0; Parar</button>
               <span id="bt-status-badge" style="font-size:.72rem;color:var(--muted)"></span>
             </div>
-            <!-- Progress bar -->
-            <div id="bt-progress-wrap" style="display:none;margin-bottom:12px">
-              <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
-                <div id="bt-progress-bar" style="height:100%;background:var(--purple);width:0%;transition:width .5s"></div>
+            <!-- Painel live de progresso -->
+            <div id="bt-live-wrap" style="display:none;margin-bottom:14px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+              <!-- Barra geral: dias -->
+              <div style="height:8px;background:var(--bg3);position:relative">
+                <div id="bt-progress-bar" style="height:100%;background:var(--purple);width:0%;transition:width 1s"></div>
               </div>
-              <div id="bt-progress-txt" style="font-size:.7rem;color:var(--muted);margin-top:4px"></div>
+              <div style="padding:12px;background:var(--bg2)">
+                <!-- Linha 1: dia atual + elapsed -->
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <span style="font-size:.8rem;font-weight:600" id="bt-live-day">&mdash;</span>
+                  <span style="font-size:.72rem;color:var(--muted)" id="bt-live-elapsed">&mdash;</span>
+                </div>
+                <!-- Barra intra-dia: ticks -->
+                <div id="bt-day-prog-wrap" style="margin-bottom:8px">
+                  <div style="height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:3px">
+                    <div id="bt-day-progress-bar" style="height:100%;background:var(--blue);width:0%;transition:width 1s"></div>
+                  </div>
+                  <div style="font-size:.67rem;color:var(--muted)" id="bt-day-progress-txt">&mdash;</div>
+                </div>
+                <!-- Stats em tempo real do dia atual -->
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
+                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
+                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">TRADES</div>
+                    <div style="font-size:.95rem;font-weight:700;color:var(--blue)" id="bt-live-trades">0</div>
+                  </div>
+                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
+                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">WIN RATE</div>
+                    <div style="font-size:.95rem;font-weight:700;color:var(--green)" id="bt-live-wr">&mdash;</div>
+                  </div>
+                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
+                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">P&amp;L DIA</div>
+                    <div style="font-size:.95rem;font-weight:700" id="bt-live-pnl">&mdash;</div>
+                  </div>
+                  <div style="text-align:center;padding:4px;background:var(--bg3);border-radius:4px">
+                    <div style="font-size:.6rem;color:var(--muted);margin-bottom:2px">SALDO</div>
+                    <div style="font-size:.95rem;font-weight:700;color:var(--cyan)" id="bt-live-bal">&mdash;</div>
+                  </div>
+                </div>
+                <!-- Rodapé: staleness + ETA -->
+                <div style="display:flex;justify-content:space-between;font-size:.68rem">
+                  <span id="bt-stale-warn" style="color:var(--muted)"></span>
+                  <span id="bt-eta" style="color:var(--muted)"></span>
+                </div>
+                <!-- Status de download -->
+                <div id="bt-dl-status" style="display:none;font-size:.72rem;color:var(--blue);margin-top:5px;padding:4px 8px;background:rgba(100,149,237,.1);border-radius:4px"></div>
+              </div>
             </div>
             <!-- Resumo cards -->
             <div class="session-cards" style="margin-bottom:12px" id="bt-summary-cards" style="display:none"></div>
@@ -4041,64 +4081,142 @@
                     var d = await fetch('/api/backtest/status').then(function(r){return r.json();});
                     var status = d.status || 'idle';
                     var badge = $('bt-status-badge'), btn=$('bt-run-btn'), sbtn=$('bt-stop-btn');
-                    var pw=$('bt-progress-wrap'), pb=$('bt-progress-bar'), pt=$('bt-progress-txt');
+                    var lw=$('bt-live-wrap'), pb=$('bt-progress-bar');
 
                     if(status==='running'){
                         if(btn) btn.style.display='none';
                         if(sbtn) sbtn.style.display='inline-flex';
-                        if(pw) pw.style.display='block';
-                        var results=d.results||[]; var total=Math.max(d.total_days||1,1);
-                        var pct=Math.round(results.length/total*100);
-                        if(pb) pb.style.width=pct+'%';
-                        // Mostra status de download se estiver baixando ticks
-                        var progressTxt;
-                        if(d.download_status) {
-                            progressTxt = '&#x1f4e5; ' + d.download_status;
+                        if(lw) lw.style.display='block';
+
+                        var results = d.results||[];
+                        var total   = Math.max(d.total_days||1,1);
+                        var daysDone = results.length;
+                        var pct     = Math.round(daysDone/total*100);
+
+                        // Barra geral (dias)
+                        if(pb){ pb.style.width=pct+'%'; pb.style.background='var(--purple)'; }
+
+                        // === Download de ticks em andamento ===
+                        var dlEl=$('bt-dl-status');
+                        if(d.download_status){
+                            if(dlEl){dlEl.style.display='block'; dlEl.textContent='\u1f4e5 '+d.download_status;}
                             if(pb) pb.style.background='var(--blue)';
+                            if(badge) badge.textContent='\u23eb Baixando ticks...';
                         } else {
-                            progressTxt = '&#x23f3; Dia '+d.current_day+' ('+results.length+'/'+total+') — '+Math.round(d.elapsed_s||0)+'s';
-                            if(pb) pb.style.background='var(--purple)';
+                            if(dlEl) dlEl.style.display='none';
                         }
-                        if(pt) pt.innerHTML=progressTxt;
+
+                        // === Linha superior: dia + elapsed ===
+                        var elapsed = d.elapsed_s||0;
+                        var lday=$('bt-live-day'), lel=$('bt-live-elapsed');
+                        if(lday) lday.innerHTML='<b>'+d.current_day+'</b>&nbsp;<span style="font-weight:400;color:var(--muted);font-size:.72rem">'+daysDone+'/'+total+' dias</span>';
+                        if(lel)  lel.textContent=_fmtTime(elapsed);
+
+                        // === Progresso intra-dia (day_progress do engine) ===
+                        var dp = d.day_progress;
+                        var dpBar=$('bt-day-progress-bar'), dpTxt=$('bt-day-progress-txt');
+                        if(dp){
+                            if(dpBar) dpBar.style.width=dp.pct+'%';
+                            if(dpTxt) dpTxt.innerHTML=
+                                '&#x23f3; Ticks '+dp.ticks_done.toLocaleString()+'/'+dp.ticks_total.toLocaleString()
+                                +' &bull; '+dp.pct+'% &bull; '+_fmtTime(dp.elapsed_day_s)+' no dia';
+
+                            // Stat cards ao vivo
+                            var ltr=$('bt-live-trades'), lwr=$('bt-live-wr');
+                            var lpnl=$('bt-live-pnl'), lbal=$('bt-live-bal');
+                            if(ltr) ltr.textContent=dp.trades;
+                            if(lwr){
+                                lwr.textContent=dp.trades>0?dp.wr.toFixed(1)+'%':'&mdash;';
+                                lwr.style.color=dp.wr>=90?'var(--green)':dp.wr>=70?'var(--yellow)':'var(--red)';
+                            }
+                            if(lpnl){
+                                lpnl.textContent=(dp.pnl>=0?'+':'')+dp.pnl.toFixed(2);
+                                lpnl.style.color=dp.pnl>=0?'var(--green)':'var(--red)';
+                            }
+                            if(lbal){
+                                lbal.textContent='$'+dp.bal.toFixed(2);
+                                lbal.style.color=dp.bal>=(d.start_balance||50)?'var(--cyan)':'var(--red)';
+                            }
+                        } else {
+                            // Sem progresso intra-dia ainda (fase de download ou iniío)
+                            if(dpBar) dpBar.style.width='0%';
+                            if(dpTxt) dpTxt.textContent='Aguardando simulação...';
+                        }
+
+                        // === Staleness: quanto tempo desde o último update ===
+                        var stale=$('bt-stale-warn'), eta=$('bt-eta');
+                        if(d.last_update){
+                            var ago = Math.round(Date.now()/1000 - d.last_update);
+                            if(stale){
+                                if(ago>20) stale.innerHTML='&#x26a0;&#xfe0f; última atualização '+ago+'s atrás';
+                                else       stale.innerHTML='&#x1f7e2; atualizado '+ago+'s atrás';
+                                stale.style.color=ago>20?'var(--yellow)':'var(--muted)';
+                            }
+                        }
+                        // === ETA ===
+                        if(eta && daysDone>0 && elapsed>0){
+                            var secPerDay = elapsed/daysDone;
+                            var remaining = (total-daysDone)*secPerDay;
+                            eta.textContent='ETA: ~'+_fmtTime(remaining);
+                        }
+
                         if(badge) badge.textContent='Rodando '+pct+'%';
+
                     } else {
+                        // Terminado ou idle
                         if(_btPollTimer){clearInterval(_btPollTimer);_btPollTimer=null;}
                         if(btn) btn.style.display='inline-flex';
                         if(sbtn) sbtn.style.display='none';
-                        if(pw && status!=='done') pw.style.display='none';
-                        if(pb){pb.style.width='100%';pb.style.background='var(--purple)';}
-                        if(badge) badge.textContent = status==='done'?'✅ Concluído':status==='idle'?'':status;
+                        if(lw && status==='idle') lw.style.display='none';
+                        if(lw && status==='done') lw.style.display='block';
+                        if(pb){pb.style.width='100%';pb.style.background='var(--green)';}
+                        // Oculta barra intra-dia quando terminar
+                        var dpw=$('bt-day-prog-wrap'); if(dpw) dpw.style.display='none';
+                        var stale=$('bt-stale-warn'); if(stale) stale.textContent='';
+                        var eta=$('bt-eta'); if(eta) eta.textContent='';
+                        if(badge) badge.innerHTML = status==='done'
+                            ? '&#x2705; Concluído em '+_fmtTime(d.elapsed_s||0)
+                            : status==='idle'?'':status;
                     }
 
-                    // Atualiza tabela e cards com os resultados disponíveis
+                    // === Tabela + Cards de resumo ===
                     var results = d.results || [];
                     if(results.length===0) return;
 
-                    // Cards resumo
                     var nd=results.filter(function(r){return r.doubled;}).length;
                     var np=results.filter(function(r){return r.pnl>0;}).length;
                     var aw=results.reduce(function(a,r){return a+r.wr;},0)/results.length;
-                    var lastBal=results[results.length-1].balance||d.start_balance;
+                    var lastBal = d.current_balance || (results.length?results[results.length-1].balance:d.start_balance);
                     var sd=$('bt-days'),sd2=$('bt-doubled'),sp=$('bt-positive'),sw=$('bt-wr'),sf=$('bt-final-bal');
-                    if(sd) sd.textContent=results.length;
-                    if(sd2){sd2.textContent=nd+'/'+results.length;sd2.className='card-value '+(nd/results.length>=0.3?'green':'yellow');}
-                    if(sp){sp.textContent=np+'/'+results.length;sp.className='card-value '+(np/results.length>=0.7?'green':'yellow');}
-                    if(sw) sw.textContent=aw.toFixed(1)+'%';
-                    if(sf){sf.textContent='$'+lastBal.toFixed(2);sf.className='card-value '+(lastBal>=(d.start_balance||50)?'green':'red');}
+                    if(sd)  sd.textContent=results.length+(status==='running'?'/'+Math.max(d.total_days||1,1):'');
+                    if(sd2){sd2.textContent=nd+'/'+results.length; sd2.className='card-value '+(nd/results.length>=0.3?'green':'yellow');}
+                    if(sp) {sp.textContent=np+'/'+results.length; sp.className='card-value '+(np/results.length>=0.7?'green':'yellow');}
+                    if(sw)  sw.textContent=aw.toFixed(1)+'%';
+                    if(sf) {sf.textContent='$'+lastBal.toFixed(2); sf.className='card-value '+(lastBal>=(d.start_balance||50)?'green':'red');}
 
-                    // Tabela de resultados
                     var tb=$('bt-real-tbody'); if(!tb) return;
                     tb.innerHTML=results.map(function(r){
-                        var flag=r.doubled?'&#x1f3af;':r.trailing?'&#x1f512; +'+Math.round(r.pnl/(r.balance-r.pnl+r.pnl)*100)+'%':r.pnl>0?'&#x2705;':'&#x274c;';
-                        var cls=r.wr>=95?'win':r.wr>=80?'':'loss';
-                        return '<tr><td>'+r.date+'</td><td>'+r.trades+'</td>'
-                            +'<td class="'+cls+'">'+r.wr.toFixed(1)+'%</td>'
-                            +'<td class="'+(r.pnl>0?'win':'loss')+'">'+(r.pnl>=0?'+':'')+r.pnl.toFixed(2)+'</td>'
+                        var flag=r.doubled?'&#x1f3af; dobrou':r.trailing?'&#x1f512; trailing':r.pnl>0?'&#x2705;':'&#x274c;';
+                        var wrCls=r.wr>=95?'win':r.wr<70?'loss':'';
+                        var pnlCls=r.pnl>0?'win':'loss';
+                        return '<tr>'
+                            +'<td>'+r.date+'</td>'
+                            +'<td>'+r.trades+'</td>'
+                            +'<td class="'+wrCls+'">'+r.wr.toFixed(1)+'%</td>'
+                            +'<td class="'+pnlCls+'">'+(r.pnl>=0?'+':'')+r.pnl.toFixed(2)+'</td>'
                             +'<td style="font-weight:600">$'+r.balance.toFixed(2)+'</td>'
-                            +'<td>'+(r.peak_pct?'+'+r.peak_pct.toFixed(1)+'%':'—')+'</td>'
+                            +'<td>'+(r.peak_pct!=null?'+'+r.peak_pct.toFixed(1)+'%':'&mdash;')+'</td>'
                             +'<td>'+flag+'</td></tr>';
                     }).join('');
-                } catch(e){}
+                } catch(e){ console.warn('pollBacktestStatus err:',e); }
+            }
+
+            // Formata segundos como '1m 23s' ou '45s'
+            function _fmtTime(s){
+                s=Math.max(0,Math.round(s||0));
+                if(s<60) return s+'s';
+                var m=Math.floor(s/60); var ss=s%60;
+                return m+'m '+(ss<10?'0':'')+ss+'s';
             }
             /* ---- Init & Polling ---- */
             fetchStatus();

@@ -231,6 +231,7 @@ def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> 
 
 def _write_state(out_path: Path, state: dict) -> None:
     """Salva estado incremental com escrita atômica via arquivo temporário."""
+    state["last_update"] = round(time.time(), 3)  # timestamp para detectar staleness
     tmp = out_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, default=str))
     tmp.replace(out_path)
@@ -273,14 +274,27 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     return df
 
 
-def _sim_day(day: _date, day_df: pd.DataFrame, balance: float) -> dict:
-    """Simula um dia completo. Retorna dict com métricas."""
+def _sim_day(
+    day: _date,
+    day_df: pd.DataFrame,
+    balance: float,
+    state: dict | None = None,
+    out_path: Path | None = None,
+    t_global: float | None = None,
+) -> dict:
+    """Simula um dia completo. Retorna dict com métricas.
+    Escreve progresso intra-dia a cada ~5s se state+out_path forem fornecidos.
+    """
     t0 = time.time()
+    t_last_progress = t0
+    PROGRESS_INTERVAL = 5.0  # escreve progresso a cada 5 segundos
+
     prices = day_df["quote"].values
     hours = day_df["hour"].values
     avgs = day_df["avg_ret"].values
     booms = day_df["boom"].values
     epochs = day_df["epoch"].values
+    total_ticks = len(day_df)
 
     tick_buf: deque = deque(maxlen=TICK_COUNT)
     for w in range(min(TICK_COUNT, len(day_df))):
@@ -296,6 +310,30 @@ def _sim_day(day: _date, day_df: pd.DataFrame, balance: float) -> dict:
     i = TICK_COUNT
 
     while i < len(day_df) - MAX_HOLD - 1:
+        # Progresso intra-dia: escreve estado a cada PROGRESS_INTERVAL segundos
+        now = time.time()
+        if (
+            state is not None
+            and out_path is not None
+            and (now - t_last_progress) >= PROGRESS_INTERVAL
+        ):
+            total_tr = wins + losses
+            state["day_progress"] = {
+                "ticks_done": int(i),
+                "ticks_total": int(total_ticks),
+                "pct": round(i / total_ticks * 100, 1),
+                "trades": total_tr,
+                "wins": wins,
+                "losses": losses,
+                "wr": round(wins / total_tr * 100, 1) if total_tr else 0.0,
+                "bal": round(bal, 2),
+                "pnl": round(bal - sod, 2),
+                "elapsed_day_s": round(now - t0, 1),
+            }
+            if t_global is not None:
+                state["elapsed_s"] = round(now - t_global, 1)
+            _write_state(out_path, state)
+            t_last_progress = now
         # Adiciona tick ao buffer (sempre, para manter contexto contínuo)
         tick_buf.append({"epoch": int(epochs[i]), "quote": float(prices[i])})
 
@@ -499,9 +537,18 @@ def main() -> None:
             continue
 
         print(f"  {day}: simulando...", end=" ", flush=True)
-        result = _sim_day(day, day_df, balance)
+        result = _sim_day(
+            day,
+            day_df,
+            balance,
+            state=state,
+            out_path=out_path,
+            t_global=t_global,
+        )
         balance = result["balance"]
 
+        # Limpa progresso intra-dia ao concluir o dia
+        state.pop("day_progress", None)
         state["current_balance"] = balance
         state["results"].append(result)
 
