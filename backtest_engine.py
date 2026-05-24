@@ -328,6 +328,7 @@ def main() -> None:
         "current_balance": start_balance,
         "current_day": start_date.isoformat(),
         "elapsed_s": 0,
+        "total_days": len(days),
         "results": [],
         "summary": {},
     }
