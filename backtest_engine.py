@@ -333,14 +333,14 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # Score alto (30+) + TP alto + Soros = menos trades, mais lucro por trade
-    # Todas com SL 30%, SG 100%, Trailing 30%/5%
-    {"name": "TP80 s30 2%", "tp": 0.80, "score": 30, "mode": "pct2"},
-    {"name": "TP80 s30 1%", "tp": 0.80, "score": 30, "mode": "pct1"},
-    {"name": "TP100 s30 2%", "tp": 1.00, "score": 30, "mode": "pct2"},
-    {"name": "TP100 s30 1%", "tp": 1.00, "score": 30, "mode": "pct1"},
-    {"name": "TP150 s30 2%", "tp": 1.50, "score": 30, "mode": "pct2"},
-    {"name": "TP200 s30 2%", "tp": 2.00, "score": 30, "mode": "pct2"},
+    # Agressivo: score 30 + stake alto + Soros = dobrar em 24h
+    {"name": "TP80 5%", "tp": 0.80, "score": 30, "mode": "pct5"},
+    {"name": "TP80 10%", "tp": 0.80, "score": 30, "mode": "pct10"},
+    {"name": "TP100 5%", "tp": 1.00, "score": 30, "mode": "pct5"},
+    {"name": "TP100 10%", "tp": 1.00, "score": 30, "mode": "pct10"},
+    # Conservador pra comparar
+    {"name": "TP80 2%", "tp": 0.80, "score": 30, "mode": "pct2"},
+    {"name": "TP80 1%", "tp": 0.80, "score": 30, "mode": "pct1"},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -388,7 +388,11 @@ def _replay_strategy(
             break
 
         # Stake
-        if mode == "pct2":
+        if mode == "pct10":
+            stake = round(max(1.0, bal * 0.10), 2)
+        elif mode == "pct5":
+            stake = round(max(1.0, bal * 0.05), 2)
+        elif mode == "pct2":
             stake = round(max(1.0, bal * 0.02), 2)
         elif mode == "pct1":
             stake = round(max(1.0, bal * 0.01), 2)
