@@ -836,31 +836,15 @@ class RiskManager:
 
         _now = time.monotonic()
 
-        # ── WR STOP: para de operar se WR cair abaixo de 70% após 20+ trades ──
-        # Protege contra dias ruins onde o mercado está desfavorável.
-        if self.trades_today >= 20 and self.wins > 0:
-            current_wr = self.wins / self.trades_today
-            if current_wr < 0.70:
-                if _now - getattr(self, "_log_ts_wr_stop", 0) >= 300:
-                    logger.warning(
-                        "\u26d4 WR STOP: WR=%.1f%% (%d/%d) abaixo de 70%% após 20 trades — parando o dia",
-                        current_wr * 100,
-                        self.wins,
-                        self.trades_today,
-                    )
-                    self._log_ts_wr_stop = _now
-                return False
+        # ── WR STOP: DESATIVADO — bot roda livre sem travas ──
+        # if self.trades_today >= 20 and self.wins > 0:
+        #     ...
 
-        # ── COOLDOWN 3 LOSSES: pausa após 3 perdas consecutivas ──
-        if self.consecutive_losses >= 3:
-            if _now - getattr(self, "_log_ts_consec_cool", 0) >= 60:
-                logger.warning(
-                    "\u23f8\ufe0f Cooldown: %d losses consecutivos — pulando sinais por 30s",
-                    self.consecutive_losses,
-                )
-                self._log_ts_consec_cool = _now
-            # Não retorna False — apenas loga. O bot vai pular sinais no loop principal.
-            # O consecutive_losses reseta no próximo WIN via update().
+        # ── COOLDOWN 3 LOSSES: DESATIVADO — bot roda livre ──
+        # if self.consecutive_losses >= 3:
+        # ── COOLDOWN 3 LOSSES: DESATIVADO — bot roda livre ──
+        # if self.consecutive_losses >= 3:
+        #     ...
 
         # Balance floor NÃO bloqueia operação normal.
         # Regra do usuário: somente STOP_LOSS/STOP_GAIN podem parar o bot.

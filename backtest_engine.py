@@ -333,13 +333,14 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # Todas com: SL 30%, SG 100% (dobrar), Trailing start 30% lock 5%
-    {"name": "TP50 2%", "tp": 0.50, "score": 20, "mode": "pct2"},
-    {"name": "TP50 1%", "tp": 0.50, "score": 20, "mode": "pct1"},
-    {"name": "TP80 2%", "tp": 0.80, "score": 20, "mode": "pct2"},
-    {"name": "TP80 1%", "tp": 0.80, "score": 20, "mode": "pct1"},
-    {"name": "TP100 2%", "tp": 1.00, "score": 20, "mode": "pct2"},
-    {"name": "TP100 1%", "tp": 1.00, "score": 20, "mode": "pct1"},
+    # Score alto (30+) + TP alto + Soros = menos trades, mais lucro por trade
+    # Todas com SL 30%, SG 100%, Trailing 30%/5%
+    {"name": "TP80 s30 2%", "tp": 0.80, "score": 30, "mode": "pct2"},
+    {"name": "TP80 s30 1%", "tp": 0.80, "score": 30, "mode": "pct1"},
+    {"name": "TP100 s30 2%", "tp": 1.00, "score": 30, "mode": "pct2"},
+    {"name": "TP100 s30 1%", "tp": 1.00, "score": 30, "mode": "pct1"},
+    {"name": "TP150 s30 2%", "tp": 1.50, "score": 30, "mode": "pct2"},
+    {"name": "TP200 s30 2%", "tp": 2.00, "score": 30, "mode": "pct2"},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -350,50 +351,50 @@ def _replay_strategy(
     config: dict,
     start_balance: float,
 ) -> dict:
-    """Replay WIN/LOSS com SL 30%, SG 100%, Trailing 30%/5% SEMPRE."""
+    """Replay WIN/LOSS com SL 30%, SG 100%, Trailing com PISO ACUMULADO."""
     tp_pct = config["tp"]
     mode = config["mode"]
     base = STAKE
     bal = start_balance
-    sod = bal  # start of day
-    peak_pnl = 0.0  # pico de lucro no dia
+    sod = bal
+    peak_pnl = 0.0
     wins = losses = 0
     trail_active = False
     stop_reason = None
 
     for is_win in outcomes:
-        if bal < 0.35:
+        if bal < 1.0:
             stop_reason = "BUST"
             break
 
-        # === STOP LOSS 30%: protege capital ===
+        # SL 30%: protege capital
         pnl = bal - sod
         if pnl <= -(sod * DAILY_SL_PCT):
             stop_reason = "SL"
             break
 
-        # === STOP GAIN 100%: dobrou a banca, para ===
+        # SG 100%: dobrou a banca
         if pnl >= sod * STOP_GAIN:
             stop_reason = "DOBROU"
             break
 
-        # === TRAILING: preserva lucro no pico ===
+        # TRAILING: preserva pico de lucro
         if pnl > peak_pnl:
             peak_pnl = pnl
         if not trail_active and pnl >= sod * TRAILING_S:
             trail_active = True
-        if trail_active and pnl <= sod * TRAILING_L:
+        if trail_active and pnl <= peak_pnl * 0.5:  # trava 50% do pico
             stop_reason = "TRAIL"
             break
 
-        # Calcula stake
+        # Stake
         if mode == "pct2":
-            stake = round(max(0.35, bal * 0.02), 2)
+            stake = round(max(1.0, bal * 0.02), 2)
         elif mode == "pct1":
-            stake = round(max(0.35, bal * 0.01), 2)
+            stake = round(max(1.0, bal * 0.01), 2)
         else:
             stake = base
-        stake = round(max(0.35, min(stake, bal)), 2)
+        stake = round(max(1.0, min(stake, bal)), 2)
 
         if is_win:
             profit = round(stake * tp_pct, 2)
@@ -405,18 +406,17 @@ def _replay_strategy(
         bal = round(bal + profit, 2)
 
     total = wins + losses
-    final_pnl = round(bal - sod, 2)
     return {
         "trades": total,
         "wins": wins,
         "losses": losses,
         "wr": round(wins / total * 100, 1) if total else 0.0,
-        "pnl": final_pnl,
+        "pnl": round(bal - sod, 2),
         "balance": round(bal, 2),
         "peak_pnl": round(peak_pnl, 2),
         "doubled": stop_reason == "DOBROU",
         "trailing": stop_reason == "TRAIL",
-        "busted": bal < 0.35,
+        "busted": bal < 1.0,
         "stop": stop_reason or "",
     }
 
