@@ -1080,6 +1080,15 @@
             <div class="ctrl-row">
                 <div class="param-row">
                     Stake:
+                    <label class="toggle" style="margin-right: 4px;">
+                        <input
+                            type="checkbox"
+                            id="tog-stake-pct"
+                            onchange="onToggleChange(this, 'inp-stake', 'inp-stake-val')"
+                        />
+                        <span class="slider"></span>
+                    </label>
+                    <span style="font-size: 0.75rem; color: var(--dim); margin-right: 4px;">%</span>
                     <input
                         type="number"
                         id="inp-stake"
@@ -1087,16 +1096,8 @@
                         max="10"
                         step="0.1"
                         value="0.7"
+                        style="width: 50px;"
                         title="% da banca"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById('inp-stake-val').disabled =
-                                true;
-                            document.getElementById(
-                                'inp-stake-val',
-                            ).style.opacity = '0.5';
-                        "
                     />% <span style="color: var(--dim)">ou</span> $<input
                         type="number"
                         id="inp-stake-val"
@@ -1105,14 +1106,6 @@
                         step="0.01"
                         value=""
                         style="width: 72px"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById('inp-stake').disabled =
-                                true;
-                            document.getElementById('inp-stake').style.opacity =
-                                '0.5';
-                        "
                     />
                     <button class="btn btn-blue" onclick="setStake()">
                         OK
@@ -1121,6 +1114,15 @@
                 <span class="sep">|</span>
                 <div class="param-row">
                     SL:
+                    <label class="toggle" style="margin-right: 4px;">
+                        <input
+                            type="checkbox"
+                            id="tog-sl-pct"
+                            onchange="onToggleChange(this, 'inp-stoploss', 'inp-stoploss-val')"
+                        />
+                        <span class="slider"></span>
+                    </label>
+                    <span style="font-size: 0.75rem; color: var(--dim); margin-right: 4px;">%</span>
                     <input
                         type="number"
                         id="inp-stoploss"
@@ -1129,16 +1131,6 @@
                         step="0.5"
                         value="5"
                         style="width: 50px"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById(
-                                'inp-stoploss-val',
-                            ).disabled = true;
-                            document.getElementById(
-                                'inp-stoploss-val',
-                            ).style.opacity = '0.5';
-                        "
                     />% <span style="color: var(--dim)">ou</span> $<input
                         type="number"
                         id="inp-stoploss-val"
@@ -1147,17 +1139,17 @@
                         step="1"
                         value=""
                         style="width: 72px"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById('inp-stoploss').disabled =
-                                true;
-                            document.getElementById(
-                                'inp-stoploss',
-                            ).style.opacity = '0.5';
-                        "
                     />
                     SG:
+                    <label class="toggle" style="margin-right: 4px; margin-left: 8px;">
+                        <input
+                            type="checkbox"
+                            id="tog-sg-pct"
+                            onchange="onToggleChange(this, 'inp-stopgain', 'inp-stopgain-val')"
+                        />
+                        <span class="slider"></span>
+                    </label>
+                    <span style="font-size: 0.75rem; color: var(--dim); margin-right: 4px;">%</span>
                     <input
                         type="number"
                         id="inp-stopgain"
@@ -1166,16 +1158,6 @@
                         step="0.5"
                         value="10"
                         style="width: 50px"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById(
-                                'inp-stopgain-val',
-                            ).disabled = true;
-                            document.getElementById(
-                                'inp-stopgain-val',
-                            ).style.opacity = '0.5';
-                        "
                     />% <span style="color: var(--dim)">ou</span> $<input
                         type="number"
                         id="inp-stopgain-val"
@@ -1184,15 +1166,6 @@
                         step="1"
                         value=""
                         style="width: 72px"
-                        onfocus="
-                            this.disabled = false;
-                            this.style.opacity = '1';
-                            document.getElementById('inp-stopgain').disabled =
-                                true;
-                            document.getElementById(
-                                'inp-stopgain',
-                            ).style.opacity = '0.5';
-                        "
                     />
                     <button class="btn btn-blue" onclick="setStops()">
                         OK
@@ -2799,79 +2772,98 @@
                     sel.value = prev;
                 }
             }
+            function onToggleChange(tog, pctId, valId) {
+                var pctEl = $(pctId);
+                var valEl = $(valId);
+                if (tog.checked) {
+                    pctEl.disabled = false;
+                    pctEl.style.opacity = "1";
+                    valEl.disabled = true;
+                    valEl.style.opacity = "0.5";
+                } else {
+                    pctEl.disabled = true;
+                    pctEl.style.opacity = "0.5";
+                    valEl.disabled = false;
+                    valEl.style.opacity = "1";
+                }
+            }
             async function setStake() {
+                var tog = $("tog-stake-pct");
                 var pE = $("inp-stake"),
                     vE = $("inp-stake-val"),
                     pct = parseFloat(pE.value),
                     val = parseFloat(vE.value);
-                if (!pE.disabled && !isNaN(pct) && pct >= 0.1 && pct <= 10) {
-                    try {
-                        await _postEnv(
-                            "DYNAMIC_STAKE_BASE_PCT",
-                            (pct / 100).toFixed(4),
-                        );
-                        toast(
-                            "Stake = " + pct.toFixed(1) + "% \u2714",
-                            "var(--green)",
-                        );
-                    } catch (e) {
-                        toast("Erro", "var(--red)");
+                if (tog.checked) {
+                    if (!isNaN(pct) && pct >= 0.1 && pct <= 10) {
+                        try {
+                            await _postEnv("DYNAMIC_STAKE_BASE_PCT", (pct / 100).toFixed(4));
+                            toast("Stake = " + pct.toFixed(1) + "% \u2714", "var(--green)");
+                        } catch (e) {
+                            toast("Erro", "var(--red)");
+                        }
+                    } else {
+                        toast("Valor de % inválido (0.1% a 10%)", "var(--red)");
                     }
-                    return;
-                }
-                if (!vE.disabled && !isNaN(val) && val >= 0.35) {
-                    try {
-                        await _postEnv("STAKE", val.toFixed(2));
-                        await _postEnv("DYNAMIC_STAKE_BASE_PCT", "0");
-                        toast(
-                            "Stake = $" + val.toFixed(2) + " \u2714",
-                            "var(--green)",
-                        );
-                    } catch (e) {
-                        toast("Erro", "var(--red)");
+                } else {
+                    if (!isNaN(val) && val >= 0.35) {
+                        try {
+                            await _postEnv("STAKE", val.toFixed(2));
+                            await _postEnv("DYNAMIC_STAKE_BASE_PCT", "0");
+                            toast("Stake = $" + val.toFixed(2) + " \u2714", "var(--green)");
+                        } catch (e) {
+                            toast("Erro", "var(--red)");
+                        }
+                    } else {
+                        toast("Valor fixo inválido (mínimo $0.35)", "var(--red)");
                     }
-                    return;
                 }
-                toast("Valor inv\u00e1lido", "var(--red)");
             }
             async function setStops() {
+                var slT = $("tog-sl-pct");
+                var sgT = $("tog-sg-pct");
                 var slP = parseFloat($("inp-stoploss").value),
                     slV = parseFloat($("inp-stoploss-val").value),
                     sgP = parseFloat($("inp-stopgain").value),
                     sgV = parseFloat($("inp-stopgain-val").value);
                 try {
-                    if (!isNaN(slV) && slV >= 1) {
-                        await _postEnv("MAX_LOSS_PER_DAY", slV.toFixed(2));
-                        await _postEnv("STOP_LOSS_PCT", "0");
-                    } else if (!isNaN(slP) && slP >= 0.1) {
-                        await _postEnv("STOP_LOSS_PCT", slP.toFixed(1));
-                        await _postEnv("MAX_LOSS_PER_DAY", "99999");
+                    if (slT.checked) {
+                        if (!isNaN(slP) && slP >= 0.1) {
+                            await _postEnv("STOP_LOSS_PCT", slP.toFixed(1));
+                            await _postEnv("MAX_LOSS_PER_DAY", "99999");
+                        } else {
+                            toast("SL % inválido", "var(--red)");
+                            return;
+                        }
                     } else {
-                        toast("SL inv\u00e1lido", "var(--red)");
-                        return;
+                        if (!isNaN(slV) && slV >= 1) {
+                            await _postEnv("MAX_LOSS_PER_DAY", slV.toFixed(2));
+                            await _postEnv("STOP_LOSS_PCT", "0");
+                        } else {
+                            toast("SL Fixo inválido", "var(--red)");
+                            return;
+                        }
                     }
-                    if (!isNaN(sgV) && sgV >= 1) {
-                        await _postEnv("MAX_PROFIT_PER_DAY", sgV.toFixed(2));
-                        await _postEnv("STOP_GAIN_PCT", "0");
-                    } else if (!isNaN(sgP) && sgP >= 0.1) {
-                        await _postEnv("STOP_GAIN_PCT", sgP.toFixed(1));
-                        await _postEnv("MAX_PROFIT_PER_DAY", "99999");
+
+                    if (sgT.checked) {
+                        if (!isNaN(sgP) && sgP >= 0.1) {
+                            await _postEnv("STOP_GAIN_PCT", sgP.toFixed(1));
+                            await _postEnv("MAX_PROFIT_PER_DAY", "99999");
+                        } else {
+                            toast("SG % inválido", "var(--red)");
+                            return;
+                        }
                     } else {
-                        toast("SG inv\u00e1lido", "var(--red)");
-                        return;
+                        if (!isNaN(sgV) && sgV >= 1) {
+                            await _postEnv("MAX_PROFIT_PER_DAY", sgV.toFixed(2));
+                            await _postEnv("STOP_GAIN_PCT", "0");
+                        } else {
+                            toast("SG Fixo inválido", "var(--red)");
+                            return;
+                        }
                     }
-                    var slMsg =
-                        !isNaN(slV) && slV >= 1
-                            ? "$" + slV.toFixed(0)
-                            : slP.toFixed(1) + "%";
-                    var sgMsg =
-                        !isNaN(sgV) && sgV >= 1
-                            ? "$" + sgV.toFixed(0)
-                            : sgP.toFixed(1) + "%";
-                    toast(
-                        "SL=" + slMsg + " SG=" + sgMsg + " \u2714",
-                        "var(--green)",
-                    );
+                    var slMsg = slT.checked ? slP.toFixed(1) + "%" : "$" + slV.toFixed(0);
+                    var sgMsg = sgT.checked ? sgP.toFixed(1) + "%" : "$" + sgV.toFixed(0);
+                    toast("SL=" + slMsg + " SG=" + sgMsg + " \u2714", "var(--green)");
                 } catch (e) {
                     toast("Erro", "var(--red)");
                 }
@@ -3678,24 +3670,24 @@
                         )
                             clE.value = parseInt(d.calm_accu_lookback);
                         var skE = $("inp-stake"),
-                            skV = $("inp-stake-val");
+                            skV = $("inp-stake-val"),
+                            skT = $("tog-stake-pct");
                         if (
                             document.activeElement !== skE &&
                             document.activeElement !== skV
                         ) {
                             if (d.stake_pct > 0) {
+                                skT.checked = true;
                                 skE.value = parseFloat(d.stake_pct).toFixed(1);
-                                skV.value = parseFloat(d.stake_value).toFixed(
-                                    2,
-                                );
+                                skV.value = parseFloat(d.stake_value).toFixed(2);
                                 skE.disabled = false;
+                                skE.style.opacity = "1";
                                 skV.disabled = true;
                                 skV.style.opacity = ".5";
                             } else {
+                                skT.checked = false;
                                 skE.value = "0.0";
-                                skV.value = parseFloat(d.stake_value).toFixed(
-                                    2,
-                                );
+                                skV.value = parseFloat(d.stake_value).toFixed(2);
                                 skE.disabled = true;
                                 skE.style.opacity = ".5";
                                 skV.disabled = false;
@@ -3703,27 +3695,24 @@
                             }
                         }
                         var slE = $("inp-stoploss"),
-                            slV = $("inp-stoploss-val");
+                            slV = $("inp-stoploss-val"),
+                            slT = $("tog-sl-pct");
                         if (
                             document.activeElement !== slE &&
                             document.activeElement !== slV
                         ) {
                             if (d.stop_loss_pct > 0) {
-                                slE.value = parseFloat(d.stop_loss_pct).toFixed(
-                                    1,
-                                );
-                                slV.value = parseFloat(
-                                    d.stop_loss_value,
-                                ).toFixed(0);
+                                slT.checked = true;
+                                slE.value = parseFloat(d.stop_loss_pct).toFixed(1);
+                                slV.value = parseFloat(d.stop_loss_value).toFixed(0);
                                 slE.disabled = false;
                                 slE.style.opacity = "1";
                                 slV.disabled = true;
                                 slV.style.opacity = ".5";
                             } else {
+                                slT.checked = false;
                                 slE.value = "0.0";
-                                slV.value = parseFloat(
-                                    d.stop_loss_value,
-                                ).toFixed(0);
+                                slV.value = parseFloat(d.stop_loss_value).toFixed(0);
                                 slE.disabled = true;
                                 slE.style.opacity = ".5";
                                 slV.disabled = false;
@@ -3731,27 +3720,24 @@
                             }
                         }
                         var sgE = $("inp-stopgain"),
-                            sgV = $("inp-stopgain-val");
+                            sgV = $("inp-stopgain-val"),
+                            sgT = $("tog-sg-pct");
                         if (
                             document.activeElement !== sgE &&
                             document.activeElement !== sgV
                         ) {
                             if (d.stop_gain_pct > 0) {
-                                sgE.value = parseFloat(d.stop_gain_pct).toFixed(
-                                    1,
-                                );
-                                sgV.value = parseFloat(
-                                    d.stop_gain_value,
-                                ).toFixed(0);
+                                sgT.checked = true;
+                                sgE.value = parseFloat(d.stop_gain_pct).toFixed(1);
+                                sgV.value = parseFloat(d.stop_gain_value).toFixed(0);
                                 sgE.disabled = false;
                                 sgE.style.opacity = "1";
                                 sgV.disabled = true;
                                 sgV.style.opacity = ".5";
                             } else {
+                                sgT.checked = false;
                                 sgE.value = "0.0";
-                                sgV.value = parseFloat(
-                                    d.stop_gain_value,
-                                ).toFixed(0);
+                                sgV.value = parseFloat(d.stop_gain_value).toFixed(0);
                                 sgE.disabled = true;
                                 sgE.style.opacity = ".5";
                                 sgV.disabled = false;
