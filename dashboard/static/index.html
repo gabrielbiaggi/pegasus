@@ -2531,6 +2531,9 @@
                 _forecastBalance = 0,
                 _sorosMax = 3,
                 _galeMax = 6;
+            var lastStakeInteraction = 0,
+                lastSLInteraction = 0,
+                lastSGInteraction = 0;
             var _chartWs = null,
                 _chartTicks = [],
                 _chartSymbol = "",
@@ -2772,7 +2775,10 @@
                     sel.value = prev;
                 }
             }
-            function onToggleChange(tog, pctId, valId) {
+             function onToggleChange(tog, pctId, valId) {
+                if (pctId === 'inp-stake') lastStakeInteraction = Date.now();
+                if (pctId === 'inp-stoploss') lastSLInteraction = Date.now();
+                if (pctId === 'inp-stopgain') lastSGInteraction = Date.now();
                 var pctEl = $(pctId);
                 var valEl = $(valId);
                 if (tog.checked) {
@@ -3673,8 +3679,10 @@
                             skV = $("inp-stake-val"),
                             skT = $("tog-stake-pct");
                         if (
+                            Date.now() - lastStakeInteraction > 10000 &&
                             document.activeElement !== skE &&
-                            document.activeElement !== skV
+                            document.activeElement !== skV &&
+                            document.activeElement !== skT
                         ) {
                             if (d.stake_pct > 0) {
                                 skT.checked = true;
@@ -3698,8 +3706,10 @@
                             slV = $("inp-stoploss-val"),
                             slT = $("tog-sl-pct");
                         if (
+                            Date.now() - lastSLInteraction > 10000 &&
                             document.activeElement !== slE &&
-                            document.activeElement !== slV
+                            document.activeElement !== slV &&
+                            document.activeElement !== slT
                         ) {
                             if (d.stop_loss_pct > 0) {
                                 slT.checked = true;
@@ -3723,8 +3733,10 @@
                             sgV = $("inp-stopgain-val"),
                             sgT = $("tog-sg-pct");
                         if (
+                            Date.now() - lastSGInteraction > 10000 &&
                             document.activeElement !== sgE &&
-                            document.activeElement !== sgV
+                            document.activeElement !== sgV &&
+                            document.activeElement !== sgT
                         ) {
                             if (d.stop_gain_pct > 0) {
                                 sgT.checked = true;
@@ -4806,8 +4818,63 @@
                 var ss = s % 60;
                 return m + "m " + (ss < 10 ? "0" : "") + ss + "s";
             }
-            /* ---- Init & Polling ---- */
+             /* ---- Init & Polling ---- */
             fetchStatus();
+            
+            // Event listeners to track manual interaction and prevent fetchStatus race condition
+            var skT = $("tog-stake-pct"), skE = $("inp-stake"), skV = $("inp-stake-val");
+            var slT = $("tog-sl-pct"), slE = $("inp-stoploss"), slV = $("inp-stoploss-val");
+            var sgT = $("tog-sg-pct"), sgE = $("inp-stopgain"), sgV = $("inp-stopgain-val");
+
+            function markStakeInteraction() { lastStakeInteraction = Date.now(); }
+            function markSLInteraction() { lastSLInteraction = Date.now(); }
+            function markSGInteraction() { lastSGInteraction = Date.now(); }
+
+            if (skT) {
+                skT.addEventListener("change", markStakeInteraction);
+                skT.addEventListener("click", markStakeInteraction);
+            }
+            if (skE) {
+                skE.addEventListener("input", markStakeInteraction);
+                skE.addEventListener("change", markStakeInteraction);
+                skE.addEventListener("focus", markStakeInteraction);
+            }
+            if (skV) {
+                skV.addEventListener("input", markStakeInteraction);
+                skV.addEventListener("change", markStakeInteraction);
+                skV.addEventListener("focus", markStakeInteraction);
+            }
+
+            if (slT) {
+                slT.addEventListener("change", markSLInteraction);
+                slT.addEventListener("click", markSLInteraction);
+            }
+            if (slE) {
+                slE.addEventListener("input", markSLInteraction);
+                slE.addEventListener("change", markSLInteraction);
+                slE.addEventListener("focus", markSLInteraction);
+            }
+            if (slV) {
+                slV.addEventListener("input", markSLInteraction);
+                slV.addEventListener("change", markSLInteraction);
+                slV.addEventListener("focus", markSLInteraction);
+            }
+
+            if (sgT) {
+                sgT.addEventListener("change", markSGInteraction);
+                sgT.addEventListener("click", markSGInteraction);
+            }
+            if (sgE) {
+                sgE.addEventListener("input", markSGInteraction);
+                sgE.addEventListener("change", markSGInteraction);
+                sgE.addEventListener("focus", markSGInteraction);
+            }
+            if (sgV) {
+                sgV.addEventListener("input", markSGInteraction);
+                sgV.addEventListener("change", markSGInteraction);
+                sgV.addEventListener("focus", markSGInteraction);
+            }
+
             fetchTrades();
             fetchLogs();
             fetchIndicators();

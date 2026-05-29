@@ -227,11 +227,33 @@ def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
 def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> bool:
     """
     Garante que ticks do dia existem.
-    1. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
-    2. Checa se max.csv cobre o dia (cache do range de epochs)
-    3. Tenta baixar da Deriv se TOKEN disponível
+    1. Checa se existem ticks no PostgreSQL (shadow_ticks / shadow_ticks_accumulator)
+    2. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
+    3. Checa se max.csv cobre o dia (cache do range de epochs)
+    4. Tenta baixar da Deriv se TOKEN disponível
     Retorna True se dados estão disponíveis.
     """
+    pg_dsn = os.getenv("PG_DSN")
+    if pg_dsn:
+        try:
+            import psycopg2
+            dt = _datetime.combine(day, _datetime.min.time()).replace(tzinfo=timezone.utc)
+            start_ep = int(dt.timestamp())
+            end_ep = start_ep + 86400 - 1
+            conn = psycopg2.connect(pg_dsn)
+            cur = conn.cursor()
+            cur.execute("SELECT count(*) FROM shadow_ticks WHERE entry_epoch >= %s AND entry_epoch <= %s", (start_ep, end_ep))
+            cnt = cur.fetchone()[0]
+            if cnt < 1000:
+                cur.execute("SELECT count(*) FROM shadow_ticks_accumulator WHERE entry_epoch >= %s AND entry_epoch <= %s", (start_ep, end_ep))
+                cnt = cur.fetchone()[0]
+            cur.close()
+            conn.close()
+            if cnt >= 1000:
+                return True
+        except Exception:
+            pass
+
     # BOOM1000 opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
     daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
     if daily.exists() and daily.stat().st_size > 5_000:
@@ -277,11 +299,67 @@ def _write_state(out_path: Path, state: dict) -> None:
     tmp.replace(out_path)
 
 
+def _load_day_df_from_pg(day: _date) -> pd.DataFrame | None:
+    pg_dsn = os.getenv("PG_DSN")
+    if not pg_dsn:
+        return None
+    try:
+        import psycopg2
+        dt_start = _datetime.combine(day, _datetime.min.time()).replace(tzinfo=timezone.utc)
+        epoch_start = int(dt_start.timestamp())
+        epoch_end = epoch_start + 86400 - 1
+        
+        conn = psycopg2.connect(pg_dsn)
+        query = """
+            SELECT entry_epoch as epoch, entry_quote as quote 
+            FROM shadow_ticks 
+            WHERE entry_epoch >= %s AND entry_epoch <= %s 
+            ORDER BY entry_epoch ASC
+        """
+        df = pd.read_sql(query, conn, params=(epoch_start, epoch_end))
+        conn.close()
+        if df.empty or len(df) < TICK_COUNT + 10:
+            conn = psycopg2.connect(pg_dsn)
+            query = """
+                SELECT entry_epoch as epoch, entry_quote as quote 
+                FROM shadow_ticks_accumulator 
+                WHERE entry_epoch >= %s AND entry_epoch <= %s 
+                ORDER BY entry_epoch ASC
+            """
+            df = pd.read_sql(query, conn, params=(epoch_start, epoch_end))
+            conn.close()
+            
+        if df.empty or len(df) < TICK_COUNT + 10:
+            return None
+            
+        df["epoch"] = pd.to_numeric(df["epoch"], errors="coerce")
+        df["quote"] = pd.to_numeric(df["quote"], errors="coerce")
+        df = (
+            df.dropna(subset=["epoch", "quote"]).sort_values("epoch").reset_index(drop=True)
+        )
+        # Colunas auxiliares
+        df["dt"] = pd.to_datetime(df["epoch"], unit="s", utc=True)
+        df["hour"] = df["dt"].dt.hour
+        q = df["quote"].values
+        rets = np.zeros(len(q))
+        rets[1:] = np.abs(np.diff(q) / q[:-1])
+        df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
+        return df
+    except Exception as e:
+        print(f"  Erro ao carregar do PG para o dia {day}: {e}", flush=True)
+        return None
+
+
 def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     """
-    Carrega ticks de um dia. Prefere arquivo diário; cai no max.csv se ausente.
+    Carrega ticks de um dia. Prefere carregar do PostgreSQL; senão cai em arquivo diário e max.csv.
     Retorna None se não houver dados suficientes.
     """
+    df = _load_day_df_from_pg(day)
+    if df is not None:
+        print(f"  [PG] {len(df)} ticks carregados", end=" ", flush=True)
+        return df
+
     daily_path = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
     if daily_path.exists() and daily_path.stat().st_size > 1000:
         df = pd.read_csv(daily_path)
@@ -333,14 +411,18 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # Agressivo: score 30 + stake alto + Soros = dobrar em 24h
-    {"name": "TP80 5%", "tp": 0.80, "score": 30, "mode": "pct5"},
-    {"name": "TP80 10%", "tp": 0.80, "score": 30, "mode": "pct10"},
-    {"name": "TP100 5%", "tp": 1.00, "score": 30, "mode": "pct5"},
-    {"name": "TP100 10%", "tp": 1.00, "score": 30, "mode": "pct10"},
-    # Conservador pra comparar
-    {"name": "TP80 2%", "tp": 0.80, "score": 30, "mode": "pct2"},
-    {"name": "TP80 1%", "tp": 0.80, "score": 30, "mode": "pct1"},
+    # 1. Sniper Completo (Soros + Gale) - Nova Estratégia Agressiva!
+    {"name": "Sniper Soros+Gale", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+    # 2. Sniper Apenas Soros
+    {"name": "Sniper Só Soros", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
+    # 3. Sniper Apenas Gale
+    {"name": "Sniper Só Gale", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
+    # 4. Sniper Flat (Sem alavancagem)
+    {"name": "Sniper Flat $5", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+    # 5. Conservador Otimizado (1-Tick 3% TP)
+    {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+    # 6. Conservador Flat (1-Tick Flat)
+    {"name": "Conservador Flat $5", "tp": 0.03, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -351,78 +433,101 @@ def _replay_strategy(
     config: dict,
     start_balance: float,
 ) -> dict:
-    """Replay WIN/LOSS com SL 30%, SG 100%, Trailing com PISO ACUMULADO."""
+    """Replay WIN/LOSS com o RiskManager real do Pegasus para máxima fidelidade e cálculos simultâneos!"""
+    from risk_manager import RiskManager
+    import tempfile
+    
     tp_pct = config["tp"]
     mode = config["mode"]
-    base = STAKE
-    bal = start_balance
-    sod = bal
-    peak_pnl = 0.0
-    wins = losses = 0
-    trail_active = False
-    stop_reason = None
-
-    for is_win in outcomes:
-        if bal < 1.0:
-            stop_reason = "BUST"
-            break
-
-        # SL 30%: protege capital
-        pnl = bal - sod
-        if pnl <= -(sod * DAILY_SL_PCT):
-            stop_reason = "SL"
-            break
-
-        # SG 100%: dobrou a banca
-        if pnl >= sod * STOP_GAIN:
-            stop_reason = "DOBROU"
-            break
-
-        # TRAILING: preserva pico de lucro
-        if pnl > peak_pnl:
-            peak_pnl = pnl
-        if not trail_active and pnl >= sod * TRAILING_S:
-            trail_active = True
-        if trail_active and pnl <= peak_pnl * 0.5:  # trava 50% do pico
-            stop_reason = "TRAIL"
-            break
-
-        # Stake
-        if mode == "pct10":
-            stake = round(max(1.0, bal * 0.10), 2)
-        elif mode == "pct5":
-            stake = round(max(1.0, bal * 0.05), 2)
-        elif mode == "pct2":
-            stake = round(max(1.0, bal * 0.02), 2)
-        elif mode == "pct1":
-            stake = round(max(1.0, bal * 0.01), 2)
-        else:
-            stake = base
-        stake = round(max(1.0, min(stake, bal)), 2)
-
-        if is_win:
-            profit = round(stake * tp_pct, 2)
-            wins += 1
-        else:
-            profit = -stake
-            losses += 1
-
-        bal = round(bal + profit, 2)
-
-    total = wins + losses
-    return {
-        "trades": total,
-        "wins": wins,
-        "losses": losses,
-        "wr": round(wins / total * 100, 1) if total else 0.0,
-        "pnl": round(bal - sod, 2),
-        "balance": round(bal, 2),
-        "peak_pnl": round(peak_pnl, 2),
-        "doubled": stop_reason == "DOBROU",
-        "trailing": stop_reason == "TRAIL",
-        "busted": bal < 1.0,
-        "stop": stop_reason or "",
-    }
+    
+    use_soros = config.get("use_soros", False)
+    use_martingale = config.get("use_martingale", False)
+    
+    # Mapeia modo para stake
+    if mode == "flat5":
+        fixed_stake = 5.0
+        min_stake = 5.0
+    elif mode == "flat1":
+        fixed_stake = 1.0
+        min_stake = 1.0
+    else:
+        fixed_stake = STAKE
+        min_stake = STAKE
+        
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        state_file = str(Path(tmp_dir) / "risk.json")
+        risk = RiskManager(
+            balance=start_balance,
+            max_loss_day=99999.0,
+            max_profit_day=99999.0,
+            max_trades_day=99999,
+            daily_trailing_start=TRAILING_S * 100.0,
+            daily_trailing_lock=TRAILING_L * 100.0,
+            max_stake_pct=1.0,
+            fixed_stake=fixed_stake,
+            min_stake=min_stake,
+            max_stake=MAX_STAKE,
+            max_consecutive_losses=10,
+            use_soros=use_soros,
+            soros_max_steps=config.get("soros_steps", SOROS_STEPS),
+            soros_profit_factor=1.0,
+            use_martingale=use_martingale,
+            martingale_max_gales=config.get("max_gales", 2),
+            martingale_payout_rate=tp_pct,
+            dynamic_stake_base_pct=0.0,
+            state_path=state_file,
+            simulated_balance=start_balance,
+            stop_loss_pct=DAILY_SL_PCT * 100.0,
+            stop_gain_pct=STOP_GAIN * 100.0,
+        )
+        
+        wins = losses = 0
+        stop_reason = None
+        
+        for is_win in outcomes:
+            if not risk.can_trade():
+                # Bloqueado por stop loss, stop gain ou trailing
+                if risk.daily_net_profit >= risk._effective_profit_limit():
+                    stop_reason = "DOBROU"
+                elif risk.daily_net_profit <= -risk._effective_loss_limit():
+                    stop_reason = "SL"
+                elif risk.daily_trailing_active and risk.daily_net_profit <= risk._daily_trailing_lock_abs:
+                    stop_reason = "TRAIL"
+                else:
+                    stop_reason = "BLOCKED"
+                break
+                
+            stake = risk.get_stake()
+            if stake <= 0.0:
+                stop_reason = "BUST"
+                break
+                
+            # Simula a dedução do stake antes da compra (igual no bot real)
+            risk.balance = round(risk.balance - stake, 2)
+            risk._pending_stake_deduction = stake
+            
+            if is_win:
+                profit = round(stake * tp_pct, 2)
+                risk.update(profit=profit, buy_price=stake)
+                wins += 1
+            else:
+                risk.update(profit=-stake, buy_price=stake)
+                losses += 1
+                
+        total = wins + losses
+        return {
+            "trades": total,
+            "wins": wins,
+            "losses": losses,
+            "wr": round(wins / total * 100, 1) if total else 0.0,
+            "pnl": round(risk.balance - start_balance, 2),
+            "balance": round(risk.balance, 2),
+            "peak_pnl": round(risk.daily_peak_profit, 2),
+            "doubled": stop_reason == "DOBROU",
+            "trailing": stop_reason == "TRAIL",
+            "busted": risk.balance < min_stake or stop_reason == "BUST",
+            "stop": stop_reason or "",
+        }
 
 
 def _collect_day_outcomes(
