@@ -411,18 +411,18 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 STRATEGY_CONFIGS = [
-    # 1. Sniper Completo (Soros + Gale) - Nova Estratégia Agressiva!
-    {"name": "Sniper Soros+Gale", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-    # 2. Sniper Apenas Soros
-    {"name": "Sniper Só Soros", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
-    # 3. Sniper Apenas Gale
-    {"name": "Sniper Só Gale", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
-    # 4. Sniper Flat (Sem alavancagem)
-    {"name": "Sniper Flat $5", "tp": 0.50, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-    # 5. Conservador Otimizado (1-Tick 3% TP)
-    {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-    # 6. Conservador Flat (1-Tick Flat)
-    {"name": "Conservador Flat $5", "tp": 0.03, "score": 25, "mode": "flat5", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+    # 1. Sniper Otimizado (30% TP) - Lucro Otimizado com Hold de 9 ticks e Stake $10!
+    {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+    # 2. Sniper Só Soros (30% TP)
+    {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
+    # 3. Sniper Só Gale (30% TP)
+    {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
+    # 4. Sniper Flat $10 (30% TP)
+    {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+    # 5. Conservador 3% TP ($10 stake)
+    {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+    # 6. Conservador Flat $10 (1-Tick Flat)
+    {"name": "Conservador Flat $10", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -444,7 +444,10 @@ def _replay_strategy(
     use_martingale = config.get("use_martingale", False)
     
     # Mapeia modo para stake
-    if mode == "flat5":
+    if mode == "flat10":
+        fixed_stake = 10.0
+        min_stake = 10.0
+    elif mode == "flat5":
         fixed_stake = 5.0
         min_stake = 5.0
     elif mode == "flat1":
