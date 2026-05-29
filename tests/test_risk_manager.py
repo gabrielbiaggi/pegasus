@@ -437,6 +437,91 @@ class RiskManagerTest(unittest.TestCase):
             risk.update(profit=-0.35, buy_price=0.35)
             self.assertEqual(risk.martingale_step, 1)
 
+    def test_simulated_balance_soros_martingale(self) -> None:
+        """Verifica se a banca simulada de $50 com stake base de $5, Soros e Martingale ativos
+        calcula as stakes, deduz saldos, acumula ganhos e recupera perdas de forma correta."""
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = RiskManager(
+                balance=10000.0,  # real balance is high
+                max_loss_day=9999.0,
+                max_profit_day=9999.0,
+                max_trades_day=50,
+                daily_trailing_start=0.0,
+                daily_trailing_lock=0.0,
+                max_stake_pct=1.0,
+                fixed_stake=5.0,
+                min_stake=5.0,
+                max_stake=100.0,
+                max_consecutive_losses=3,
+                use_soros=True,
+                soros_max_steps=2,
+                soros_profit_factor=1.0,
+                use_martingale=True,
+                martingale_max_gales=2,
+                martingale_payout_rate=0.50,
+                dynamic_stake_base_pct=0.0,
+                state_path=str(Path(tmp) / "risk.json"),
+                simulated_balance=50.0,  # simulated balance mode active!
+            )
+            # 1. Init: simulated_balance should override self.balance and self.start_of_day_balance
+            self.assertTrue(risk.simulated_balance_mode)
+            self.assertEqual(risk.balance, 50.0)
+            self.assertEqual(risk.start_of_day_balance, 50.0)
+
+            # 2. Get G0 stake
+            s0 = risk.get_stake()
+            self.assertEqual(s0, 5.0)
+
+            # Simulate buying G0: in production bot.py deducts this immediately
+            risk.balance = round(risk.balance - s0, 2)
+            risk._pending_stake_deduction = s0
+            self.assertEqual(risk.balance, 45.0)
+
+            # Win G0: profit is 50% = 2.50. Update should add stake (5.0) back + profit (2.50)
+            risk.update(profit=2.50, buy_price=5.0)
+            self.assertEqual(risk.balance, 52.50)
+            self.assertEqual(risk.daily_net_profit, 2.50)
+            self.assertEqual(risk.soros_step, 1)
+            self.assertEqual(risk.soros_profit, 2.50)
+
+            # 3. Get Soros Step 1 stake (base + accumulated profit = 5.0 + 2.50 = 7.50)
+            s1 = risk.get_stake()
+            self.assertEqual(s1, 7.50)
+
+            # Simulate buying Soros Step 1
+            risk.balance = round(risk.balance - s1, 2)
+            risk._pending_stake_deduction = s1
+            self.assertEqual(risk.balance, 45.0)
+
+            # Lose Soros Step 1: profit is -7.50. Risk resets Soros and enters Martingale Step 1.
+            # As planned, Martingale base stake should be self.fixed_stake = 5.0, NOT the Soros stake of 7.50.
+            risk.update(profit=-7.50, buy_price=7.50)
+            self.assertEqual(risk.balance, 45.0)  # already deducted during buy, so unchanged on loss
+            self.assertEqual(risk.soros_step, 0)
+            self.assertEqual(risk.soros_profit, 0.0)
+            self.assertEqual(risk.martingale_step, 1)
+            self.assertEqual(risk.martingale_base_stake, 5.0)
+            self.assertEqual(risk.martingale_accumulated_loss, 5.0)
+
+            # 4. Get Martingale Step 1 stake (accumulated_loss / payout + base = 5.0 / 0.50 + 5.0 = 15.0)
+            sm1 = risk.get_stake()
+            self.assertEqual(sm1, 15.0)
+
+            # Simulate buying Martingale Step 1
+            risk.balance = round(risk.balance - sm1, 2)
+            risk._pending_stake_deduction = sm1
+            self.assertEqual(risk.balance, 30.0)
+
+            # Win Martingale Step 1: profit is 15.0 * 0.50 = 7.50.
+            # Update should add back stake (15.0) + profit (7.50) = 22.50.
+            # Net balance becomes 30.0 + 22.50 = 52.50.
+            # PNL becomes recovered (+2.50 from the first trade).
+            # Martingale recovers and resets.
+            risk.update(profit=7.50, buy_price=15.0)
+            self.assertEqual(risk.balance, 52.50)
+            self.assertEqual(risk.martingale_step, 0)
+            self.assertEqual(risk.martingale_accumulated_loss, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

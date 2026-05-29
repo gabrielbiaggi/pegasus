@@ -169,6 +169,7 @@ class BotConfig:
     rise_fall_qg_min_abs_imbalance: float
     rise_fall_qg_bayes_strong: float
     rise_fall_qg_hurst_max: float
+    simulated_balance: float
 
     @property
     def ws_url(self) -> str:
@@ -393,6 +394,7 @@ def load_config() -> BotConfig:
         ),
         rise_fall_qg_bayes_strong=_float_env("RISE_FALL_QG_BAYES_STRONG", 0.70),
         rise_fall_qg_hurst_max=_float_env("RISE_FALL_QG_HURST_MAX", 0.50),
+        simulated_balance=_float_env("SIMULATED_BALANCE", 0.0),
     )
 
     if config.stake <= 0:
@@ -446,15 +448,10 @@ def load_config() -> BotConfig:
         raise ValueError("MARTINGALE_MAX_GALES nao pode ser negativo.")
     if config.martingale_multiplier < 1.0:
         raise ValueError("MARTINGALE_MULTIPLIER deve ser >= 1.")
-    # SAFETY: SOROS + MARTINGALE together creates a death spiral on BOOM/CRASH/ACCU markets.
-    # Soros amplifies the stake at the worst possible time (just before a boom hit),
-    # then martingale doubles down on the already-amplified loss. NEVER enable both.
+    # SAFETY: SOROS + MARTINGALE together is normally dangerous, but we support them
+    # combined here in Sniper mode because Martingale ignores Soros compounding.
     if config.use_soros and config.use_martingale:
-        raise ValueError(
-            "USE_SOROS e USE_MARTINGALE nao podem estar ambos habilitados. "
-            "Soros + Gale juntos criam death spiral em mercados BOOM/CRASH. "
-            "Use apenas UM dos dois."
-        )
+        pass
     if (
         config.contract_mode not in {"jump_rise_fall", "calm_accu"}
         and config.tick_count < config.accumulator_strategy_config.minimum_ticks

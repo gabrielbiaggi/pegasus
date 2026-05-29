@@ -40,8 +40,15 @@ class RiskManager:
         loss_window_seconds: float = 300.0,
         stop_loss_pct: float = 0.0,
         stop_gain_pct: float = 0.0,
+        simulated_balance: float = 0.0,
     ):
-        self.balance = float(balance)
+        self.simulated_balance_mode = bool(simulated_balance > 0)
+        self.simulated_balance_initial = float(simulated_balance)
+        if self.simulated_balance_mode:
+            balance = float(simulated_balance)
+            self.balance = float(simulated_balance)
+        else:
+            self.balance = float(balance)
         self.max_loss_day = float(max_loss_day)
         self.max_profit_day = float(max_profit_day)
         self.max_trades_day = int(max_trades_day)
@@ -435,6 +442,19 @@ class RiskManager:
             self.block_weekends = (
                 env_data.get("BLOCK_WEEKENDS", "true").strip().lower() == "true"
             )
+            # SIMULATED_BALANCE live-reload
+            new_sim_bal = float(env_data.get("SIMULATED_BALANCE", str(self.simulated_balance_initial)))
+            if new_sim_bal != self.simulated_balance_initial:
+                logger.info(
+                    "SIMULATED_BALANCE atualizado via dashboard/env: %.2f → %.2f",
+                    self.simulated_balance_initial,
+                    new_sim_bal,
+                )
+                self.simulated_balance_initial = new_sim_bal
+                self.simulated_balance_mode = bool(new_sim_bal > 0)
+                if self.trades_today == 0:
+                    self.balance = new_sim_bal
+                    self.start_of_day_balance = new_sim_bal
         except (OSError, ValueError):
             pass
 
@@ -466,6 +486,8 @@ class RiskManager:
         saved_sod = float(data.get("start_of_day_balance", 0.0))
         if saved_sod > 0:
             self.start_of_day_balance = saved_sod
+            if self.simulated_balance_mode:
+                self.balance = round(saved_sod + self.daily_net_profit, 2)
             logger.info(
                 "start_of_day_balance restaurado do estado: %.2f (saldo_atual=%.2f, perda_real_dia=%.2f)",
                 saved_sod,
@@ -475,8 +497,11 @@ class RiskManager:
         else:
             # saved_sod=0 = nova sessao (estado foi zerado pelo deploy --restart).
             # start_of_day_balance vem do saldo real da autorizacao Deriv.
+            if self.simulated_balance_mode:
+                self.start_of_day_balance = self.simulated_balance_initial
+                self.balance = self.simulated_balance_initial
             logger.info(
-                "Nova sessao: start_of_day_balance = %.2f (saldo real Deriv)",
+                "Nova sessao: start_of_day_balance = %.2f (saldo simulado/real)",
                 self.start_of_day_balance,
             )
         self.daily_trailing_active = bool(data.get("daily_trailing_active", False))
@@ -639,6 +664,17 @@ class RiskManager:
         the internal estimate so any drift (timeout double-count, restart,
         late message) is immediately corrected. No threshold: always sync.
         """
+        if self.simulated_balance_mode:
+            self.daily_net_profit = round(self.balance - self.start_of_day_balance, 2)
+            self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
+            if (
+                self.daily_trailing_start > 0
+                and self.daily_peak_profit >= self._daily_trailing_start_abs
+            ):
+                self.daily_trailing_active = True
+            self._save_state()
+            return
+
         new_pnl = round(self.balance - self.start_of_day_balance, 2)
         self.daily_net_profit = new_pnl
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)

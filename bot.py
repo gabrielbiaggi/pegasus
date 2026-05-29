@@ -1208,6 +1208,7 @@ class DerivBot:
             max_losses_in_window=_loss_pause_window,
             stop_loss_pct=self.config.stop_loss_pct,
             stop_gain_pct=self.config.stop_gain_pct,
+            simulated_balance=self.config.simulated_balance,
         )
         # Subscribe to real-time balance updates (catches manual top-ups, etc.)
         await self.subscribe_balance(ws)
@@ -1272,16 +1273,27 @@ class DerivBot:
         )
         # Atualiza saldo imediatamente com o valor confirmado pela Deriv (evita atraso do stream balance)
         if self.risk is not None:
-            bal_after = buy.get("balance_after")
-            if bal_after is not None:
-                new_bal = float(bal_after)
-                if abs(new_bal - self.risk.balance) > 0.01:
-                    logger.info(
-                        "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
-                    )
-                    self.risk.balance = new_bal
-                    self.risk.sync_pnl_from_balance()
-                    self._flush_balance(new_bal)
+            if getattr(self.risk, "simulated_balance_mode", False):
+                # Simulated balance: deduct the actual stake locally immediately
+                self.risk.balance = round(self.risk.balance - buy_price_actual, 2)
+                logger.info(
+                    "💰 Saldo Simulado: %.2f (deduzido stake de %.2f)",
+                    self.risk.balance,
+                    buy_price_actual,
+                )
+                self.risk.sync_pnl_from_balance()
+                self._flush_balance(self.risk.balance)
+            else:
+                bal_after = buy.get("balance_after")
+                if bal_after is not None:
+                    new_bal = float(bal_after)
+                    if abs(new_bal - self.risk.balance) > 0.01:
+                        logger.info(
+                            "Saldo Deriv: %.2f → %.2f", self.risk.balance, new_bal
+                        )
+                        self.risk.balance = new_bal
+                        self.risk.sync_pnl_from_balance()
+                        self._flush_balance(new_bal)
             # Tell update() that the stake was already deducted, so it only needs
             # to add back stake+profit on WIN and do nothing on LOSS.
             self.risk._pending_stake_deduction = buy_price_actual
@@ -1794,28 +1806,33 @@ class DerivBot:
             new_bal = bal.get("balance")
             if new_bal is not None and self.risk is not None:
                 new_bal = float(new_bal)
-                if abs(new_bal - self.risk.balance) > 0.01:
-                    logger.info(
-                        "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
-                    )
-                    self.risk.balance = new_bal
-                    self.risk.sync_pnl_from_balance()
-                    self._flush_balance(new_bal)
-        elif msg_type == "sell":
-            sell = data.get("sell", {})
-            logger.info("Sell confirmado: %s", sell)
-            # Atualiza saldo imediatamente com balance_after do sell
-            if self.risk is not None:
-                bal_after = sell.get("balance_after")
-                if bal_after is not None:
-                    new_bal = float(bal_after)
+                if getattr(self.risk, "simulated_balance_mode", False):
+                    logger.debug("Banca simulada ativa. Saldo real %s ignorado.", new_bal)
+                else:
                     if abs(new_bal - self.risk.balance) > 0.01:
                         logger.info(
-                            "Saldo Deriv: %.2f \u2192 %.2f", self.risk.balance, new_bal
+                            "Saldo Deriv: %.2f → %.2f", self.risk.balance, new_bal
                         )
                         self.risk.balance = new_bal
                         self.risk.sync_pnl_from_balance()
                         self._flush_balance(new_bal)
+        elif msg_type == "sell":
+            sell = data.get("sell", {})
+            logger.info("Sell confirmado: %s", sell)
+            if self.risk is not None:
+                bal_after = sell.get("balance_after")
+                if bal_after is not None:
+                    new_bal = float(bal_after)
+                    if getattr(self.risk, "simulated_balance_mode", False):
+                        logger.debug("Banca simulada ativa. Saldo real pós-venda %s ignorado.", new_bal)
+                    else:
+                        if abs(new_bal - self.risk.balance) > 0.01:
+                            logger.info(
+                                "Saldo Deriv: %.2f → %.2f", self.risk.balance, new_bal
+                            )
+                            self.risk.balance = new_bal
+                            self.risk.sync_pnl_from_balance()
+                            self._flush_balance(new_bal)
         elif msg_type == "portfolio":
             await self.handle_portfolio(ws, data)
         elif msg_type == "ping":
