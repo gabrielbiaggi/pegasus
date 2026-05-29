@@ -499,13 +499,15 @@ class RiskManager:
         if (
             not self.daily_trailing_active
             and self.daily_trailing_start > 0
-            and self.daily_peak_profit >= self.daily_trailing_start
+            and self.daily_peak_profit >= self._daily_trailing_start_abs
         ):
             self.daily_trailing_active = True
             logger.info(
-                "Trailing reativado apos restart: peak=%.2f >= start=%.2f — lock=%.2f",
+                "Trailing reativado apos restart: peak=%.2f >= start=%.2f (%.1f%%) — lock=%.2f (%.1f%%)",
                 self.daily_peak_profit,
+                self._daily_trailing_start_abs,
                 self.daily_trailing_start,
+                self._daily_trailing_lock_abs,
                 self.daily_trailing_lock,
             )
         # Segurança: estado legado sem base_stake → reseta gale (melhor pausar que calcular errado)
@@ -642,7 +644,7 @@ class RiskManager:
         self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
         if (
             self.daily_trailing_start > 0
-            and self.daily_peak_profit >= self.daily_trailing_start
+            and self.daily_peak_profit >= self._daily_trailing_start_abs
         ):
             self.daily_trailing_active = True
         self._save_state()
@@ -651,6 +653,14 @@ class RiskManager:
     def _start_of_day_balance(self) -> float:
         """Balance at the start of the trading day (before any trades)."""
         return self.start_of_day_balance
+
+    @property
+    def _daily_trailing_start_abs(self) -> float:
+        return self.start_of_day_balance * self.daily_trailing_start / 100.0
+
+    @property
+    def _daily_trailing_lock_abs(self) -> float:
+        return self.start_of_day_balance * self.daily_trailing_lock / 100.0
 
     def _effective_loss_limit(self) -> float:
         """Dynamic loss limit: uses % of start-of-day balance when stop_loss_pct > 0."""
@@ -701,9 +711,12 @@ class RiskManager:
                     + self.martingale_base_stake
                 )
 
-        remaining_budget = max(
-            0.0, self._effective_loss_limit() + self.daily_net_profit
-        )
+        if self.daily_trailing_active:
+            remaining_budget = max(0.0, self.daily_net_profit - self._daily_trailing_lock_abs)
+        else:
+            remaining_budget = max(
+                0.0, self._effective_loss_limit() + self.daily_net_profit
+            )
 
         if (
             self.use_martingale
@@ -943,7 +956,7 @@ class RiskManager:
 
         if (
             self.daily_trailing_active
-            and self.daily_net_profit <= self.daily_trailing_lock
+            and self.daily_net_profit <= self._daily_trailing_lock_abs
         ):
             now_mono = _now
             if self.cooldown_until <= 0:
@@ -952,7 +965,7 @@ class RiskManager:
                 logger.warning(
                     "🔒 Trailing lock atingido: P&L=%.2f lock=%.2f — cooldown de %.1fh iniciado",
                     self.daily_net_profit,
-                    self.daily_trailing_lock,
+                    self._daily_trailing_lock_abs,
                     self.session_cooldown_seconds / 3600,
                 )
                 self._save_state()
@@ -1009,13 +1022,13 @@ class RiskManager:
         # Protect trailing lock: don't enter a trade that would risk dropping below the locked profit
         if (
             self.daily_trailing_active
-            and self.daily_net_profit - stake < self.daily_trailing_lock
+            and self.daily_net_profit - stake < self._daily_trailing_lock_abs
         ):
             logger.warning(
                 "Proxima stake %.2f arriscaria lucro protegido %.2f (lock=%.2f)",
                 stake,
                 self.daily_net_profit,
-                self.daily_trailing_lock,
+                self._daily_trailing_lock_abs,
             )
             return False
 
@@ -1142,7 +1155,7 @@ class RiskManager:
             self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
             if (
                 self.daily_trailing_start > 0
-                and self.daily_peak_profit >= self.daily_trailing_start
+                and self.daily_peak_profit >= self._daily_trailing_start_abs
             ):
                 self.daily_trailing_active = True
             logger.info(

@@ -65,20 +65,35 @@ class RiskManagerTest(unittest.TestCase):
                 max_loss_day=20,
                 max_profit_day=0,
                 max_trades_day=10,
-                daily_trailing_start=10,
-                daily_trailing_lock=5,
-                max_stake_pct=0.02,
-                fixed_stake=6,
+                daily_trailing_start=10, # 10% of 1000 = 100 USD
+                daily_trailing_lock=5,   # 5% of 1000 = 50 USD
+                max_stake_pct=0.5,
+                fixed_stake=60,
                 min_stake=0.35,
                 max_stake=100,
                 max_consecutive_losses=5,
                 use_soros=False,
                 soros_max_steps=1,
                 soros_profit_factor=1.0,
+                dynamic_stake_base_pct=0,
                 state_path=str(Path(tmp) / "risk.json"),
             )
-            risk.update(profit=10, buy_price=1)
+            # Profit = 100 USD (reaches 10% trailing start)
+            risk.update(profit=100, buy_price=1)
 
+            # Since trailing is active, lock is 50 USD.
+            # Remaining budget = P&L - lock = 100 - 50 = 50 USD.
+            # Fixed stake is 60 USD.
+            # Capped stake should be min(60, budget=50) = 50.
+            self.assertEqual(risk.get_stake(), 50.0)
+            self.assertTrue(risk.can_trade()) # Can trade with the capped stake of 50.0
+
+            # Now lose 50.0. Net profit drops to 50.0 (exactly at lock).
+            risk.update(profit=-50.0, buy_price=50.0)
+
+            # Budget is now 50 - 50 = 0.0, which is below min_stake (0.35).
+            # Stake becomes 0.0 and trading is blocked.
+            self.assertEqual(risk.get_stake(), 0.0)
             self.assertFalse(risk.can_trade())
 
     def test_wins_offset_losses_for_stop(self) -> None:
