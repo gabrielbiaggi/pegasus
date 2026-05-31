@@ -423,6 +423,8 @@ STRATEGY_CONFIGS = [
     {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
     # 6. Conservador Flat $10 (1-Tick Flat)
     {"name": "Conservador Flat $10", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+    # 7. Pegasus Live Sniper (9% TP, $15)
+    {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -444,7 +446,10 @@ def _replay_strategy(
     use_martingale = config.get("use_martingale", False)
     
     # Mapeia modo para stake
-    if mode == "flat10":
+    if mode == "flat15":
+        fixed_stake = 15.0
+        min_stake = 15.0
+    elif mode == "flat10":
         fixed_stake = 10.0
         min_stake = 10.0
     elif mode == "flat5":
