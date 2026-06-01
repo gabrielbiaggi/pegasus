@@ -792,8 +792,8 @@ def main() -> None:
     print("\n[2/2] Simulando 7 estratégias...", flush=True)
     print(f"  Estratégias: {', '.join(STRATEGY_NAMES)}")
 
-    # Cada estratégia mantém seu próprio saldo
-    balances = {s: start_balance for s in STRATEGY_NAMES}
+    # Cada estratégia mantém seu próprio saldo (com reset diário para sessões independentes!)
+    total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
 
     for day in days_with_data:
         state["current_day"] = day.isoformat()
@@ -805,6 +805,9 @@ def main() -> None:
             print(f"  {day}: sem dados — pulando", flush=True)
             continue
 
+        # Reseta o saldo no início do dia para simular sessões independentes de risco
+        balances = {s: start_balance for s in STRATEGY_NAMES}
+
         print(f"  {day}: simulando...", end=" ", flush=True)
         result = _sim_day_multi(
             day,
@@ -814,6 +817,10 @@ def main() -> None:
             out_path=out_path,
             t_global=t_global,
         )
+
+        # Acumula PnL do dia
+        for s in STRATEGY_NAMES:
+            total_pnls[s] += result["strategies"][s]["pnl"]
 
         # Limpa progresso intra-dia
         state.pop("day_progress", None)
@@ -853,8 +860,8 @@ def main() -> None:
     if n > 0:
         summary = {"total_days": n, "strategies": {}}
         for s in STRATEGY_NAMES:
-            final_bal = balances[s]
-            total_pnl = round(final_bal - start_balance, 2)
+            total_pnl = round(total_pnls[s], 2)
+            final_bal = start_balance + total_pnl
             busted_days = sum(
                 1 for r in results if r["strategies"].get(s, {}).get("busted", False)
             )
