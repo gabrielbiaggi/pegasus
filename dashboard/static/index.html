@@ -4370,30 +4370,19 @@
                     var cusum = d.cusum || 0;
                     var hurst = d.hurst || 0;
                     var maxCusum = d.max_cusum || 5.0;
-                    // Label e cor
-                    if (status === "ok") {
-                        lbl.textContent = "\u2705 Pronto";
-                        lbl.style.color = "var(--green)";
-                        bar.style.background = "var(--green)";
-                    } else if (status === "borderline") {
-                        lbl.textContent = "\u26a0\ufe0f Borderline";
-                        lbl.style.color = "var(--yellow)";
-                        bar.style.background = "var(--yellow)";
-                    } else if (status === "wait") {
-                        lbl.textContent = "\u23f3 Aguardando";
-                        lbl.style.color = "var(--red)";
-                        bar.style.background = "var(--red)";
-                    } else {
-                        lbl.textContent = "\u2014";
-                        lbl.style.color = "var(--dim)";
-                        bar.style.background = "var(--dim)";
-                    }
-                    // Detalhes
+                    // Label e cor dinâmicos da PCS
+                    lbl.textContent = d.label || "\u2014";
+                    lbl.style.color = d.color || "var(--dim)";
+                    bar.style.background = d.color || "var(--dim)";
+                    
+                    // Detalhes milimétricos dos indicadores quantitativos
                     det.textContent =
-                        "CUSUM=" +
-                        cusum.toFixed(2) +
-                        " | H=" +
-                        hurst.toFixed(3);
+                        "CUSUM=" + cusum.toFixed(2) +
+                        " | H=" + hurst.toFixed(3) +
+                        " | Shannon=" + (d.shannon || 0).toFixed(3) +
+                        " | Kalman=" + (d.kalman || 0).toFixed(3) +
+                        " | P(LOSS)=" + (d.p_loss !== undefined && d.p_loss !== 1.0 ? (d.p_loss * 100).toFixed(1) + "%" : "N/A");
+                        
                     // Barra proporcional ao cusum (0-10 scale)
                     var pct = Math.min((cusum / (maxCusum * 1.5)) * 100, 100);
                     bar.style.width = pct.toFixed(0) + "%";

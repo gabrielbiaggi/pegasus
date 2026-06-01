@@ -506,41 +506,87 @@ def _replay_strategy(
         stop_reason = None
         
         for item in outcomes:
-            if len(item) == 6:
+            if len(item) == 9:
+                is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at, shannon_v, kalman_v, p_loss = item
+            elif len(item) == 6:
                 is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at = item
+                shannon_v = 0.0
+                kalman_v = 0.0
+                p_loss = 1.0
             else:
                 is_win, epoch, avg, cusum_v, hurst_v = item
                 barrier_hit_at = None
+                shannon_v = 0.0
+                kalman_v = 0.0
+                p_loss = 1.0
                 
             risk._sim_time = epoch
             risk._sim_monotonic_time = epoch
             
             # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
             if is_super_frank:
-                is_absolute_calm = (avg < 1.0e-6 and cusum_v < 2.5 and hurst_v > 0.50)
+                is_absolute_calm = False
+                is_medium_calm = False
+                
+                # Calmaria Extrema (Regime A) Check:
+                _pass_a_xgb = (p_loss < 0.22)
+                if (
+                    avg < 1.0e-6
+                    and cusum_v < 2.5
+                    and hurst_v > 0.48
+                    and shannon_v > 0.85
+                    and abs(kalman_v) < 1.5
+                    and _pass_a_xgb
+                ):
+                    is_absolute_calm = True
+                
+                # Calmaria Moderada (Regime B+) Check:
+                _pass_b_plus_xgb = (p_loss < 0.26)
+                if (
+                    avg < 2.2e-6
+                    and cusum_v < 4.0
+                    and hurst_v > 0.45
+                    and _pass_b_plus_xgb
+                ):
+                    is_medium_calm = True
+                
                 _in_gale = risk.use_martingale and risk.martingale_step > 0
                 
                 if _in_gale:
-                    # GALE STANDBY: só executa Gale em calmaria absoluta
-                    if not is_absolute_calm:
-                        continue  # Standby, aguarda calmaria no próximo tick
+                    # GALE STANDBY & BYPASS
+                    _xgb_bypass = (p_loss < float(os.getenv("PCS_XGB_BYPASS_LIMIT", "0.15")))
+                    if not is_absolute_calm and not _xgb_bypass:
+                        continue  # Standby, aguarda calmaria extrema ou IA Bypass no próximo tick
                     
                     # Gale Fire em Regime A (30% TP, 9 ticks)
-                    current_tp_pct = 0.30
-                    current_wt = 9
-                    risk.martingale_payout_rate = 0.30
+                    regime_tp = float(os.getenv("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30.0")) / 100.0
+                    regime_hold = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "9"))
+                    current_tp_pct = regime_tp
+                    current_wt = regime_hold
+                    risk.martingale_payout_rate = regime_tp
                     risk.use_soros = False
                 else:
                     if is_absolute_calm:
                         # Regime A: Sniper 30% TP com Soros ATIVO
-                        current_tp_pct = 0.30
-                        current_wt = 9
+                        regime_tp = float(os.getenv("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30.0")) / 100.0
+                        regime_hold = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "9"))
+                        current_tp_pct = regime_tp
+                        current_wt = regime_hold
                         risk.use_soros = True
                         risk.soros_max_steps = 2
+                    elif is_medium_calm:
+                        # Regime B+: Medium Harvester 9% TP com 3 Ticks e Soros DESATIVADO
+                        regime_b_plus_tp = float(os.getenv("PCS_REGIME_B_PLUS_TP", "9.0"))
+                        regime_b_plus_hold = int(os.getenv("PCS_REGIME_B_PLUS_HOLD", "3"))
+                        current_tp_pct = regime_b_plus_tp / 100.0
+                        current_wt = regime_b_plus_hold
+                        risk.use_soros = False
                     else:
-                        # Regime B: Defensivo 3% TP, 1 Tick Hold, Soros DESATIVADO
-                        current_tp_pct = 0.03
-                        current_wt = 1
+                        # Regime B-: Defensive Harvester 3% TP com 1 Tick e Soros DESATIVADO
+                        regime_b_minus_tp = float(os.getenv("PCS_REGIME_B_MINUS_TP", "3.0"))
+                        regime_b_minus_hold = int(os.getenv("PCS_REGIME_B_MINUS_HOLD", "1"))
+                        current_tp_pct = regime_b_minus_tp / 100.0
+                        current_wt = regime_b_minus_hold
                         risk.use_soros = False
                 
                 # Determina o resultado WIN/LOSS com base no win_ticks do regime ativo
@@ -725,6 +771,8 @@ def _collect_day_outcomes(
         row = df_ind.iloc[-1]
         cusum_v = float(row.get("cusum_score", 0) or 0)
         hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
+        shannon_v = float(row.get("shannon_entropy", 0) or 0)
+        kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
         if cusum_v > CUSUM_MAX or hurst_v < HURST_MIN:
             i += 1
             continue
@@ -762,7 +810,17 @@ def _collect_day_outcomes(
                 continue  # score insuficiente para esta config
                 
             is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
-            outcomes[c["name"]].append((is_win, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v), barrier_hit_at))
+            outcomes[c["name"]].append((
+                is_win, 
+                float(epochs[entry_idx]), 
+                float(avg), 
+                float(cusum_v), 
+                float(hurst_v), 
+                barrier_hit_at,
+                float(shannon_v),
+                float(kalman_v),
+                float(p_loss if p_loss is not None else 1.0)
+            ))
 
             best_hold = max(best_hold, wt)
 

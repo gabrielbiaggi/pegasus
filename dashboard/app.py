@@ -856,39 +856,77 @@ def api_logs():
 def _compute_regime(ind: dict) -> dict:
     """Calcula status do regime de mercado para o dashboard.
 
-    Retorna: status (ok|wait|block), cusum, hurst, motivo do bloqueio.
+    Retorna: status (ok|wait|block), cusum, hurst, shannon, kalman, p_loss, regime, etc.
     """
     cusum = float(ind.get("cusum_score") or 0.0)
     hurst = float(ind.get("hurst_exponent") or 0.5)
+    shannon = float(ind.get("shannon_entropy") or 0.0)
+    kalman = float(ind.get("kalman_residual_zscore") or 0.0)
+    avg_ret = float(ind.get("avg_ret") or 0.0)
+    p_loss = float(ind.get("p_loss") if ind.get("p_loss") is not None else 1.0)
+    
     max_cusum = float(_get_env("CALM_ACCU_MAX_ENTRY_CUSUM") or "5.0")
-    min_hurst = float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.0")
+    min_hurst = float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.45")
 
     blocked_by = []
     if max_cusum > 0 and cusum > max_cusum:
-        blocked_by.append(f"cusum={cusum:.2f} > max={max_cusum:.1f}")
+        blocked_by.append(f"CUSUM={cusum:.2f} > limite={max_cusum:.1f}")
     if min_hurst > 0 and hurst < min_hurst:
-        blocked_by.append(f"H={hurst:.3f} < min={min_hurst:.2f}")
+        blocked_by.append(f"Hurst={hurst:.3f} < limite={min_hurst:.2f}")
+
+    # Identifica os regimes de calmaria de forma idêntica ao bot
+    is_absolute_calm = False
+    is_medium_calm = False
+    
+    _pass_a_xgb = (p_loss < 0.22)
+    if (
+        avg_ret < 1.0e-6
+        and cusum < 2.5
+        and hurst > 0.48
+        and shannon > 0.85
+        and abs(kalman) < 1.5
+        and _pass_a_xgb
+    ):
+        is_absolute_calm = True
+        
+    _pass_b_plus_xgb = (p_loss < 0.26)
+    if (
+        avg_ret < 2.2e-6
+        and cusum < 4.0
+        and hurst > 0.45
+        and _pass_b_plus_xgb
+    ):
+        is_medium_calm = True
 
     if blocked_by:
         status = "wait"
+        regime_label = "Bloqueado / Aguardando Calmaria"
+        regime_color = "var(--red)"
     else:
         status = "ok"
-
-    # Cor: verde=ok, amarelo=borderline (perto do limite), vermelho=bloqueado
-    if status == "ok":
-        if max_cusum > 0 and cusum > max_cusum * 0.85:
-            status = "borderline"
+        if is_absolute_calm:
+            regime_label = "🔥 Regime A: Sniper Pro (30% TP, 9 Ticks, Soros ATIVO)"
+            regime_color = "#10b981"  # emerald green
+        elif is_medium_calm:
+            regime_label = "🌾 Regime B+: Medium Harvester (9% TP, 3 Ticks, Soros OFF)"
+            regime_color = "#3b82f6"  # bright blue
+        else:
+            regime_label = "🛡️ Regime B-: Defensive (3% TP, 1 Tick, Soros OFF)"
+            regime_color = "#eab308"  # amber/yellow
 
     return {
         "status": status,
         "cusum": round(cusum, 2),
         "hurst": round(hurst, 3),
+        "shannon": round(shannon, 3),
+        "kalman": round(kalman, 3),
+        "avg_ret": avg_ret,
+        "p_loss": p_loss,
         "max_cusum": max_cusum,
         "min_hurst": min_hurst,
         "blocked_by": blocked_by,
-        "label": "Mercado OK"
-        if status == "ok"
-        else ("Borderline" if status == "borderline" else "Aguardando calmaria"),
+        "label": regime_label,
+        "color": regime_color
     }
 
 

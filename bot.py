@@ -155,6 +155,10 @@ class DerivBot:
                     data[k] = round(float(v), 6)
                 else:
                     data[k] = None
+            if "avg_ret" in df.columns:
+                data["avg_ret"] = round(float(df["avg_ret"].iloc[-1]), 8)
+            if hasattr(self, "_last_p_loss") and self._last_p_loss is not None:
+                data["p_loss"] = round(float(self._last_p_loss), 6)
             path = os.path.join(self.config.journal_dir, "live_indicators.json")
             tmp = path + ".tmp"
             with open(tmp, "w") as f:
@@ -922,6 +926,7 @@ class DerivBot:
                 config=self.config.accumulator_strategy_config,
                 ensemble_scorer=self._ensemble_scorer,
             )
+            self._last_p_loss = p_loss
             if signal != "ACCU":
                 logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)
                 return
@@ -931,8 +936,11 @@ class DerivBot:
             regime_hold = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "9"))
             
             is_absolute_calm = False
+            is_medium_calm = False
             _cusum = 0.0
             _hurst = 0.5
+            _shannon = 0.0
+            _kalman = 0.0
             
             recent = prices[-(self.config.calm_accu_lookback + 1) :]
             abs_returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent))]
@@ -942,57 +950,100 @@ class DerivBot:
                 _last = df.iloc[-1]
                 _cusum = float(_last.get("cusum_score", 0.0) or 0.0)
                 _hurst = float(_last.get("hurst_exponent", 0.5) or 0.5)
+                _shannon = float(_last.get("shannon_entropy", 0.0) or 0.0)
+                _kalman = float(_last.get("kalman_residual_zscore", 0.0) or 0.0)
                 
-                # Calmaria Extrema Check:
+                # Calmaria Extrema (Regime A) Check:
+                _pass_a_xgb = (p_loss is None or p_loss < 0.22)
                 if (
                     avg_abs_ret < 1.0e-6
                     and _cusum < 2.5
-                    and _hurst > 0.50
+                    and _hurst > 0.48
+                    and _shannon > 0.85
+                    and abs(_kalman) < 1.5
+                    and _pass_a_xgb
                 ):
                     is_absolute_calm = True
+                
+                # Calmaria Moderada (Regime B+) Check:
+                _pass_b_plus_xgb = (p_loss is None or p_loss < 0.26)
+                if (
+                    avg_abs_ret < 2.2e-6
+                    and _cusum < 4.0
+                    and _hurst > 0.45
+                    and _pass_b_plus_xgb
+                ):
+                    is_medium_calm = True
             
             _in_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
             
             if _in_gale:
-                # Se estamos em Gale, só operamos em Calmaria Absoluta no Regime A (30% TP)
-                if not is_absolute_calm:
+                # DYNAMIC GALE BYPASS: se a IA prever baixíssimo risco (P(LOSS) < 15%), ignoramos a calmaria extrema e disparamos!
+                _xgb_bypass = (p_loss is not None and p_loss < float(os.getenv("PCS_XGB_BYPASS_LIMIT", "0.15")))
+                if not is_absolute_calm and not _xgb_bypass:
                     logger.info(
-                        "⏳ GALE STANDBY: aguardando calmaria extrema para executar Gale %d (vol=%.2e, CUSUM=%.2f, H=%.3f)",
+                        "⏳ GALE STANDBY: aguardando calmaria extrema ou IA Bypass para executar Gale %d (vol=%.2e, CUSUM=%.2f, H=%.3f, P(LOSS)=%s)",
                         self.risk.martingale_step,
                         avg_abs_ret,
                         _cusum,
                         _hurst,
+                        f"{p_loss:.4f}" if p_loss is not None else "N/A",
                     )
                     return
                 
-                # Calmaria extrema detectada: executa o Gale no Regime A (30% TP)
+                # Calmaria extrema ou IA Bypass detectada: executa o Gale no Regime A (30% TP)
                 object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_tp)
                 object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_hold)
                 self.risk.use_soros = False
-                logger.info(
-                    "🔥 GALE FIRE: Executando Gale %d no Regime A (30%% TP, 9 Ticks) na calmaria extrema",
-                    self.risk.martingale_step,
-                )
+                if _xgb_bypass:
+                    logger.warning(
+                        "🔥 GALE BYPASS FIRE: Executando Gale %d via IA (P(LOSS)=%.4f < %.2f) em mercado volátil!",
+                        self.risk.martingale_step,
+                        p_loss,
+                        float(os.getenv("PCS_XGB_BYPASS_LIMIT", "0.15")),
+                    )
+                else:
+                    logger.info(
+                        "🔥 GALE FIRE: Executando Gale %d no Regime A (30%% TP, 9 Ticks) na calmaria extrema",
+                        self.risk.martingale_step,
+                    )
             else:
-                # Modo normal (sem Gale): seleciona regime baseado na calmaria
+                # Modo normal (sem Gale): seleciona regime baseado na calmaria (A, B+, ou B-)
                 if is_absolute_calm:
-                    # Regime A: Sniper 30% TP com Soros ATIVO
+                    # Regime A: Sniper Pro 30% TP com Soros ATIVO
                     object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_tp)
                     object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_hold)
                     self.risk.use_soros = True
                     logger.info(
-                        "🔥 SUPER-FRANKENSTEIN: REGIME A (Sniper 30%% TP, 9 Ticks) na calmaria extrema (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros ATIVO",
+                        "🔥 PEGASUS CONGLOMERATE: REGIME A (Sniper Pro 30%% TP, 9 Ticks) na calmaria extrema (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros ATIVO",
+                        avg_abs_ret,
+                        _cusum,
+                        _hurst,
+                    )
+                elif is_medium_calm:
+                    # Regime B+: Medium Harvester 9% TP com 3 Ticks e Soros DESATIVADO
+                    regime_b_plus_tp = float(os.getenv("PCS_REGIME_B_PLUS_TP", "9.0"))
+                    regime_b_plus_hold = int(os.getenv("PCS_REGIME_B_PLUS_HOLD", "3"))
+                    object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_b_plus_tp)
+                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_b_plus_hold)
+                    self.risk.use_soros = False
+                    logger.info(
+                        "🌾 PEGASUS CONGLOMERATE: REGIME B+ (Medium Harvester %.1f%% TP, %d Ticks) na calmaria moderada (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
+                        self.config.accumulator_take_profit_percent,
+                        self.config.accumulator_max_hold_ticks,
                         avg_abs_ret,
                         _cusum,
                         _hurst,
                     )
                 else:
-                    # Regime B: Defensivo 3% TP com 1 Tick Hold e Soros DESATIVADO
-                    object.__setattr__(self.config, 'accumulator_take_profit_percent', float(os.getenv("DEFENSIVE_TAKE_PROFIT_PERCENT", "3.0")))
-                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', int(os.getenv("DEFENSIVE_MAX_HOLD_TICKS", "1")))
+                    # Regime B-: Defensive Harvester 3% TP com 1 Tick e Soros DESATIVADO
+                    regime_b_minus_tp = float(os.getenv("PCS_REGIME_B_MINUS_TP", "3.0"))
+                    regime_b_minus_hold = int(os.getenv("PCS_REGIME_B_MINUS_HOLD", "1"))
+                    object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_b_minus_tp)
+                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_b_minus_hold)
                     self.risk.use_soros = False
                     logger.info(
-                        "🛡️ SUPER-FRANKENSTEIN: REGIME B (Defensivo %.1f%% TP, %d Ticks) (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
+                        "🛡️ PEGASUS CONGLOMERATE: REGIME B- (Defensive Harvester %.1f%% TP, %d Ticks) (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
                         self.config.accumulator_take_profit_percent,
                         self.config.accumulator_max_hold_ticks,
                         avg_abs_ret,
