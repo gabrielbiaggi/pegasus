@@ -20,8 +20,18 @@ O backtest usa $50 fixo por dia (sem compounding) para evitar distorções.
 Roda infinitamente sobre 01/05/2026 a 31/05/2026 (ticks reais Deriv).
 """
 
-import os
+# ── Força saída sem buffer (logs em tempo real no systemd/tee) ────────────────
 import sys
+sys.stdout = sys.stderr if hasattr(sys.stderr, 'reconfigure') else sys.stdout
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+import os
+os.environ["PYTHONUNBUFFERED"] = "1"
+
 import json
 import time
 import random
