@@ -4688,7 +4688,11 @@
                                     '">' +
                                     (ss.roi_pct >= 0 ? "+" : "") +
                                     ss.roi_pct.toFixed(1) +
-                                    "%</td>" +
+                                    "%" +
+                                    '<div style="width: 100%; min-width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 3px;">' +
+                                    '<div style="height: 100%; width: ' + Math.min(100, Math.max(0, Math.abs(ss.roi_pct))) + '%; background: ' + (ss.roi_pct >= 0 ? 'var(--green)' : 'var(--red)') + '; border-radius: 2px;"></div>' +
+                                    '</div>' +
+                                    "</td>" +
                                     "<td>" +
                                     ss.positive_days +
                                     "/" +
@@ -4737,7 +4741,11 @@
                                 '">' +
                                 (roi >= 0 ? "+" : "") +
                                 roi.toFixed(1) +
-                                "%</td>" +
+                                "%" +
+                                '<div style="width: 100%; min-width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 3px;">' +
+                                '<div style="height: 100%; width: ' + Math.min(100, Math.max(0, Math.abs(roi))) + '%; background: ' + (roi >= 0 ? 'var(--green)' : 'var(--red)') + '; border-radius: 2px;"></div>' +
+                                '</div>' +
+                                "</td>" +
                                 "<td>" +
                                 posDays +
                                 "/" +
