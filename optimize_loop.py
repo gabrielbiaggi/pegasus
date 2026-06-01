@@ -405,7 +405,14 @@ def main():
             for idx, m in results_batch:
                 is_better = False
                 reason    = ""
-                if m["positive_days"] > best_pos:
+
+                # Guarda: só aceita recorde se PnL total >= 0 E avg_day > 0
+                # (evita situações onde mais dias positivos mas prejuízo geral)
+                pnl_ok = m["total_pnl"] >= 0 and m["avg_daily_profit"] > 0
+
+                if not pnl_ok:
+                    pass  # PnL negativo → descarta mesmo que tenha mais dias positivos
+                elif m["positive_days"] > best_pos:
                     is_better = True
                     reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
                 elif m["positive_days"] == best_pos:
