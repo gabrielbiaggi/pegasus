@@ -663,6 +663,7 @@ def _collect_day_outcomes(
     """Coleta WIN/LOSS outcomes para TODAS as configs de TP e score.
     Retorna {config_name: [(is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at)]}, elapsed.
     """
+    data_dir = Path(__file__).parent / "data"
     t0 = time.time()
     t_last_progress = t0
 
@@ -684,23 +685,53 @@ def _collect_day_outcomes(
             continue
         sample_indices.append(w)
 
-    # Pre-calcula os indicadores para o dia inteiro de uma vez só! (Super Otimização)
-    day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
-    try:
-        day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg, sample_indices=sample_indices)
-        day_indicators_df = day_indicators_df.reset_index(drop=True)
-        # Pre-calcula as probabilidades de perda do XGBoost em lote para o dia inteiro (Super Otimização)
-        if _ensemble_scorer is not None:
-            try:
-                day_indicators_df["p_loss"] = _ensemble_scorer.predict_loss_probability_batch(day_indicators_df)
-            except Exception as e:
-                print(f"  Erro no batch predict XGBoost: {e}", flush=True)
+    # ─── SISTEMA DE CACHE DE INDICADORES (Super Otimização) ─────────────────────────
+    cache_dir = data_dir / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"indicators_BOOM1000_{day.isoformat()}.csv.gz"
+    
+    day_indicators_df = None
+    if cache_path.exists():
+        try:
+            day_indicators_df = pd.read_csv(cache_path, compression="gzip")
+        except Exception as e:
+            print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
+            
+    if day_indicators_df is None:
+        # Se não houver cache, calcula usando o superconjunto de indices de amostragem
+        # (usando o limiar máximo de 2.5e-6 para cobrir qualquer candidato da busca)
+        max_calm_thresh = 2.5e-6
+        super_indices = []
+        for w in range(TICK_COUNT, len(day_df)):
+            if hours[w] in BLOCKED_HOURS:
+                continue
+            if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
+                continue
+            avg = avgs[w]
+            if np.isnan(avg) or avg >= max_calm_thresh:
+                continue
+            super_indices.append(w)
+            
+        day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
+        try:
+            day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg, sample_indices=super_indices)
+            day_indicators_df = day_indicators_df.reset_index(drop=True)
+            # Pre-calcula as probabilidades de perda do XGBoost em lote
+            if _ensemble_scorer is not None:
+                try:
+                    day_indicators_df["p_loss"] = _ensemble_scorer.predict_loss_probability_batch(day_indicators_df)
+                except Exception as e:
+                    print(f"  Erro no batch predict XGBoost: {e}", flush=True)
+                    day_indicators_df["p_loss"] = None
+            else:
                 day_indicators_df["p_loss"] = None
-        else:
-            day_indicators_df["p_loss"] = None
-    except Exception as e:
-        print(f"  Erro ao pre-calcular indicadores: {e}", flush=True)
-        return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
+                
+            # Salva no cache para uso futuro
+            day_indicators_df.to_csv(cache_path, index=False, compression="gzip")
+        except Exception as e:
+            print(f"  Erro ao pre-calcular indicadores para o dia {day}: {e}", flush=True)
+            return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
+
 
     # Pre-calcula win_ticks para cada TP unico
     tp_to_wt: dict[float, int] = {}
