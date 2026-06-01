@@ -139,7 +139,7 @@ def rand_params(base: dict) -> dict:
     return p
 
 
-def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
+def compute_score(results: list, strategy: str = "Pegasus Live Sniper (9% TP)") -> dict:
     """
     Métricas REAIS de lucro diário com banca de $50 fixo.
     Retorna dict com avg_daily_profit, positive_days, score, etc.
