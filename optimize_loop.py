@@ -274,18 +274,53 @@ def write_state(
         pass
 
 
+def _is_on_server() -> bool:
+    """Detecta se estamos rodando no servidor de produção."""
+    import socket
+    hostname = socket.gethostname().lower()
+    # Heurística: servidor tem /opt/pegasus como CWD
+    return Path("/opt/pegasus").exists() and Path.cwd() == Path("/opt/pegasus")
+
+
 def deploy_to_server(msg: str = "optimize: new best") -> bool:
-    """Faz push + scp .env + restart bot. Retorna True se OK."""
-    try:
-        subprocess.run(
-            ["./deploy.sh", msg, "--restart"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            check=True, timeout=120,
-        )
-        return True
-    except Exception as e:
-        print(f"   ❌ Deploy falhou: {e}")
-        return False
+    """
+    Faz deploy dos novos parâmetros.
+    - Se no servidor: só reinicia o bot (o .env já está atualizado localmente)
+    - Se local: chama deploy.sh para push + scp + restart remoto
+    """
+    if _is_on_server():
+        # No servidor: reinicia o bot ao vivo com os novos parâmetros do .env
+        try:
+            # Para o bot atual
+            subprocess.run(
+                ["pkill", "-f", "python bot.py"],
+                capture_output=True, timeout=10,
+            )
+            import time as _t
+            _t.sleep(2)
+            # Reinicia via screen (como está no servidor)
+            subprocess.run(
+                ["screen", "-dmS", "pegasus", "bash", "-c",
+                 "cd /opt/pegasus && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"],
+                check=True, timeout=15,
+            )
+            print(f"   ✅ Bot reiniciado no servidor com novos parâmetros!")
+            return True
+        except Exception as e:
+            print(f"   ⚠️  Restart do bot falhou: {e} (parâmetros salvos no .env)")
+            return False
+    else:
+        # Local: usa deploy.sh completo
+        try:
+            subprocess.run(
+                ["./deploy.sh", msg, "--restart"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=True, timeout=120,
+            )
+            return True
+        except Exception as e:
+            print(f"   ❌ Deploy falhou: {e}")
+            return False
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
