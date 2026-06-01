@@ -677,6 +677,15 @@ def _collect_day_outcomes(
     try:
         day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg)
         day_indicators_df = day_indicators_df.reset_index(drop=True)
+        # Pre-calcula as probabilidades de perda do XGBoost em lote para o dia inteiro (Super Otimização)
+        if _ensemble_scorer is not None:
+            try:
+                day_indicators_df["p_loss"] = _ensemble_scorer.predict_loss_probability_batch(day_indicators_df)
+            except Exception as e:
+                print(f"  Erro no batch predict XGBoost: {e}", flush=True)
+                day_indicators_df["p_loss"] = None
+        else:
+            day_indicators_df["p_loss"] = None
     except Exception as e:
         print(f"  Erro ao pre-calcular indicadores: {e}", flush=True)
         return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0

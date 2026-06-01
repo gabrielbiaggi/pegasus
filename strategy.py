@@ -1162,12 +1162,22 @@ class EnsembleScorer:
 
     def predict_loss_probability(self, row: pd.Series) -> float:
         """Return P(LOSS) for a single indicator row. LOSS=1 = positive class."""
+        if "p_loss" in row and row["p_loss"] is not None:
+            val = row["p_loss"]
+            if val == val:  # check NaN
+                return float(val)
         values = [float(row.get(feat, 0.0)) for feat in self.feature_names]
         if any(v != v for v in values):  # NaN guard
             return 0.0
         x = np.array([values], dtype=float)
         dmatrix = xgb.DMatrix(x, feature_names=self.feature_names)
         return float(self.booster.predict(dmatrix)[0])
+
+    def predict_loss_probability_batch(self, df: pd.DataFrame) -> np.ndarray:
+        """Predict P(LOSS) for a batch DataFrame of features."""
+        X = df[self.feature_names].fillna(0.0).to_numpy(dtype=float)
+        dmatrix = xgb.DMatrix(X, feature_names=self.feature_names)
+        return self.booster.predict(dmatrix)
 
 
 # ---------------------------------------------------------------------------
