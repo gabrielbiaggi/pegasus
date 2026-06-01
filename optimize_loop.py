@@ -277,31 +277,49 @@ def _is_on_server() -> bool:
 def deploy_winner(env_vars: dict, msg: str, min_pnl: float = 5.0) -> bool:
     """
     Salva .env e reinicia o bot ao vivo com os novos parâmetros.
-    min_pnl: só reinicia bot se PnL total do novo recorde >= este valor.
+    Garante que nunca haverá instâncias duplicadas do bot.
     """
     save_env(env_vars)
     print(f"   💾 .env salvo com novos parâmetros.", flush=True)
 
     if _is_on_server():
         try:
-            # Mata apenas a session 'pegasus' do screen (não todos os python!)
+            # 1. Mata TODOS os bots existentes por PID (pgrep exato)
+            pids_result = subprocess.run(
+                ["pgrep", "-f", "python bot.py"],
+                capture_output=True, timeout=5,
+            )
+            if pids_result.returncode == 0:
+                pids = pids_result.stdout.decode().strip().split()
+                for pid in pids:
+                    try:
+                        subprocess.run(["kill", pid], capture_output=True, timeout=3)
+                    except Exception:
+                        pass
+                print(f"   🛑 Bots anteriores finalizados (PIDs: {' '.join(pids)})", flush=True)
+                time.sleep(3)
+
+            # 2. Encerra qualquer screen session 'pegasus' remanescente
             subprocess.run(["screen", "-S", "pegasus", "-X", "quit"],
                            capture_output=True, timeout=5)
-            time.sleep(2)
-            # Cria nova session screen com o bot
-            result = subprocess.run(
+            time.sleep(1)
+
+            # 3. Cria UMA nova session screen
+            subprocess.run(
                 ["screen", "-dmS", "pegasus", "bash", "-c",
                  "cd /opt/pegasus && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"],
                 capture_output=True, timeout=15,
             )
             time.sleep(3)
-            # Confirma que o bot está rodando
+
+            # 4. Confirma exatamente 1 instância
             check = subprocess.run(
                 ["pgrep", "-f", "python bot.py"],
                 capture_output=True, timeout=5,
             )
-            if check.returncode == 0:
-                print(f"   🚀 Bot reiniciado com novos parâmetros! (PID={check.stdout.strip().decode()})", flush=True)
+            pids_new = check.stdout.decode().strip().split() if check.returncode == 0 else []
+            if pids_new:
+                print(f"   🚀 Bot reiniciado! 1 instância ativa (PID={pids_new[0]})", flush=True)
                 return True
             else:
                 print(f"   ⚠️  Bot não iniciou — params salvos no .env", flush=True)
@@ -320,6 +338,7 @@ def deploy_winner(env_vars: dict, msg: str, min_pnl: float = 5.0) -> bool:
         except Exception as e:
             print(f"   ❌ deploy.sh: {e}", flush=True)
             return False
+
 
 
 # ── Formatação de métricas ────────────────────────────────────────────────────
