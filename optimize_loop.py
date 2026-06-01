@@ -440,12 +440,21 @@ def main():
                 is_better = False
                 reason    = ""
 
-                # Guarda: só aceita recorde se PnL total >= 0 E avg_day > 0
-                # (evita situações onde mais dias positivos mas prejuízo geral)
-                pnl_ok = m["total_pnl"] >= 0 and m["avg_daily_profit"] > 0
+                # Sanity check: só aceita recorde se:
+                # 1) PnL total >= 0 E avg_day > 0 (sem prejuízo)
+                # 2) avg_daily <= 30 (evita resultados implausíveis com stake<=8 e $50)
+                # 3) active_days > 20 (bot realmente operou o mês inteiro)
+                active = m.get("active_days", 0) or 0
+                avg_d  = m["avg_daily_profit"]
+                pnl_ok = (
+                    m["total_pnl"] >= 0
+                    and avg_d > 0
+                    and avg_d <= 30.0      # teto de plausibilidade: max ~$30/dia com $50 banca
+                    and active >= 20       # pelo menos 20 dias com operações
+                )
 
                 if not pnl_ok:
-                    pass  # PnL negativo → descarta mesmo que tenha mais dias positivos
+                    pass  # resultado inválido ou implausível → descarta
                 elif m["positive_days"] > best_pos:
                     is_better = True
                     reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
