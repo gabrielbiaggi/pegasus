@@ -274,23 +274,38 @@ def _is_on_server() -> bool:
     return Path("/opt/pegasus").exists() and Path.cwd() == Path("/opt/pegasus")
 
 
-def deploy_winner(env_vars: dict, msg: str) -> bool:
-    """Salva .env e reinicia o bot ao vivo com os novos parâmetros."""
+def deploy_winner(env_vars: dict, msg: str, min_pnl: float = 5.0) -> bool:
+    """
+    Salva .env e reinicia o bot ao vivo com os novos parâmetros.
+    min_pnl: só reinicia bot se PnL total do novo recorde >= este valor.
+    """
     save_env(env_vars)
     print(f"   💾 .env salvo com novos parâmetros.", flush=True)
 
     if _is_on_server():
         try:
-            subprocess.run(["pkill", "-f", "python bot.py"],
-                           capture_output=True, timeout=10)
-            time.sleep(3)
-            subprocess.run(
+            # Mata apenas a session 'pegasus' do screen (não todos os python!)
+            subprocess.run(["screen", "-S", "pegasus", "-X", "quit"],
+                           capture_output=True, timeout=5)
+            time.sleep(2)
+            # Cria nova session screen com o bot
+            result = subprocess.run(
                 ["screen", "-dmS", "pegasus", "bash", "-c",
                  "cd /opt/pegasus && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"],
-                check=True, timeout=15,
+                capture_output=True, timeout=15,
             )
-            print(f"   🚀 Bot reiniciado com novos parâmetros!", flush=True)
-            return True
+            time.sleep(3)
+            # Confirma que o bot está rodando
+            check = subprocess.run(
+                ["pgrep", "-f", "python bot.py"],
+                capture_output=True, timeout=5,
+            )
+            if check.returncode == 0:
+                print(f"   🚀 Bot reiniciado com novos parâmetros! (PID={check.stdout.strip().decode()})", flush=True)
+                return True
+            else:
+                print(f"   ⚠️  Bot não iniciou — params salvos no .env", flush=True)
+                return False
         except Exception as e:
             print(f"   ⚠️  Restart bot: {e} — params salvos no .env", flush=True)
             return False
