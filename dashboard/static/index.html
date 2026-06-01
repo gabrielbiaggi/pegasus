@@ -3119,6 +3119,11 @@
                     if (_btPollTimer) clearInterval(_btPollTimer);
                     _btPollTimer = setInterval(pollBacktestStatus, 1000); // 1s enquanto aberto
                 }
+                if (id === "modal-optimizer") {
+                    pollOptimizerStatus(); // poll imediato
+                    if (_optPollTimer) clearInterval(_optPollTimer);
+                    _optPollTimer = setInterval(pollOptimizerStatus, 3000); // 3s enquanto aberto
+                }
             }
             function closeModal(id) {
                 $(id).classList.remove("active");
@@ -3127,7 +3132,12 @@
                     clearInterval(_btPollTimer); // para polling ao fechar
                     _btPollTimer = null;
                 }
+                if (id === "modal-optimizer" && _optPollTimer) {
+                    clearInterval(_optPollTimer);
+                    _optPollTimer = null;
+                }
             }
+
             document.addEventListener("keydown", function (e) {
                 if (e.key === "Escape") {
                     document
