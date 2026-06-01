@@ -982,6 +982,7 @@ def backtest_run(
     start: str = "2026-05-06",
     end: str | None = None,
     start_balance: float = 50.0,
+    compounding: bool = True,
     response: Response = None,
 ):
     """Inicia backtest em background. Retorna imediatamente."""
@@ -1021,7 +1022,12 @@ def backtest_run(
         str(start_balance),
         out_file,
     ]
-    _backtest_proc = subprocess.Popen(cmd, cwd=str(BASE))
+    
+    import os
+    env = os.environ.copy()
+    env["BACKTEST_COMPOUNDING"] = "true" if compounding else "false"
+    
+    _backtest_proc = subprocess.Popen(cmd, cwd=str(BASE), env=env)
     return {"status": "started", "start": start, "end": end, "output": out_file}
 
 

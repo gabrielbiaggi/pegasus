@@ -2123,8 +2123,22 @@
                                     border-radius: 6px;
                                     padding: 4px 6px;
                                     font-size: 0.8rem;
+                        </div>
+                        <div class="param-row" style="display: flex; align-items: center; gap: 6px;">
+                            <input
+                                type="checkbox"
+                                id="bt-compounding"
+                                checked
+                                style="
+                                    cursor: pointer;
+                                    width: 16px;
+                                    height: 16px;
+                                    accent-color: var(--purple);
                                 "
                             />
+                            <label for="bt-compounding" style="font-size: 0.8rem; cursor: pointer; user-select: none; color: var(--fg)">
+                                Reinvestir (Composto)
+                            </label>
                         </div>
                         <button
                             class="btn btn-purple"
@@ -4417,13 +4431,15 @@
                 var pb = $("bt-progress-bar");
                 if (pb) pb.style.width = "0%";
                 try {
+                    var compounding = document.getElementById("bt-compounding") ? document.getElementById("bt-compounding").checked : true;
                     await fetch(
                         "/api/backtest/run?start=" +
                             start +
                             "&end=" +
                             end +
                             "&start_balance=" +
-                            bal,
+                            bal +
+                            "&compounding=" + compounding,
                         { method: "POST" },
                     );
                     if (_btPollTimer) clearInterval(_btPollTimer);
