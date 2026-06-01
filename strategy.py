@@ -44,6 +44,23 @@ except ImportError:  # pragma: no cover
 _calm_heartbeat_ts: float = 0.0  # throttle heartbeat log to every 30s
 
 
+def _rolling_apply_opt(series: pd.Series, window: int, func, sample_indices=None, **kwargs) -> pd.Series:
+    if sample_indices is None:
+        return series.rolling(window).apply(func, raw=True, **kwargs)
+    
+    res = np.empty(len(series))
+    res[:] = np.nan
+    vals = series.values
+    for idx in sample_indices:
+        if idx >= window - 1:
+            try:
+                res[idx] = func(vals[idx - window + 1 : idx + 1], **kwargs)
+            except Exception:
+                res[idx] = np.nan
+    return pd.Series(res, index=series.index)
+
+
+
 @dataclass(frozen=True)
 class AccumulatorStrategyConfig:
     min_score: int = 17
@@ -110,7 +127,9 @@ class AccumulatorStrategyConfig:
 
 
 def calculate_tick_indicators(
-    ticks: list[dict], config: AccumulatorStrategyConfig | None = None
+    ticks: list[dict],
+    config: AccumulatorStrategyConfig | None = None,
+    sample_indices: list[int] | np.ndarray | None = None,
 ) -> pd.DataFrame:
     config = config or AccumulatorStrategyConfig()
     df = pd.DataFrame(ticks)
@@ -151,10 +170,9 @@ def calculate_tick_indicators(
         df["close"], config.imbalance_window
     )
     df["hawkes_intensity"] = _calculate_hawkes_intensity(df, config)
-    df["hurst_exponent"] = (
-        df["close"]
-        .rolling(config.hurst_window)
-        .apply(_hurst_exponent_from_prices, raw=True)
+    
+    df["hurst_exponent"] = _rolling_apply_opt(
+        df["close"], config.hurst_window, _hurst_exponent_from_prices, sample_indices
     )
     df["price_velocity"] = _finite_velocity(df["close"])
     df["price_acceleration"] = _finite_acceleration(df["close"])
@@ -164,10 +182,8 @@ def calculate_tick_indicators(
     df["acceleration_zscore"] = _rolling_abs_zscore(
         df["price_acceleration"], config.derivative_window
     )
-    df["integral_mean_price"] = (
-        df["close"]
-        .rolling(config.integral_window)
-        .apply(_integral_mean_price, raw=True)
+    df["integral_mean_price"] = _rolling_apply_opt(
+        df["close"], config.integral_window, _integral_mean_price, sample_indices
     )
     df["pmi_distance_percent"] = (
         (df["close"] - df["integral_mean_price"]).abs() / df["close"] * 100
@@ -175,7 +191,7 @@ def calculate_tick_indicators(
     markov = _markov_transition_probabilities(df["close"], config.markov_window)
     df["markov_p_up_given_up"] = markov["markov_p_up_given_up"]
     df["markov_p_down_given_down"] = markov["markov_p_down_given_down"]
-    df["shannon_entropy"] = _shannon_entropy(df["close"], config.shannon_entropy_window)
+    df["shannon_entropy"] = _shannon_entropy(df["close"], config.shannon_entropy_window, sample_indices)
     kalman = _kalman_filter_metrics(df["close"], config.kalman_q, config.kalman_r)
     df["kalman_estimate"] = kalman["kalman_estimate"]
     df["kalman_covariance"] = kalman["kalman_covariance"]
@@ -185,7 +201,7 @@ def calculate_tick_indicators(
     )
 
     # --- RF directional indicators (signed, direction-predictive) ---
-    df["ols_slope"] = df["close"].rolling(config.ols_window).apply(_ols_slope, raw=True)
+    df["ols_slope"] = _rolling_apply_opt(df["close"], config.ols_window, _ols_slope, sample_indices)
     df["price_momentum"] = df["close"].pct_change(config.momentum_window) * 100
     _ema_fast = ta.trend.EMAIndicator(df["close"], window=5).ema_indicator()
     _ema_slow = ta.trend.EMAIndicator(df["close"], window=20).ema_indicator()
@@ -195,11 +211,11 @@ def calculate_tick_indicators(
     df["markov2_puu"] = _markov2["puu"]
     df["markov2_pdd"] = _markov2["pdd"]
     df["return_autocorr_lag1"] = _rolling_return_autocorr(
-        df["close"], lag=1, window=config.autocorr_window
+        df["close"], lag=1, window=config.autocorr_window, sample_indices=sample_indices
     )
     df["return_skewness"] = df["close"].diff().rolling(config.skewness_window).skew()
-    df["fft_dominant_period"] = (
-        df["close"].rolling(config.fft_window).apply(_fft_dominant_period, raw=True)
+    df["fft_dominant_period"] = _rolling_apply_opt(
+        df["close"], config.fft_window, _fft_dominant_period, sample_indices
     )
 
     # --- Advanced calculus & statistical indicators (universal) ---
@@ -213,32 +229,36 @@ def calculate_tick_indicators(
         df["close"],
         _ema_slow,
         config.integral_window,
+        sample_indices,
     )
     df["derivative_energy"] = _derivative_energy(
-        df["price_velocity"], config.derivative_window
+        df["price_velocity"], config.derivative_window, sample_indices
     )
-    df["trend_exhaustion"] = _trend_exhaustion(df["close"], config.integral_window)
+    df["trend_exhaustion"] = _trend_exhaustion(df["close"], config.integral_window, sample_indices)
     df["return_zscore"] = _rolling_return_zscore(df["close"], config.derivative_window)
-    df["lyapunov_exponent"] = (
-        df["close"].rolling(config.hurst_window).apply(_rolling_lyapunov, raw=True)
+    df["lyapunov_exponent"] = _rolling_apply_opt(
+        df["close"], config.hurst_window, _rolling_lyapunov, sample_indices
     )
 
     # --- Advanced mathematical intelligence filters ---
     df["bayesian_prob_up"] = _bayesian_prob_up(
-        df["close"], config.shannon_entropy_window
+        df["close"], config.shannon_entropy_window, sample_indices
     )
     df["renyi_entropy"] = _renyi_entropy(
-        df["close"], config.shannon_entropy_window, alpha=0.5
+        df["close"], config.shannon_entropy_window, 0.5, sample_indices
     )
     df["fisher_information"] = _fisher_information(
         df["close"], config.derivative_window
     )
-    df["wavelet_energy_ratio"] = _wavelet_energy_ratio(df["close"], window=32)
-    df["cusum_score"] = _cusum_score(df["close"], config.shannon_entropy_window)
-    df["tail_dependence"] = _copula_tail_dependence(df["close"], config.markov_window)
+    df["wavelet_energy_ratio"] = _wavelet_energy_ratio(df["close"], 32, sample_indices)
+    df["cusum_score"] = _cusum_score(df["close"], config.shannon_entropy_window, sample_indices)
+    df["tail_dependence"] = _copula_tail_dependence(df["close"], config.markov_window, sample_indices)
     df["mi_flow"] = _mutual_information_flow(
-        df["close"], config.shannon_entropy_window, lag=1
+        df["close"], config.shannon_entropy_window, 1, sample_indices
     )
+
+    # Pre-calcula a mediana do derivative energy de forma vetorizada rápida
+    df["de_median"] = df["derivative_energy"].rolling(100).median().fillna(1.0)
 
     return df
 
@@ -514,7 +534,7 @@ def _markov_transition_probabilities(
     )
 
 
-def _shannon_entropy(close: pd.Series, window: int = 30) -> pd.Series:
+def _shannon_entropy(close: pd.Series, window: int = 30, sample_indices=None) -> pd.Series:
     returns = close.diff().fillna(0.0)
     scale = returns.abs().rolling(window).median().replace(0, np.nan)
     normalized = returns / scale
@@ -525,7 +545,7 @@ def _shannon_entropy(close: pd.Series, window: int = 30) -> pd.Series:
         include_lowest=True,
     ).fillna(2)
 
-    return categories.rolling(window).apply(_normalized_entropy, raw=True)
+    return _rolling_apply_opt(categories, window, _normalized_entropy, sample_indices)
 
 
 def _normalized_entropy(categories: np.ndarray) -> float:
@@ -609,6 +629,7 @@ def _integral_momentum_divergence(
     close: pd.Series,
     ema_slow: pd.Series,
     window: int,
+    sample_indices=None,
 ) -> pd.Series:
     """Signed integral divergence: ∫(price - EMA_slow) dt over rolling window.
 
@@ -619,34 +640,30 @@ def _integral_momentum_divergence(
     This is analogous to the MACD histogram area — accumulated divergence energy.
     """
     diff = close - ema_slow
-    return (
-        diff.rolling(window)
-        .apply(
-            lambda x: float(integrate_trapezoid(x, dx=1.0)),
-            raw=True,
-        )
-        .fillna(0.0)
-    )
+    return _rolling_apply_opt(
+        diff,
+        window,
+        lambda x: float(integrate_trapezoid(x, dx=1.0)),
+        sample_indices,
+    ).fillna(0.0)
 
 
-def _derivative_energy(velocity: pd.Series, window: int) -> pd.Series:
+def _derivative_energy(velocity: pd.Series, window: int, sample_indices=None) -> pd.Series:
     """Rolling kinetic energy proxy: ∫v² dt over window (trapezoidal rule).
 
     Analogous to kinetic energy ½mv². High energy = large sustained moves.
     Low energy = calm market. This is scale-free (no price level bias).
     """
     v2 = velocity**2
-    return (
-        v2.rolling(window)
-        .apply(
-            lambda x: float(integrate_trapezoid(x, dx=1.0)),
-            raw=True,
-        )
-        .fillna(0.0)
-    )
+    return _rolling_apply_opt(
+        v2,
+        window,
+        lambda x: float(integrate_trapezoid(x, dx=1.0)),
+        sample_indices,
+    ).fillna(0.0)
 
 
-def _trend_exhaustion(close: pd.Series, window: int) -> pd.Series:
+def _trend_exhaustion(close: pd.Series, window: int, sample_indices=None) -> pd.Series:
     """Signed trend exhaustion: ∫(price - SMA) / SMA dt.
 
     Measures accumulated percentage deviation from rolling mean.
@@ -657,14 +674,12 @@ def _trend_exhaustion(close: pd.Series, window: int) -> pd.Series:
     sma = close.rolling(window).mean()
     pct_dev = (close - sma) / sma.replace(0, np.nan)
     pct_dev = pct_dev.fillna(0.0)
-    return (
-        pct_dev.rolling(window)
-        .apply(
-            lambda x: float(integrate_trapezoid(x, dx=1.0)),
-            raw=True,
-        )
-        .fillna(0.0)
-    )
+    return _rolling_apply_opt(
+        pct_dev,
+        window,
+        lambda x: float(integrate_trapezoid(x, dx=1.0)),
+        sample_indices,
+    ).fillna(0.0)
 
 
 def _rolling_return_zscore(close: pd.Series, window: int) -> pd.Series:
@@ -724,7 +739,7 @@ def _rolling_lyapunov(prices: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _bayesian_prob_up(close: pd.Series, window: int = 30) -> pd.Series:
+def _bayesian_prob_up(close: pd.Series, window: int = 30, sample_indices=None) -> pd.Series:
     """Sequential Bayesian posterior P(next tick up) using Beta conjugate prior.
 
     Starts with uniform Beta(1,1) prior and updates with each tick direction.
@@ -740,10 +755,10 @@ def _bayesian_prob_up(close: pd.Series, window: int = 30) -> pd.Series:
         beta = 1.0 + float(len(x) - x.sum())  # prior=1 + observed downs
         return alpha / (alpha + beta)
 
-    return signs.rolling(window).apply(_beta_prob, raw=True).fillna(0.5)
+    return _rolling_apply_opt(signs, window, _beta_prob, sample_indices).fillna(0.5)
 
 
-def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5) -> pd.Series:
+def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5, sample_indices=None) -> pd.Series:
     """Rényi entropy of order α on discretized returns.
 
     Generalization of Shannon entropy. For α < 1, Rényi entropy is MORE
@@ -776,7 +791,7 @@ def _renyi_entropy(close: pd.Series, window: int = 30, alpha: float = 0.5) -> pd
         h = (1.0 / (1.0 - alpha)) * np.log2(sum_pa)
         return float(h / np.log2(n_bins))  # normalize to [0,1]
 
-    return categories.rolling(window).apply(_renyi, raw=True).fillna(0.5)
+    return _rolling_apply_opt(categories, window, _renyi, sample_indices).fillna(0.5)
 
 
 def _fisher_information(close: pd.Series, window: int = 30) -> pd.Series:
@@ -798,7 +813,7 @@ def _fisher_information(close: pd.Series, window: int = 30) -> pd.Series:
     return fi / window
 
 
-def _wavelet_energy_ratio(close: pd.Series, window: int = 32) -> pd.Series:
+def _wavelet_energy_ratio(close: pd.Series, window: int = 32, sample_indices=None) -> pd.Series:
     """Haar wavelet decomposition signal-to-noise energy ratio.
 
     Decomposes price into approximation (signal) and detail (noise) at
@@ -838,10 +853,10 @@ def _wavelet_energy_ratio(close: pd.Series, window: int = 32) -> pd.Series:
         signal_energy = max(total_energy - detail_energy, 0.0)
         return signal_energy / total_energy
 
-    return close.rolling(window).apply(_haar_snr, raw=True).fillna(0.5)
+    return _rolling_apply_opt(close, window, _haar_snr, sample_indices).fillna(0.5)
 
 
-def _cusum_score(close: pd.Series, window: int = 30) -> pd.Series:
+def _cusum_score(close: pd.Series, window: int = 30, sample_indices=None) -> pd.Series:
     """CUSUM (Cumulative Sum) regime change detector score.
 
     Tracks cumulative deviations of returns from their rolling mean.
@@ -875,10 +890,10 @@ def _cusum_score(close: pd.Series, window: int = 30) -> pd.Series:
             max_cusum = max(max_cusum, cusum_pos, cusum_neg)
         return max_cusum
 
-    return returns.rolling(window).apply(_cusum, raw=True).fillna(0.0)
+    return _rolling_apply_opt(returns, window, _cusum, sample_indices).fillna(0.0)
 
 
-def _copula_tail_dependence(close: pd.Series, window: int = 50) -> pd.Series:
+def _copula_tail_dependence(close: pd.Series, window: int = 50, sample_indices=None) -> pd.Series:
     """Empirical tail dependence coefficient between velocity and acceleration.
 
     Measures the probability that both velocity AND acceleration are in their
@@ -920,11 +935,11 @@ def _copula_tail_dependence(close: pd.Series, window: int = 50) -> pd.Series:
             return 0.0
         return float(np.sum(both)) / n_either
 
-    return vel.rolling(window).apply(_tail_dep, raw=True).fillna(0.0)
+    return _rolling_apply_opt(vel, window, _tail_dep, sample_indices).fillna(0.0)
 
 
 def _mutual_information_flow(
-    close: pd.Series, window: int = 30, lag: int = 1
+    close: pd.Series, window: int = 30, lag: int = 1, sample_indices=None
 ) -> pd.Series:
     """Mutual information between past returns and future returns.
 
@@ -967,7 +982,7 @@ def _mutual_information_flow(
                     mi += joint[i, j] * np.log2(joint[i, j] / (p_past[i] * p_future[j]))
         return max(0.0, mi)  # MI is non-negative
 
-    return categories.rolling(window).apply(_mi, raw=True).fillna(0.0)
+    return _rolling_apply_opt(categories, window, _mi, sample_indices).fillna(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1029,7 +1044,7 @@ def _second_order_markov(close: pd.Series, window: int = 50) -> pd.DataFrame:
     return pd.DataFrame({"puu": puu, "pdd": pdd}, index=close.index)
 
 
-def _rolling_return_autocorr(close: pd.Series, lag: int, window: int) -> pd.Series:
+def _rolling_return_autocorr(close: pd.Series, lag: int, window: int, sample_indices=None) -> pd.Series:
     """Rolling autocorrelation of price returns at the given lag.
 
     Positive value = momentum (returns persist); negative = mean-reversion.
@@ -1047,7 +1062,7 @@ def _rolling_return_autocorr(close: pd.Series, lag: int, window: int) -> pd.Seri
             return 0.0
         return float(np.mean((x1 - x1.mean()) * (x2 - x2.mean())) / (std1 * std2))
 
-    return returns.rolling(window).apply(_autocorr, raw=True).fillna(0.0)
+    return _rolling_apply_opt(returns, window, _autocorr, sample_indices).fillna(0.0)
 
 
 def _fft_dominant_period(prices: np.ndarray) -> float:

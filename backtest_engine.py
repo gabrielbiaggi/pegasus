@@ -672,10 +672,22 @@ def _collect_day_outcomes(
     epochs = day_df["epoch"].values
     total_ticks = len(day_df)
 
+    # Determina quais índices serão avaliados (amostrados) no backtest
+    sample_indices = []
+    for w in range(TICK_COUNT, len(day_df)):
+        if hours[w] in BLOCKED_HOURS:
+            continue
+        if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
+            continue
+        avg = avgs[w]
+        if np.isnan(avg) or avg >= CALM_THRESH:
+            continue
+        sample_indices.append(w)
+
     # Pre-calcula os indicadores para o dia inteiro de uma vez só! (Super Otimização)
     day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
     try:
-        day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg)
+        day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg, sample_indices=sample_indices)
         day_indicators_df = day_indicators_df.reset_index(drop=True)
         # Pre-calcula as probabilidades de perda do XGBoost em lote para o dia inteiro (Super Otimização)
         if _ensemble_scorer is not None:
