@@ -114,7 +114,7 @@ accu_cfg = AccumulatorStrategyConfig(
     kalman_q=1e-5,
     kalman_r=1e-2,
     max_kalman_residual_zscore=2.0,
-    use_ensemble=False,
+    use_ensemble=True,
     ensemble_min_prob=0.294,
     calm_min_score=CALM_MIN_SCORE,
 )

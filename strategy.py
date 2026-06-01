@@ -82,7 +82,7 @@ class AccumulatorStrategyConfig:
     # HMM regime filter
     hmm_window: int = 200
     hmm_n_states: int = 2
-    hmm_high_variance_blocks: bool = True
+    hmm_high_variance_blocks: bool = False
     # Ensemble scoring (XGBoost P(LOSS) gate)
     use_ensemble: bool = False
     ensemble_min_prob: float = 0.294
