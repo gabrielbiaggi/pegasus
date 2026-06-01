@@ -2561,18 +2561,24 @@
                             <div id="opt-best-consist" style="font-size:1.55rem;font-weight:700;color:var(--yellow)">—</div>
                             <div style="font-size:.75rem;color:var(--muted)">% dias positivos</div>
                         </div>
-                        <!-- Iterações -->
+                        <!-- Iterações + Workers -->
                         <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
                             <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Iterações</div>
                             <div id="opt-iter-count" style="font-size:1.55rem;font-weight:700;color:var(--purple)">0</div>
                             <div id="opt-last-update" style="font-size:.75rem;color:var(--muted)">Última: —</div>
+                        </div>
+                        <!-- Workers paralelos -->
+                        <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚡ Workers</div>
+                            <div id="opt-workers" style="font-size:1.55rem;font-weight:700;color:var(--orange, #f97316)">—</div>
+                            <div style="font-size:.75rem;color:var(--muted)">paralelos (i7-9700)</div>
                         </div>
                     </div>
 
                     <!-- Tabela de iterações -->
                     <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
                         <div style="padding:10px 14px;background:var(--bg3);font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between">
-                            <span>Histórico de Iterações — Últimas 50</span>
+                            <span>Histórico de Iterações — Últimas 200</span>
                             <span id="opt-running-dot" style="display:none;color:var(--green)">⬤ processando...</span>
                         </div>
                         <div style="max-height:360px;overflow-y:auto">
@@ -5116,20 +5122,26 @@
                         }
                     }
 
-                    // ── Contador e última atualização ────────────────────────────────────────
+                    // ── Contador, workers e última atualização ───────────────────────────────
                     var ict = document.getElementById("opt-iter-count");
                     var ilu = document.getElementById("opt-last-update");
+                    var iwk = document.getElementById("opt-workers");
                     if (ict) ict.textContent = d.current_iteration || 0;
+                    if (iwk) {
+                        var nw = d.n_workers || 1;
+                        iwk.textContent = nw + "x";
+                        iwk.style.color = nw >= 6 ? "#f97316" : "var(--yellow)";
+                    }
                     if (ilu && d.last_update_ago_s != null) {
                         var ago = d.last_update_ago_s;
                         var agoStr = ago < 60 ? ago + "s atrás" : Math.floor(ago/60) + "m atrás";
-                        ilu.textContent = "Última: " + agoStr;
+                        ilu.textContent = "Atualizado " + agoStr;
                     }
 
-                    // ── Tabela de iterações v2 (últimas 50, ordem inversa) ───────────────────
+                    // ── Tabela de iterações v3 (últimas 200, ordem inversa) ───────────────────
                     var tbody = document.getElementById("opt-iter-tbody");
                     if (tbody && d.iterations && d.iterations.length > 0) {
-                        var iters = d.iterations.slice().reverse().slice(0, 50);
+                        var iters = d.iterations.slice().reverse().slice(0, 200);
                         tbody.innerHTML = iters.map(function(it) {
                             var avgDay     = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : null);
                             var posD       = it.positive_days != null ? it.positive_days : "—";
