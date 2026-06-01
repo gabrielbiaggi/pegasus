@@ -550,6 +550,25 @@ class RiskManager:
         if "session_start_ts" in data:
             self.session_start_ts = float(data["session_start_ts"])
 
+        # Carrega cooldown de sessao persistente (converte epoch para monotonic local)
+        cooldown_epoch = float(data.get("cooldown_until_epoch", 0.0))
+        if cooldown_epoch > 0:
+            cooldown_left = cooldown_epoch - time.time()
+            if cooldown_left > 0:
+                self.cooldown_until = self._get_monotonic_time() + cooldown_left
+                logger.info(
+                    "Restaurado cooldown de sessao: %.1f min restantes (persistente)",
+                    cooldown_left / 60,
+                )
+            else:
+                self.cooldown_until = 0.0
+                logger.info("Cooldown de sessao expirou durante o restart.")
+        else:
+            # Fallback para o caso antigo (se o cooldown foi salvo recentemente e o bot reiniciou no mesmo boot)
+            old_cooldown = float(data.get("cooldown_until", 0.0))
+            if old_cooldown > 0 and old_cooldown < self._get_monotonic_time() * 2.0:
+                self.cooldown_until = old_cooldown
+
 
         # FIX 3: reativa trailing se high-water-mark ja foi atingido antes do restart.
         # Garante que o lock de lucro nao se perde em reinicios.
@@ -589,6 +608,12 @@ class RiskManager:
 
     def _save_state(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        cooldown_epoch = 0.0
+        if self.cooldown_until > 0:
+            cooldown_left = self.cooldown_until - self._get_monotonic_time()
+            if cooldown_left > 0:
+                cooldown_epoch = time.time() + cooldown_left
+
         data = {
             "day": self.day,
             "start_of_day_balance": self.start_of_day_balance,
@@ -609,6 +634,7 @@ class RiskManager:
             "loss_block_override": self.loss_block_override,
             "session_start_ts": self.session_start_ts,
             "cooldown_until": self.cooldown_until,
+            "cooldown_until_epoch": cooldown_epoch,
         }
         self.state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
