@@ -1246,7 +1246,8 @@ class DerivBot:
         await self.subscribe_balance(ws)
         self._flush_balance(balance)  # seed balance.json imediatamente após autorização
         # Reconcile P&L counters from DB (fixes drift after restarts)
-        db_summary = self.journal.get_daily_summary()
+        db_summary = self.journal.get_daily_summary(self.risk.day)
+
         if db_summary:
             self.risk.reconcile_pnl(db_summary)
         # Zombie-trade protection: reconcile open positions before subscribing ticks

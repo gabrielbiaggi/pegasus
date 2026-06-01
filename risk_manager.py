@@ -547,6 +547,9 @@ class RiskManager:
         )
         self.martingale_base_stake = float(data.get("martingale_base_stake", 0.0))
         self.loss_block_override = bool(data.get("loss_block_override", False))
+        if "session_start_ts" in data:
+            self.session_start_ts = float(data["session_start_ts"])
+
 
         # FIX 3: reativa trailing se high-water-mark ja foi atingido antes do restart.
         # Garante que o lock de lucro nao se perde em reinicios.

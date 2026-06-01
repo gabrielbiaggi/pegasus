@@ -319,11 +319,28 @@ class TradeJournal:
         except Exception as exc:
             _log.error("log_trade CSV error: %s", exc)
 
-    def get_daily_summary(self) -> dict[str, float | int] | None:
+    def get_daily_summary(self, day_iso: str | None = None) -> dict[str, float | int] | None:
         """Query DB for today's aggregated P&L. Returns None if DB unavailable."""
         if not self._pg_dsn or not _HAS_PSYCOPG2:
             return None
+
+        import datetime
+        from datetime import timezone
+        import os
+
+        if not day_iso:
+            day_iso = datetime.date.today().isoformat()
+
         try:
+            tz_offset = int(os.getenv("USER_TZ_OFFSET", "-3"))
+        except (ValueError, TypeError):
+            tz_offset = -3
+
+        try:
+            dt = datetime.datetime.strptime(day_iso, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            start_utc = dt - datetime.timedelta(hours=tz_offset)
+            end_utc = start_utc + datetime.timedelta(days=1)
+
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -333,7 +350,8 @@ class TradeJournal:
                         "  COALESCE(SUM(CASE WHEN result='LOSS' THEN 1 ELSE 0 END), 0) AS losses, "
                         "  COALESCE(SUM(profit), 0) AS net_profit, "
                         "  COALESCE(SUM(CASE WHEN profit < 0 THEN ABS(profit) ELSE 0 END), 0) AS total_loss "
-                        "FROM trades WHERE DATE(timestamp) = CURRENT_DATE"
+                        "FROM trades WHERE timestamp >= %s AND timestamp < %s",
+                        (start_utc, end_utc)
                     )
                     row = cur.fetchone()
             if row:
@@ -347,3 +365,4 @@ class TradeJournal:
         except Exception as exc:
             _log.error("get_daily_summary error: %s", exc)
         return None
+

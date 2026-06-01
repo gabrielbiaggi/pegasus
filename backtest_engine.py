@@ -47,9 +47,10 @@ TP_PCT = float(os.getenv("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30")) / 100.0
 MAX_HOLD = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "80"))
 SOROS_STEPS = int(os.getenv("SOROS_MAX_STEPS", "3"))
 SOROS_COOLDOWN = int(os.getenv("ACCUMULATOR_COOLDOWN_TICKS", "5"))
-STOP_GAIN = 1.00
-TRAILING_S = 0.30
-TRAILING_L = 0.05
+STOP_GAIN = float(os.getenv("STOP_GAIN_PCT", "100.0")) / 100.0
+TRAILING_S = float(os.getenv("DAILY_TRAILING_START", "30.0")) / 100.0
+TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
 CALM_THRESH = float(os.getenv("CALM_ACCU_THRESHOLD", "1.5e-6"))
@@ -394,7 +395,9 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
 
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
 FIB_SEQ = [1, 1, 2, 3, 5, 8, 13, 21]
-DAILY_SL_PCT = 0.30
+DAILY_SL_PCT = float(os.getenv("STOP_LOSS_PCT", "100.0")) / 100.0
+STOP_GAIN_PCT = float(os.getenv("STOP_GAIN_PCT", "100.0")) / 100.0
+
 
 # Cada config: (nome, tp_pct, win_ticks, min_score, stake_mode, daily_sl, wr_stop)
 # stake_mode: 'flat'=fixo $5, 'pct2'=2% da banca
@@ -433,7 +436,7 @@ STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
 def _replay_strategy(
-    outcomes: list[tuple[bool, float]],
+    outcomes: list[tuple[bool, float, float, float, float]],
     config: dict,
     start_balance: float,
 ) -> dict:
@@ -494,11 +497,24 @@ def _replay_strategy(
         wins = losses = 0
         stop_reason = None
         
-        for is_win, epoch in outcomes:
+        for is_win, epoch, avg, cusum_v, hurst_v in outcomes:
             risk._sim_time = epoch
             risk._sim_monotonic_time = epoch
+            
+            # Dynamic Cooldown Bypass (same as live bot)
+            if getattr(risk, "cooldown_until", 0.0) > 0:
+                if (
+                    avg < CALM_THRESH
+                    and cusum_v < 3.0
+                    and hurst_v > 0.45
+                ):
+                    risk.reset_cooldown_early()
+            
             if not risk.can_trade():
-                # Bloqueado por stop loss, stop gain ou trailing
+                # If we are in session cooldown, skip this tick but do NOT break the daily loop
+                if getattr(risk, "cooldown_until", 0.0) > 0:
+                    continue
+                # Otherwise, it's a permanent Stop Loss or Stop Gain block
                 if risk.daily_net_profit >= risk._effective_profit_limit():
                     stop_reason = "DOBROU"
                 elif risk.daily_net_profit <= -risk._effective_loss_limit():
@@ -508,6 +524,7 @@ def _replay_strategy(
                 else:
                     stop_reason = "BLOCKED"
                 break
+
                 
             stake = risk.get_stake()
             if stake <= 0.0:
@@ -687,9 +704,10 @@ def _collect_day_outcomes(
             if actual_score < c["score"]:
                 continue  # score insuficiente para esta config
             if barrier_hit_at is not None and barrier_hit_at <= wt:
-                outcomes[c["name"]].append((False, float(epochs[entry_idx])))  # LOSS
+                outcomes[c["name"]].append((False, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v)))  # LOSS
             else:
-                outcomes[c["name"]].append((True, float(epochs[entry_idx])))  # WIN
+                outcomes[c["name"]].append((True, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v)))  # WIN
+
             best_hold = max(best_hold, wt)
 
         i += (
@@ -731,7 +749,8 @@ def _sim_day_multi(
         bal = balances.get(name, 50.0)
         r = _replay_strategy(oc, c, bal)
         r["start_balance"] = round(bal, 2)
-        r["signal_wr"] = round(sum(1 for is_w, _ in oc if is_w) / len(oc) * 100, 1) if oc else 0.0
+        r["signal_wr"] = round(sum(1 for x in oc if x[0]) / len(oc) * 100, 1) if oc else 0.0
+
         day_result["strategies"][name] = r
         balances[name] = r["balance"]
 
