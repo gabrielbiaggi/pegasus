@@ -966,8 +966,8 @@ class DerivBot:
                     return
                 
                 # Calmaria extrema detectada: executa o Gale no Regime A (30% TP)
-                self.config.accumulator_take_profit_percent = regime_tp
-                self.config.accumulator_max_hold_ticks = regime_hold
+                object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_tp)
+                object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_hold)
                 self.risk.use_soros = False
                 logger.info(
                     "🔥 GALE FIRE: Executando Gale %d no Regime A (30%% TP, 9 Ticks) na calmaria extrema",
@@ -977,8 +977,8 @@ class DerivBot:
                 # Modo normal (sem Gale): seleciona regime baseado na calmaria
                 if is_absolute_calm:
                     # Regime A: Sniper 30% TP com Soros ATIVO
-                    self.config.accumulator_take_profit_percent = regime_tp
-                    self.config.accumulator_max_hold_ticks = regime_hold
+                    object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_tp)
+                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_hold)
                     self.risk.use_soros = True
                     logger.info(
                         "🔥 SUPER-FRANKENSTEIN: REGIME A (Sniper 30%% TP, 9 Ticks) na calmaria extrema (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros ATIVO",
@@ -988,8 +988,8 @@ class DerivBot:
                     )
                 else:
                     # Regime B: Defensivo 3% TP com 1 Tick Hold e Soros DESATIVADO
-                    self.config.accumulator_take_profit_percent = float(os.getenv("DEFENSIVE_TAKE_PROFIT_PERCENT", "3.0"))
-                    self.config.accumulator_max_hold_ticks = int(os.getenv("DEFENSIVE_MAX_HOLD_TICKS", "1"))
+                    object.__setattr__(self.config, 'accumulator_take_profit_percent', float(os.getenv("DEFENSIVE_TAKE_PROFIT_PERCENT", "3.0")))
+                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', int(os.getenv("DEFENSIVE_MAX_HOLD_TICKS", "1")))
                     self.risk.use_soros = False
                     logger.info(
                         "🛡️ SUPER-FRANKENSTEIN: REGIME B (Defensivo %.1f%% TP, %d Ticks) (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
