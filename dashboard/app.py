@@ -1118,98 +1118,29 @@ def optimizer_status(response: Response):
     if response:
         response.headers["Cache-Control"] = "no-store"
 
-    result = {
+    # Tenta ler o arquivo de estado direto (gerado pelo optimizer)
+    state_file = BASE / "logs" / "optimizer_state.json"
+    if state_file.exists():
+        try:
+            import time as _t
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            mtime = state_file.stat().st_mtime
+            # Considerado rodando se atualizado nos últimos 5 minutos
+            data["running"] = (_t.time() - mtime) < 300
+            data["last_update_ago_s"] = int(_t.time() - mtime)
+            return data
+        except Exception as exc:
+            pass
+
+    # Fallback: retorna idle
+    return {
         "running": False,
         "iterations": [],
         "best": None,
         "baseline": None,
         "current_iteration": 0,
+        "last_update_ago_s": 9999,
     }
-
-    # Tenta ler o log do optimizer
-    log_path = _OPT_LOG_ALT if _OPT_LOG_ALT.exists() else _OPT_LOG_PATH
-    if not log_path.exists():
-        return result
-
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        iterations = []
-        baseline = None
-        best = None
-        best_roi = -9999.0
-
-        for line in lines:
-            line = line.strip()
-            # Baseline
-            if "Baseline Inicial:" in line or ("ROI:" in line and "PnL:" in line and "Dias" in line and "Baseline" not in line and "Iteração" not in line):
-                pass
-            if line.startswith("Baseline") or "Baseline Inicial:" in line:
-                continue
-            # Extrai dados das iterações
-            if "Resultado [" in line and "ROI:" in line:
-                import re as _re
-                m_roi = _re.search(r"ROI:\s*([-\d.]+)%", line)
-                m_pnl = _re.search(r"PnL:\s*\$([-\d.]+)", line)
-                m_qbr = _re.search(r"Quebras:\s*(\d+)", line)
-                m_el  = _re.search(r"\[([\d.]+)s\]", line)
-                is_best = "MELHOR" in line or "🔥" in line
-                it_num = len(iterations) + 1
-                entry = {
-                    "iteration": it_num,
-                    "roi": float(m_roi.group(1)) if m_roi else None,
-                    "pnl": float(m_pnl.group(1)) if m_pnl else None,
-                    "busted": int(m_qbr.group(1)) if m_qbr else None,
-                    "elapsed_s": float(m_el.group(1)) if m_el else None,
-                    "is_best": is_best,
-                }
-                iterations.append(entry)
-                if is_best and entry["roi"] is not None and entry["roi"] > best_roi:
-                    best_roi = entry["roi"]
-                    best = entry
-
-        # Extrai baseline das primeiras linhas
-        for line in lines[:15]:
-            if "ROI:" in line and "PnL:" in line and "Dias" in line:
-                import re as _re
-                m_roi = _re.search(r"ROI:\s*([-\d.]+)%", line)
-                m_pnl = _re.search(r"PnL:\s*\$([-\d.]+)", line)
-                m_qbr = _re.search(r"Dias Quebrados:\s*(\d+)", line)
-                if m_roi:
-                    baseline = {
-                        "roi": float(m_roi.group(1)) if m_roi else None,
-                        "pnl": float(m_pnl.group(1)) if m_pnl else None,
-                        "busted": int(m_qbr.group(1)) if m_qbr else None,
-                    }
-                    break
-
-        # Verifica se está rodando (última modificação < 5min)
-        import time as _t
-        mtime = log_path.stat().st_mtime
-        running = (_t.time() - mtime) < 300  # 5 minutos
-
-        result.update({
-            "running": running,
-            "iterations": iterations,
-            "best": best,
-            "baseline": baseline,
-            "current_iteration": len(iterations),
-            "last_update_ago_s": int(_t.time() - mtime),
-        })
-
-    except Exception as exc:
-        result["error"] = str(exc)
-
-    # Também lê o backtest_opt_temp.json para pegar stats da última iteração
-    try:
-        opt_temp = BASE / "logs" / "backtest_opt_temp.json"
-        if opt_temp.exists():
-            data = json.loads(opt_temp.read_text())
-            sf = data.get("summary", {}).get("strategies", {}).get("Super-Frankenstein", {})
-            result["last_backtest_sf"] = sf
-    except Exception:
-        pass
-
-    return result
 
 
 @app.get("/api/history30d")
