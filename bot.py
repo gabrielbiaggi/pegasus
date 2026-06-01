@@ -925,7 +925,83 @@ class DerivBot:
             if signal != "ACCU":
                 logger.debug("Sem setup CALM ACCU no tick %s.", tick_epoch)
                 return
+
+            # --- SUPER-FRANKENSTEIN: Dynamic Regime Switch ---
+            regime_tp = float(os.getenv("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30.0"))
+            regime_hold = int(os.getenv("ACCUMULATOR_MAX_HOLD_TICKS", "9"))
+            
+            is_absolute_calm = False
+            _cusum = 0.0
+            _hurst = 0.5
+            
+            recent = prices[-(self.config.calm_accu_lookback + 1) :]
+            abs_returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent))]
+            avg_abs_ret = sum(abs_returns) / len(abs_returns) if abs_returns else 0.0
+            
+            if df is not None and not df.empty:
+                _last = df.iloc[-1]
+                _cusum = float(_last.get("cusum_score", 0.0) or 0.0)
+                _hurst = float(_last.get("hurst_exponent", 0.5) or 0.5)
+                
+                # Calmaria Extrema Check:
+                if (
+                    avg_abs_ret < 1.0e-6
+                    and _cusum < 2.5
+                    and _hurst > 0.50
+                ):
+                    is_absolute_calm = True
+            
+            _in_gale = getattr(self.risk, "use_martingale", False) and self.risk.martingale_step > 0
+            
+            if _in_gale:
+                # Se estamos em Gale, só operamos em Calmaria Absoluta no Regime A (30% TP)
+                if not is_absolute_calm:
+                    logger.info(
+                        "⏳ GALE STANDBY: aguardando calmaria extrema para executar Gale %d (vol=%.2e, CUSUM=%.2f, H=%.3f)",
+                        self.risk.martingale_step,
+                        avg_abs_ret,
+                        _cusum,
+                        _hurst,
+                    )
+                    return
+                
+                # Calmaria extrema detectada: executa o Gale no Regime A (30% TP)
+                self.config.accumulator_take_profit_percent = regime_tp
+                self.config.accumulator_max_hold_ticks = regime_hold
+                self.risk.use_soros = False
+                logger.info(
+                    "🔥 GALE FIRE: Executando Gale %d no Regime A (30%% TP, 9 Ticks) na calmaria extrema",
+                    self.risk.martingale_step,
+                )
+            else:
+                # Modo normal (sem Gale): seleciona regime baseado na calmaria
+                if is_absolute_calm:
+                    # Regime A: Sniper 30% TP com Soros ATIVO
+                    self.config.accumulator_take_profit_percent = regime_tp
+                    self.config.accumulator_max_hold_ticks = regime_hold
+                    self.risk.use_soros = True
+                    logger.info(
+                        "🔥 SUPER-FRANKENSTEIN: REGIME A (Sniper 30%% TP, 9 Ticks) na calmaria extrema (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros ATIVO",
+                        avg_abs_ret,
+                        _cusum,
+                        _hurst,
+                    )
+                else:
+                    # Regime B: Defensivo 3% TP com 1 Tick Hold e Soros DESATIVADO
+                    self.config.accumulator_take_profit_percent = float(os.getenv("DEFENSIVE_TAKE_PROFIT_PERCENT", "3.0"))
+                    self.config.accumulator_max_hold_ticks = int(os.getenv("DEFENSIVE_MAX_HOLD_TICKS", "1"))
+                    self.risk.use_soros = False
+                    logger.info(
+                        "🛡️ SUPER-FRANKENSTEIN: REGIME B (Defensivo %.1f%% TP, %d Ticks) (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
+                        self.config.accumulator_take_profit_percent,
+                        self.config.accumulator_max_hold_ticks,
+                        avg_abs_ret,
+                        _cusum,
+                        _hurst,
+                    )
+
             stake = self.risk.get_stake()
+
             if (
                 getattr(self.risk, "use_martingale", False)
                 and self.risk.martingale_step > 0

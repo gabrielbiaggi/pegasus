@@ -430,13 +430,15 @@ STRATEGY_CONFIGS = [
     {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
     # 8. Frankenstein Sniper (30% TP, $5, 1 Gale)
     {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
+    # 9. Super-Frankenstein (Regime-Adaptive Compounding Sniper)
+    {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
 ]
 
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
 def _replay_strategy(
-    outcomes: list[tuple[bool, float, float, float, float]],
+    outcomes: list[tuple],
     config: dict,
     start_balance: float,
 ) -> dict:
@@ -446,11 +448,13 @@ def _replay_strategy(
     
     tp_pct = config["tp"]
     mode = config["mode"]
+    is_super_frank = config.get("is_super_frank", False)
     
     use_soros = config.get("use_soros", False)
     use_martingale = config.get("use_martingale", False)
     
     # Mapeia modo para stake
+    dynamic_stake_base_pct = 0.0
     if mode == "flat15":
         fixed_stake = 15.0
         min_stake = 15.0
@@ -463,6 +467,10 @@ def _replay_strategy(
     elif mode == "flat1":
         fixed_stake = 1.0
         min_stake = 1.0
+    elif mode == "dynamic_10":
+        fixed_stake = 5.0
+        min_stake = 5.0
+        dynamic_stake_base_pct = 0.10
     else:
         fixed_stake = STAKE
         min_stake = STAKE
@@ -487,7 +495,7 @@ def _replay_strategy(
             use_martingale=use_martingale,
             martingale_max_gales=config.get("max_gales", 2),
             martingale_payout_rate=tp_pct,
-            dynamic_stake_base_pct=0.0,
+            dynamic_stake_base_pct=dynamic_stake_base_pct,
             state_path=state_file,
             simulated_balance=start_balance,
             stop_loss_pct=DAILY_SL_PCT * 100.0,
@@ -497,9 +505,49 @@ def _replay_strategy(
         wins = losses = 0
         stop_reason = None
         
-        for is_win, epoch, avg, cusum_v, hurst_v in outcomes:
+        for item in outcomes:
+            if len(item) == 6:
+                is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at = item
+            else:
+                is_win, epoch, avg, cusum_v, hurst_v = item
+                barrier_hit_at = None
+                
             risk._sim_time = epoch
             risk._sim_monotonic_time = epoch
+            
+            # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
+            if is_super_frank:
+                is_absolute_calm = (avg < 1.0e-6 and cusum_v < 2.5 and hurst_v > 0.50)
+                _in_gale = risk.use_martingale and risk.martingale_step > 0
+                
+                if _in_gale:
+                    # GALE STANDBY: só executa Gale em calmaria absoluta
+                    if not is_absolute_calm:
+                        continue  # Standby, aguarda calmaria no próximo tick
+                    
+                    # Gale Fire em Regime A (30% TP, 9 ticks)
+                    current_tp_pct = 0.30
+                    current_wt = 9
+                    risk.martingale_payout_rate = 0.30
+                    risk.use_soros = False
+                else:
+                    if is_absolute_calm:
+                        # Regime A: Sniper 30% TP com Soros ATIVO
+                        current_tp_pct = 0.30
+                        current_wt = 9
+                        risk.use_soros = True
+                        risk.soros_max_steps = 2
+                    else:
+                        # Regime B: Defensivo 3% TP, 1 Tick Hold, Soros DESATIVADO
+                        current_tp_pct = 0.03
+                        current_wt = 1
+                        risk.use_soros = False
+                
+                # Determina o resultado WIN/LOSS com base no win_ticks do regime ativo
+                is_win_trade = not (barrier_hit_at is not None and barrier_hit_at <= current_wt)
+            else:
+                current_tp_pct = tp_pct
+                is_win_trade = is_win
             
             # Dynamic Cooldown Bypass (same as live bot)
             if getattr(risk, "cooldown_until", 0.0) > 0:
@@ -535,8 +583,8 @@ def _replay_strategy(
             risk.balance = round(risk.balance - stake, 2)
             risk._pending_stake_deduction = stake
             
-            if is_win:
-                profit = round(stake * tp_pct, 2)
+            if is_win_trade:
+                profit = round(stake * current_tp_pct, 2)
                 risk.update(profit=profit, buy_price=stake)
                 wins += 1
             else:
@@ -565,9 +613,9 @@ def _collect_day_outcomes(
     state: dict | None = None,
     out_path: Path | None = None,
     t_global: float | None = None,
-) -> tuple[dict[str, list[bool]], float]:
+) -> tuple[dict[str, list[tuple]], float]:
     """Coleta WIN/LOSS outcomes para TODAS as configs de TP e score.
-    Retorna {config_name: [bools]}, elapsed.
+    Retorna {config_name: [(is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at)]}, elapsed.
     """
     t0 = time.time()
     t_last_progress = t0
@@ -578,9 +626,14 @@ def _collect_day_outcomes(
     epochs = day_df["epoch"].values
     total_ticks = len(day_df)
 
-    tick_buf: deque = deque(maxlen=TICK_COUNT)
-    for w in range(min(TICK_COUNT, len(day_df))):
-        tick_buf.append({"epoch": int(epochs[w]), "quote": float(prices[w])})
+    # Pre-calcula os indicadores para o dia inteiro de uma vez só! (Super Otimização)
+    day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
+    try:
+        day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg)
+        day_indicators_df = day_indicators_df.reset_index(drop=True)
+    except Exception as e:
+        print(f"  Erro ao pre-calcular indicadores: {e}", flush=True)
+        return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
 
     # Pre-calcula win_ticks para cada TP unico
     tp_to_wt: dict[float, int] = {}
@@ -588,13 +641,18 @@ def _collect_day_outcomes(
         tp = c["tp"]
         if tp not in tp_to_wt:
             tp_to_wt[tp] = _calc_win_ticks(tp)
+            
+    # Garantimos que se tivermos Super-Frankenstein, o max_wt inclua o wt máximo dele (9 ticks)
     max_wt = max(tp_to_wt.values())
+    for c in STRATEGY_CONFIGS:
+        if c.get("is_super_frank", False):
+            max_wt = max(max_wt, 9)
 
     # Score levels unicos
     score_levels = sorted(set(c["score"] for c in STRATEGY_CONFIGS))
 
     # Outcomes: uma lista separada para cada (tp, score)
-    outcomes: dict[str, list[bool]] = {c["name"]: [] for c in STRATEGY_CONFIGS}
+    outcomes: dict[str, list[tuple]] = {c["name"]: [] for c in STRATEGY_CONFIGS}
     i = TICK_COUNT
     total_signals = 0
 
@@ -605,7 +663,6 @@ def _collect_day_outcomes(
             and out_path is not None
             and (now - t_last_progress) >= 5.0
         ):
-            total_oc = max((len(v) for v in outcomes.values()), default=0)
             state["day_progress"] = {
                 "ticks_done": int(i),
                 "ticks_total": int(total_ticks),
@@ -618,8 +675,6 @@ def _collect_day_outcomes(
             _write_state(out_path, state)
             t_last_progress = now
 
-        tick_buf.append({"epoch": int(epochs[i]), "quote": float(prices[i])})
-
         if hours[i] in BLOCKED_HOURS:
             i += 1
             continue
@@ -631,17 +686,19 @@ def _collect_day_outcomes(
             i += 1
             continue
 
-        try:
-            df_ind = calculate_tick_indicators(list(tick_buf), config=accu_cfg)
-        except Exception:
+        # Slice do dataframe pré-calculado em O(1) de tempo!
+        if i >= len(day_indicators_df):
             i += 1
             continue
-        if df_ind is None or df_ind.empty:
+            
+        df_ind = day_indicators_df.iloc[i - TICK_COUNT + 1 : i + 1]
+        if df_ind.empty or len(df_ind) < accu_cfg.minimum_ticks:
             i += 1
             continue
+            
         df_ind = df_ind.reset_index(drop=True)
+        prices_list = list(prices[i - TICK_COUNT + 1 : i + 1])
 
-        prices_list = [t["quote"] for t in list(tick_buf)]
         try:
             signal, score, p_loss = generate_calm_accu_signal(
                 prices_list,
@@ -700,13 +757,12 @@ def _collect_day_outcomes(
         # Para cada config, determina WIN/LOSS baseado no win_ticks e score
         best_hold = 0
         for c in STRATEGY_CONFIGS:
-            wt = tp_to_wt[c["tp"]]
+            wt = tp_to_wt[c["tp"]] if not c.get("is_super_frank", False) else 9
             if actual_score < c["score"]:
                 continue  # score insuficiente para esta config
-            if barrier_hit_at is not None and barrier_hit_at <= wt:
-                outcomes[c["name"]].append((False, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v)))  # LOSS
-            else:
-                outcomes[c["name"]].append((True, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v)))  # WIN
+                
+            is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
+            outcomes[c["name"]].append((is_win, float(epochs[entry_idx]), float(avg), float(cusum_v), float(hurst_v), barrier_hit_at))
 
             best_hold = max(best_hold, wt)
 
@@ -812,11 +868,19 @@ def main() -> None:
     print(f"  {len(days_with_data)}/{len(days)} dias com dados", flush=True)
 
     # Fase 2: simulação MULTI-ESTRATÉGIA
-    print("\n[2/2] Simulando 7 estratégias...", flush=True)
+    print(f"\n[2/2] Simulando {len(STRATEGY_NAMES)} estratégias...", flush=True)
     print(f"  Estratégias: {', '.join(STRATEGY_NAMES)}")
 
-    # Cada estratégia mantém seu próprio saldo (com reset diário para sessões independentes!)
+    # Lê do .env se deve acumular saldo (compounding) entre os dias no backtest
+    accumulate_balance = os.getenv("BACKTEST_COMPOUNDING", "false").strip().lower() == "true"
+    if accumulate_balance:
+        print(f"  [MODO COMPOSTO] Preservando saldos acumulados dia-a-dia!", flush=True)
+    else:
+        print(f"  [MODO DIÁRIO INDEPENDENTE] Reseta saldos para ${start_balance:.2f} no início de cada dia!", flush=True)
+
+    # Cada estratégia mantém seu próprio saldo (com reset diário opcional!)
     total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
+    balances = {s: start_balance for s in STRATEGY_NAMES}
 
     for day in days_with_data:
         state["current_day"] = day.isoformat()
@@ -828,8 +892,9 @@ def main() -> None:
             print(f"  {day}: sem dados — pulando", flush=True)
             continue
 
-        # Reseta o saldo no início do dia para simular sessões independentes de risco
-        balances = {s: start_balance for s in STRATEGY_NAMES}
+        if not accumulate_balance:
+            # Reseta o saldo no início do dia para simular sessões independentes de risco
+            balances = {s: start_balance for s in STRATEGY_NAMES}
 
         print(f"  {day}: simulando...", end=" ", flush=True)
         result = _sim_day_multi(
@@ -848,7 +913,6 @@ def main() -> None:
         # Limpa progresso intra-dia
         state.pop("day_progress", None)
         state["results"].append(result)
-        # Pega saldo da primeira estrategia como referencia
         # Print resumo do dia
         first_strat = STRATEGY_NAMES[0]
         first_sr = result["strategies"].get(first_strat, {})
