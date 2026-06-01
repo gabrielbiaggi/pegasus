@@ -55,17 +55,23 @@ fi
 git push
 echo "  ✅ Push OK"
 
-# ── 2. Copiar .env para o servidor ───────────────────────────────────────────
+# ── 2. Copiar .env e optimizer_state.json para o servidor ───────────────────
 echo ""
 echo "▶ [2/4] Copiando .env → server..."
 $SCP .env "${SERVER}:${REMOTE_DIR}/.env"
 echo "  ✅ .env copiado"
+# Copia estado do optimizer (gitignored mas necessário para o dashboard)
+if [ -f "logs/optimizer_state.json" ]; then
+    $SCP logs/optimizer_state.json "${SERVER}:${REMOTE_DIR}/logs/optimizer_state.json" 2>/dev/null || true
+    echo "  ✅ optimizer_state.json copiado"
+fi
 
 # ── 3. Git pull no servidor ──────────────────────────────────────────────────
 echo ""
 echo "▶ [3/4] Git pull no servidor..."
 $SSH "$SERVER" "cd $REMOTE_DIR && git pull"
 echo "  ✅ Pull OK"
+
 
 # ── 4. Restart do bot (opcional) ─────────────────────────────────────────────
 if [ "$DO_RESTART" = true ]; then
