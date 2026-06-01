@@ -954,6 +954,27 @@ class RiskManager:
                 self.martingale_accumulated_loss = 0.0
                 self.martingale_base_stake = 0.0
                 self._save_state()
+            elif (
+                self.daily_trailing_active
+                and self.daily_net_profit - next_gale_stake < self._daily_trailing_lock_abs
+            ):
+                logger.warning(
+                    "⛔ Gale %d/%d ABORTADO: stake %.2f arriscaria violar o lucro protegido %.2f (P&L atual %.2f, lock %.2f)",
+                    self.martingale_step,
+                    self.martingale_max_gales,
+                    next_gale_stake,
+                    self._daily_trailing_lock_abs,
+                    self.daily_net_profit,
+                    self._daily_trailing_lock_abs,
+                )
+                logger.warning(
+                    "   Perdas acumuladas=%.2f absorvidas para manter lucro travado — resetando para G0",
+                    self.martingale_accumulated_loss,
+                )
+                self.martingale_step = 0
+                self.martingale_accumulated_loss = 0.0
+                self.martingale_base_stake = 0.0
+                self._save_state()
 
         _loss_limit = self._effective_loss_limit()
         if self.daily_net_profit <= -_loss_limit and not self.loss_block_override:
