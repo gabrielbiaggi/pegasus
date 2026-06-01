@@ -12,5 +12,8 @@ logs/*.json
 logs/*.csv
 data/*.csv
 data/legacy_accumulator/
+data/cache/
+logs/*.pid
+logs/*.log.*
 !logs/.gitkeep
 !data/.gitkeep
