@@ -92,7 +92,7 @@ try:
         old = json.loads(state_path.read_text())
         if old.get('day') == today:
             state = old
-            print(f'  Mesmo dia: mantendo estado de risco integro (lucro_liquido={old.get("daily_net_profit", 0.0):.2f})')
+            print(f'  Mesmo dia: mantendo estado de risco integro (lucro_liquido={old.get(\"daily_net_profit\", 0.0):.2f})')
 except Exception as e:
     print(f'  Erro ao tentar carregar estado antigo: {e}')
 
