@@ -433,7 +433,7 @@ STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
 def _replay_strategy(
-    outcomes: list[bool],
+    outcomes: list[tuple[bool, float]],
     config: dict,
     start_balance: float,
 ) -> dict:
@@ -494,7 +494,9 @@ def _replay_strategy(
         wins = losses = 0
         stop_reason = None
         
-        for is_win in outcomes:
+        for is_win, epoch in outcomes:
+            risk._sim_time = epoch
+            risk._sim_monotonic_time = epoch
             if not risk.can_trade():
                 # Bloqueado por stop loss, stop gain ou trailing
                 if risk.daily_net_profit >= risk._effective_profit_limit():
@@ -685,9 +687,9 @@ def _collect_day_outcomes(
             if actual_score < c["score"]:
                 continue  # score insuficiente para esta config
             if barrier_hit_at is not None and barrier_hit_at <= wt:
-                outcomes[c["name"]].append(False)  # LOSS
+                outcomes[c["name"]].append((False, float(epochs[entry_idx])))  # LOSS
             else:
-                outcomes[c["name"]].append(True)  # WIN
+                outcomes[c["name"]].append((True, float(epochs[entry_idx])))  # WIN
             best_hold = max(best_hold, wt)
 
         i += (
@@ -729,7 +731,7 @@ def _sim_day_multi(
         bal = balances.get(name, 50.0)
         r = _replay_strategy(oc, c, bal)
         r["start_balance"] = round(bal, 2)
-        r["signal_wr"] = round(sum(oc) / len(oc) * 100, 1) if oc else 0.0
+        r["signal_wr"] = round(sum(1 for is_w, _ in oc if is_w) / len(oc) * 100, 1) if oc else 0.0
         day_result["strategies"][name] = r
         balances[name] = r["balance"]
 

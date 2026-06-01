@@ -464,6 +464,38 @@ class DerivBot:
                 )
                 return
 
+        # DYNAMIC COOLDOWN BYPASS (FRANKENSTEIN EXCLUSIVE):
+        # Se o bot estiver em cooldown de sessão (cooldown_until > 0), mas as condições de calmaria 
+        # forem excepcionais, saímos do cooldown antecipadamente!
+        if getattr(self.risk, "cooldown_until", 0.0) > 0 and df is not None and not df.empty:
+            prices = [t["quote"] for t in _tick_snapshot]
+            lookback = self.config.calm_accu_lookback
+            if len(prices) >= lookback + 1:
+                recent_p = prices[-(lookback + 1) :]
+                abs_returns = [abs(recent_p[i] / recent_p[i - 1] - 1) for i in range(1, len(recent_p))]
+                avg_abs_ret = sum(abs_returns) / len(abs_returns)
+                
+                _last = df.iloc[-1]
+                _cusum = float(_last.get("cusum_score", 0.0) or 0.0)
+                _hurst = float(_last.get("hurst_exponent", 0.5) or 0.5)
+                
+                # Critério de Calmaria Extrema:
+                # 1. Volatilidade média abaixo do limiar de calmaria
+                # 2. CUSUM abaixo de 3.0 (sem tendência repentina de spike)
+                # 3. Hurst acima de 0.45 (sem ruído anti-trend agressivo)
+                if (
+                    avg_abs_ret < self.config.calm_accu_threshold
+                    and _cusum < 3.0
+                    and _hurst > 0.45
+                ):
+                    logger.warning(
+                        "⚡ DYNAMIC CALM RESUME: mercado calmo detectado (volatilidade=%.2e, CUSUM=%.2f, H=%.3f) — encerrando cooldown antecipadamente!",
+                        avg_abs_ret,
+                        _cusum,
+                        _hurst,
+                    )
+                    self.risk.reset_cooldown_early()
+
         if not self.risk.can_trade():
             now = time.monotonic()
             if now - self._pause_log_ts >= 60:

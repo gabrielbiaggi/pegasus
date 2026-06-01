@@ -85,32 +85,34 @@ import json, datetime, pathlib, time
 today = datetime.date.today().isoformat()
 state_path = pathlib.Path('$REMOTE_DIR/logs/risk_state.json')
 
-# Tenta preservar start_of_day_balance e peak do mesmo dia
-old_sod = 0.0
-old_peak = 0.0
+# Tenta preservar todo o estado de risco se for o mesmo dia (evita zerar P&L no restart)
+state = None
 try:
-    old = json.loads(state_path.read_text())
-    if old.get('day') == today:
-        old_sod = float(old.get('start_of_day_balance', 0.0))
-        old_peak = float(old.get('daily_peak_profit', 0.0))
-        print(f'  Mesmo dia: preservando start_of_day_balance={old_sod:.2f} peak={old_peak:.2f}')
-except Exception:
-    pass
+    if state_path.exists():
+        old = json.loads(state_path.read_text())
+        if old.get('day') == today:
+            state = old
+            print(f'  Mesmo dia: mantendo estado de risco integro (lucro_liquido={old.get("daily_net_profit", 0.0):.2f})')
+except Exception as e:
+    print(f'  Erro ao tentar carregar estado antigo: {e}')
 
-state = {
-    'day': today,
-    'start_of_day_balance': old_sod,  # preserva referencia do dia
-    'daily_loss': 0.0, 'daily_net_profit': 0.0,
-    'daily_peak_profit': old_peak,    # preserva high-water-mark (fix 3)
-    'daily_trailing_active': False, 'trades_today': 0, 'wins': 0, 'losses': 0,
-    'consecutive_losses': 0, 'max_loss_streak_today': 0,
-    'soros_step': 0, 'soros_profit': 0.0,
-    'martingale_step': 0, 'martingale_accumulated_loss': 0.0,
-    'martingale_base_stake': 0.0, 'loss_block_override': False,
-    'session_start_ts': time.time()
-}
+if state is None:
+    state = {
+        'day': today,
+        'start_of_day_balance': 50.0,
+        'daily_loss': 0.0, 'daily_net_profit': 0.0,
+        'daily_peak_profit': 0.0,
+        'daily_trailing_active': False, 'trades_today': 0, 'wins': 0, 'losses': 0,
+        'consecutive_losses': 0, 'max_loss_streak_today': 0,
+        'soros_step': 0, 'soros_profit': 0.0,
+        'martingale_step': 0, 'martingale_accumulated_loss': 0.0,
+        'martingale_base_stake': 0.0, 'loss_block_override': False,
+        'session_start_ts': time.time(),
+        'cooldown_until': 0.0
+    }
+    print(f'  Novo dia detectado ou sem estado antigo: inicializando risk_state para {today}')
+
 state_path.write_text(json.dumps(state, indent=2))
-print(f'  risk_state resetado: {today} | start_of_day={old_sod:.2f} | peak={old_peak:.2f}')
 PYEOF
 
         > logs/trades.csv

@@ -120,11 +120,40 @@ class RiskManager:
         self._log_ts_trades: float = 0.0
         self._log_ts_consec: float = 0.0
         self._log_ts_freq: float = 0.0
-        self.session_start_ts: float = time.time()
+        self._sim_time = None
+        self._sim_monotonic_time = None
+        self.session_start_ts: float = self._get_time()
         self.cooldown_until: float = 0.0  # 0 = sem cooldown ativo
         self.session_cooldown_seconds: float = 10800.0  # 3h default, reloaded via env
 
         self._load_state()
+
+    def _get_time(self) -> float:
+        if getattr(self, "_sim_time", None) is not None:
+            return self._sim_time
+        return time.time()
+
+    def _get_monotonic_time(self) -> float:
+        if getattr(self, "_sim_monotonic_time", None) is not None:
+            return self._sim_monotonic_time
+        return time.monotonic()
+
+    def reset_cooldown_early(self) -> None:
+        """Surgically exits the session cooldown early and resets the daily limits so the bot can trade again."""
+        if self.cooldown_until > 0:
+            logger.warning("♻️ Exiting session cooldown early due to dynamic calm market detection!")
+            self.cooldown_until = 0.0
+            # Reset session reference
+            self.start_of_day_balance = self.balance
+            self.daily_net_profit = 0.0
+            self.daily_peak_profit = 0.0
+            self.daily_loss = 0.0
+            self.trades_today = 0
+            self.wins = 0
+            self.losses = 0
+            self.consecutive_losses = 0
+            self.daily_trailing_active = False
+            self._save_state()
 
     def _reload_overrides(self) -> None:
         """Re-read override fields from disk + env settings changed via dashboard.
@@ -133,7 +162,7 @@ class RiskManager:
         stop loss/gain adjustments) are detected without requiring a restart.
         Rate-limited to at most once every 5 seconds.
         """
-        now = time.monotonic()
+        now = self._get_monotonic_time()
         if now - self._last_override_check < 5.0:
             return
         self._last_override_check = now
@@ -626,7 +655,7 @@ class RiskManager:
         logger.info("Novo dia detectado. Zerando contadores diarios de risco.")
         self.day = today
         self.start_of_day_balance = self.balance
-        self.session_start_ts = time.time()
+        self.session_start_ts = self._get_time()
         self.daily_loss = 0.0
         self.daily_net_profit = 0.0
         self.daily_peak_profit = 0.0
@@ -883,7 +912,7 @@ class RiskManager:
         # Check for external override changes written by dashboard (no restart needed)
         self._reload_overrides()
 
-        _now = time.monotonic()
+        _now = self._get_monotonic_time()
 
         # ── WR STOP: DESATIVADO — bot roda livre sem travas ──
         # if self.trades_today >= 20 and self.wins > 0:
@@ -1056,7 +1085,7 @@ class RiskManager:
                 self.soros_profit = 0.0
                 self.daily_trailing_active = False
                 self.cooldown_until = 0.0
-                self.session_start_ts = time.time()
+                self.session_start_ts = self._get_time()
                 self._save_state()
                 # Não retorna False — sessão resetada, pode operar
 
@@ -1269,7 +1298,7 @@ class RiskManager:
             realized_loss = abs(profit) if profit < 0 else buy_price
             self.daily_loss += realized_loss
             # Record timestamp for frequency-based MDD
-            self._recent_loss_times.append(time.monotonic())
+            self._recent_loss_times.append(self._get_monotonic_time())
             _modo_loss = (
                 f"GALE {self.martingale_step}/{self.martingale_max_gales}"
                 if self.use_martingale and self.martingale_step > 0
