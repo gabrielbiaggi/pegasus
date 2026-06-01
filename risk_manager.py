@@ -784,7 +784,7 @@ class RiskManager:
             # FIX: Se o remaining_budget é menor que min_stake, o bot ficaria
             # permanentemente bloqueado (stake=0 → can_trade retorna False).
             # Solução: desativa trailing e opera com orçamento normal.
-            if remaining_budget < self.min_stake and self.daily_net_profit > 0:
+            if remaining_budget < self.min_stake and self.daily_net_profit > self._daily_trailing_lock_abs:
                 logger.info(
                     "🔓 Trailing auto-desativado: budget_restante=%.2f < min_stake=%.2f — liberando operação",
                     remaining_budget,
