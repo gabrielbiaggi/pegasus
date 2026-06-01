@@ -1065,17 +1065,38 @@ def main() -> None:
             pos_days = sum(
                 1 for r in results if r["strategies"].get(s, {}).get("pnl", 0) > 0
             )
+            neg_days = sum(
+                1 for r in results if r["strategies"].get(s, {}).get("pnl", 0) < 0
+            )
+            active_days = sum(
+                1 for r in results if r["strategies"].get(s, {}).get("trades", 0) > 0
+            )
             wrs = [r["strategies"].get(s, {}).get("signal_wr", 0) for r in results]
             avg_wr = round(sum(wrs) / len(wrs), 1) if wrs else 0
+
+            # Lucro médio por dia ATIVO (dias que tiveram pelo menos 1 trade)
+            active_pnls = [
+                r["strategies"].get(s, {}).get("pnl", 0)
+                for r in results
+                if r["strategies"].get(s, {}).get("trades", 0) > 0
+            ]
+            avg_daily_profit = round(sum(active_pnls) / len(active_pnls), 4) if active_pnls else 0.0
+            consistency_pct = round(pos_days / active_days * 100, 1) if active_days > 0 else 0.0
+
             summary["strategies"][s] = {
                 "final_balance": round(final_bal, 2),
                 "total_pnl": total_pnl,
                 "roi_pct": round(total_pnl / start_balance * 100, 1),
                 "positive_days": pos_days,
+                "negative_days": neg_days,
                 "busted_days": busted_days,
+                "active_days": active_days,
+                "avg_daily_profit": avg_daily_profit,
+                "consistency_pct": consistency_pct,
                 "avg_signal_wr": avg_wr,
             }
         state["summary"] = summary
+
 
         # Tabela final no console
         print("\n" + "=" * 80)

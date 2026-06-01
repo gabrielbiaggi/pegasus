@@ -2519,73 +2519,94 @@
             id="modal-optimizer"
             onclick="if (event.target === this) closeModal('modal-optimizer');"
         >
-            <div class="modal-content" style="max-width:900px">
+            <div class="modal-content" style="max-width:960px">
                 <div class="modal-header">
                     <h2 style="display:flex;align-items:center;gap:10px">
-                        &#x1f916; Optimizer Loop — Auto-Melhoria Contínua
-                        <span id="opt-status-badge" style="font-size:.7rem;padding:3px 10px;border-radius:20px;font-weight:600;background:var(--green-bg);color:var(--green)">● RODANDO</span>
+                        &#x1f986; Optimizer v2 — Lucro Diário Real
+                        <span id="opt-status-badge" style="font-size:.7rem;padding:3px 10px;border-radius:20px;font-weight:600;background:var(--bg3);color:var(--muted)">■ —</span>
                     </h2>
                     <button class="modal-close" onclick="closeModal('modal-optimizer')">&#x2715;</button>
                 </div>
                 <div class="modal-body">
-                    <!-- Cards de resumo -->
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px">
-                        <div class="card" style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Baseline ROI</div>
-                            <div id="opt-baseline-roi" style="font-size:1.6rem;font-weight:700;color:var(--red)">—</div>
-                            <div id="opt-baseline-pnl" style="font-size:.78rem;color:var(--muted)">PnL: —</div>
+                    <!-- Alerta de contexto -->
+                    <div style="margin-bottom:16px;padding:10px 14px;background:rgba(245,158,11,.08);border-left:3px solid var(--yellow);border-radius:var(--radius-sm);font-size:.8rem;color:var(--yellow)">
+                        <b>🎯 Meta:</b> Maximizar <b>lucro médio por dia</b> operado com banca de $50.
+                        O objetivo é chegar próximo de +$50/dia (dobrar a banca).
+                        ROI total do mês NÃO é métrica — <b>lucro diário consistente</b> é o que importa.
+                    </div>
+
+                    <!-- Cards de resumo com métricas REAIS -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-bottom:18px">
+                        <!-- Baseline -->
+                        <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Baseline Lucro/dia</div>
+                            <div id="opt-baseline-daily" style="font-size:1.55rem;font-weight:700;color:var(--red)">—</div>
+                            <div id="opt-baseline-pos" style="font-size:.75rem;color:var(--muted)">dias positivos: —</div>
                         </div>
-                        <div class="card" style="background:var(--bg3);border:1px solid var(--green);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.72rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">&#x1f3c6; Melhor ROI</div>
-                            <div id="opt-best-roi" style="font-size:1.6rem;font-weight:700;color:var(--green)">—</div>
-                            <div id="opt-best-pnl" style="font-size:.78rem;color:var(--muted)">PnL: —</div>
+                        <!-- Melhor -->
+                        <div style="background:var(--bg3);border:1px solid var(--green);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🏆 Melhor Lucro/dia</div>
+                            <div id="opt-best-daily" style="font-size:1.55rem;font-weight:700;color:var(--green)">—</div>
+                            <div id="opt-best-pos" style="font-size:.75rem;color:var(--muted)">dias positivos: —</div>
                         </div>
-                        <div class="card" style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Melhora</div>
-                            <div id="opt-improvement" style="font-size:1.6rem;font-weight:700;color:var(--cyan)">—</div>
-                            <div style="font-size:.78rem;color:var(--muted)">vs baseline</div>
+                        <!-- Melhora -->
+                        <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Melhora vs Baseline</div>
+                            <div id="opt-improvement" style="font-size:1.55rem;font-weight:700;color:var(--cyan)">—</div>
+                            <div style="font-size:.75rem;color:var(--muted)">lucro/dia extra</div>
                         </div>
-                        <div class="card" style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Iterações</div>
-                            <div id="opt-iter-count" style="font-size:1.6rem;font-weight:700;color:var(--purple)">0</div>
-                            <div id="opt-last-update" style="font-size:.78rem;color:var(--muted)">Última: —</div>
+                        <!-- Consistência -->
+                        <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Consistência</div>
+                            <div id="opt-best-consist" style="font-size:1.55rem;font-weight:700;color:var(--yellow)">—</div>
+                            <div style="font-size:.75rem;color:var(--muted)">% dias positivos</div>
+                        </div>
+                        <!-- Iterações -->
+                        <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
+                            <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Iterações</div>
+                            <div id="opt-iter-count" style="font-size:1.55rem;font-weight:700;color:var(--purple)">0</div>
+                            <div id="opt-last-update" style="font-size:.75rem;color:var(--muted)">Última: —</div>
                         </div>
                     </div>
 
                     <!-- Tabela de iterações -->
                     <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-                        <div style="padding:10px 14px;background:var(--bg3);font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between">
-                            <span>Histórico de Iterações</span>
+                        <div style="padding:10px 14px;background:var(--bg3);font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between">
+                            <span>Histórico de Iterações — Últimas 50</span>
                             <span id="opt-running-dot" style="display:none;color:var(--green)">⬤ processando...</span>
                         </div>
-                        <div style="max-height:320px;overflow-y:auto">
-                            <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+                        <div style="max-height:360px;overflow-y:auto">
+                            <table style="width:100%;border-collapse:collapse;font-size:.8rem">
                                 <thead>
-                                    <tr style="background:var(--bg3);border-bottom:1px solid var(--border)">
-                                        <th style="padding:8px 12px;text-align:left;color:var(--muted);font-weight:600">#</th>
-                                        <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">ROI</th>
-                                        <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">PnL</th>
-                                        <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">Quebras</th>
-                                        <th style="padding:8px 12px;text-align:right;color:var(--muted);font-weight:600">Tempo</th>
-                                        <th style="padding:8px 12px;text-align:center;color:var(--muted);font-weight:600">Status</th>
+                                    <tr style="background:var(--bg3);border-bottom:2px solid var(--border)">
+                                        <th style="padding:8px 10px;text-align:left;color:var(--muted);font-weight:600">#</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--yellow);font-weight:600">Lucro/dia</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--muted);font-weight:600">Dias ✅</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--muted);font-weight:600">Dias ❌</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--muted);font-weight:600">Consist.</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--muted);font-weight:600">Score</th>
+                                        <th style="padding:8px 10px;text-align:right;color:var(--muted);font-weight:600">Tempo</th>
+                                        <th style="padding:8px 10px;text-align:center;color:var(--muted);font-weight:600">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody id="opt-iter-tbody">
-                                    <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Carregando dados do optimizer...</td></tr>
+                                    <tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">Carregando dados do optimizer...</td></tr>
                                 </tbody>
                             </table>
                         </div>
                     </div>
 
                     <!-- Nota explicativa -->
-                    <div style="margin-top:14px;padding:10px 14px;background:var(--blue-bg);border-radius:var(--radius-sm);font-size:.78rem;color:var(--muted)">
-                        &#x1f4a1; O optimizer perturba parâmetros aleatoriamente (Hill Climbing) usando ticks reais de maio.
-                        Quando encontra um ROI melhor, faz <b>deploy automático</b> no bot ao vivo via SSH.
-                        Critério de aceitação: menos dias quebrados → maior ROI.
+                    <div style="margin-top:14px;padding:10px 14px;background:var(--blue-bg);border-radius:var(--radius-sm);font-size:.75rem;color:var(--muted)">
+                        <b>Como funciona:</b> O optimizer perturba parâmetros (Hill Climbing) nos ticks reais de Maio.
+                        Métrica principal: <b>lucro médio/dia</b> com $50 fixo (sem compounding).
+                        Critério de aceitação: 1) + dias positivos → 2) + lucro/dia → 3) + score.
+                        Quando encontra melhoria: <b>deploy automático</b> no bot ao vivo.
                     </div>
                 </div>
             </div>
         </div>
+
 
         <nav class="bottom-nav">
             <div class="bottom-nav-inner">
@@ -5036,7 +5057,7 @@
 
             // ── Optimizer Modal ─────────────────────────────────────────────
             var _optPollTimer = null;
-            var _optBaselineRoi = null;
+
 
             async function pollOptimizerStatus() {
                 try {
@@ -5056,32 +5077,46 @@
                         if (runDot) runDot.style.display = "none";
                     }
 
-                    // Baseline
+                    // ── Baseline (v2: métricas de lucro diário real) ─────────────────────────
                     var bl = d.baseline;
+                    var _baselineAvgDay = 0;
                     if (bl) {
-                        _optBaselineRoi = bl.roi;
-                        var bRoi = document.getElementById("opt-baseline-roi");
-                        var bPnl = document.getElementById("opt-baseline-pnl");
-                        if (bRoi) bRoi.textContent = (bl.roi != null ? bl.roi.toFixed(1) + "%" : "—");
-                        if (bPnl) bPnl.textContent = "PnL: " + (bl.pnl != null ? "$" + bl.pnl.toFixed(2) : "—") + " | Quebras: " + (bl.busted != null ? bl.busted : "—");
+                        _baselineAvgDay = bl.avg_daily_profit || 0;
+                        var bDaily = document.getElementById("opt-baseline-daily");
+                        var bPos   = document.getElementById("opt-baseline-pos");
+                        if (bDaily) {
+                            bDaily.textContent = "$" + (_baselineAvgDay).toFixed(2) + "/dia";
+                            bDaily.style.color = _baselineAvgDay >= 0 ? "var(--green)" : "var(--red)";
+                        }
+                        if (bPos) bPos.textContent = "dias positivos: " + (bl.positive_days != null ? bl.positive_days : "—") + " | consist: " + (bl.consistency_pct != null ? bl.consistency_pct.toFixed(0) + "%" : "—");
                     }
 
-                    // Melhor
+                    // ── Melhor (v2) ──────────────────────────────────────────────────────────
                     var best = d.best;
                     if (best) {
-                        var brRoi = document.getElementById("opt-best-roi");
-                        var brPnl = document.getElementById("opt-best-pnl");
-                        var brImp = document.getElementById("opt-improvement");
-                        if (brRoi) brRoi.textContent = (best.roi != null ? best.roi.toFixed(1) + "%" : "—");
-                        if (brPnl) brPnl.textContent = "PnL: " + (best.pnl != null ? "$" + best.pnl.toFixed(2) : "—") + " | It#" + best.iteration;
-                        if (brImp && _optBaselineRoi != null && best.roi != null) {
-                            var imp = best.roi - _optBaselineRoi;
-                            brImp.textContent = (imp >= 0 ? "+" : "") + imp.toFixed(1) + "pp";
+                        var bestAvgDay = best.avg_daily_profit || 0;
+                        var brDaily = document.getElementById("opt-best-daily");
+                        var brPos   = document.getElementById("opt-best-pos");
+                        var brImp   = document.getElementById("opt-improvement");
+                        var brCons  = document.getElementById("opt-best-consist");
+                        if (brDaily) {
+                            brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
+                            brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
+                        }
+                        if (brPos) brPos.textContent = "dias positivos: " + (best.positive_days != null ? best.positive_days : "—") + " (it#" + (best.iteration || 0) + ")";
+                        if (brCons) {
+                            var cons = best.consistency_pct || 0;
+                            brCons.textContent = cons.toFixed(0) + "%";
+                            brCons.style.color = cons >= 60 ? "var(--green)" : cons >= 40 ? "var(--yellow)" : "var(--red)";
+                        }
+                        if (brImp) {
+                            var imp = bestAvgDay - _baselineAvgDay;
+                            brImp.textContent = (imp >= 0 ? "+" : "") + "$" + imp.toFixed(2) + "/dia";
                             brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
                         }
                     }
 
-                    // Contador e última atualização
+                    // ── Contador e última atualização ────────────────────────────────────────
                     var ict = document.getElementById("opt-iter-count");
                     var ilu = document.getElementById("opt-last-update");
                     if (ict) ict.textContent = d.current_iteration || 0;
@@ -5091,31 +5126,36 @@
                         ilu.textContent = "Última: " + agoStr;
                     }
 
-                    // Tabela de iterações (as últimas 50 em ordem inversa)
+                    // ── Tabela de iterações v2 (últimas 50, ordem inversa) ───────────────────
                     var tbody = document.getElementById("opt-iter-tbody");
                     if (tbody && d.iterations && d.iterations.length > 0) {
                         var iters = d.iterations.slice().reverse().slice(0, 50);
                         tbody.innerHTML = iters.map(function(it) {
-                            var roiStr = it.roi != null ? it.roi.toFixed(1) + "%" : "—";
-                            var pnlStr = it.pnl != null ? "$" + it.pnl.toFixed(2) : "—";
-                            var bustStr = it.busted != null ? it.busted : "—";
-                            var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
-                            var rowBg = it.is_best ? "background:rgba(16,185,129,0.08);" : "";
-                            var roiColor = it.roi != null && it.roi > (_optBaselineRoi || 0) ? "color:var(--green)" : "color:var(--red)";
+                            var avgDay     = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : null);
+                            var posD       = it.positive_days != null ? it.positive_days : "—";
+                            var negD       = it.negative_days != null ? it.negative_days : (it.busted != null ? it.busted : "—");
+                            var consist    = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
+                            var scoreStr   = it.score != null ? it.score.toFixed(1) : "—";
+                            var timeStr    = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
+                            var rowBg      = it.is_best ? "background:rgba(16,185,129,0.08);" : "";
+                            var dayColor   = avgDay != null && avgDay > (_baselineAvgDay || 0) ? "color:var(--green)" : "color:var(--red)";
+                            var dayStr     = avgDay != null ? "$" + avgDay.toFixed(2) : "—";
                             var statusBadge = it.is_best
                                 ? '<span style="background:var(--green-bg);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.72rem;font-weight:600">🏆 MELHOR</span>'
                                 : '<span style="background:var(--bg3);color:var(--dim);padding:2px 8px;border-radius:12px;font-size:.72rem">skip</span>';
                             return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
-                                + '<td style="padding:7px 12px;color:var(--muted)">#' + it.iteration + '</td>'
-                                + '<td style="padding:7px 12px;text-align:right;font-weight:600;font-family:monospace;' + roiColor + '">' + roiStr + '</td>'
-                                + '<td style="padding:7px 12px;text-align:right;font-family:monospace;color:var(--fg)">' + pnlStr + '</td>'
-                                + '<td style="padding:7px 12px;text-align:right;color:var(--muted)">' + bustStr + '</td>'
-                                + '<td style="padding:7px 12px;text-align:right;color:var(--dim);font-size:.78rem">' + timeStr + '</td>'
-                                + '<td style="padding:7px 12px;text-align:center">' + statusBadge + '</td>'
+                                + '<td style="padding:7px 10px;color:var(--muted)">#' + it.iteration + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;font-weight:700;font-family:monospace;' + dayColor + '">' + dayStr + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;color:var(--green)">' + posD + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;color:var(--red)">' + negD + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;color:var(--muted)">' + consist + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;font-family:monospace;color:var(--cyan)">' + scoreStr + '</td>'
+                                + '<td style="padding:7px 10px;text-align:right;color:var(--dim);font-size:.78rem">' + timeStr + '</td>'
+                                + '<td style="padding:7px 10px;text-align:center">' + statusBadge + '</td>'
                                 + '</tr>';
                         }).join("");
                     } else if (tbody && (!d.iterations || d.iterations.length === 0)) {
-                        tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer iniciando...</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer iniciando...</td></tr>';
                     }
 
                 } catch(e) { console.warn("pollOptimizerStatus err:", e); }
