@@ -1290,7 +1290,7 @@
         <main>
             <div class="metrics">
                 <div class="card">
-                    <div class="card-label" id="balance-label">Saldo</div>
+                    <div class="card-label" id="balance-label">Banca Virtual</div>
                     <div class="card-value blue" id="balance">&mdash;</div>
                     <div class="card-sub" id="balance-sub">&mdash;</div>
                     <div
@@ -2402,28 +2402,31 @@
                         </div>
                     </div>
                     <!-- Tabela comparativa de estratégias -->
-                    <div style="overflow-x: auto; margin-bottom: 14px">
+                    <div style="overflow-x: auto; margin-bottom: 18px; background: rgba(17, 24, 39, 0.4); padding: 12px; border-radius: var(--radius); border: 1px solid var(--border)">
                         <h3
                             style="
-                                font-size: 0.82rem;
+                                font-size: 0.85rem;
                                 color: var(--muted);
-                                margin-bottom: 6px;
+                                margin-bottom: 8px;
+                                display: flex;
+                                align-items: center;
+                                gap: 6px;
                             "
                         >
-                            🏆 Comparação de Estratégias
+                            🏆 Comparação Geral de Estratégias
                         </h3>
                         <table
                             id="bt-strat-table"
-                            style="font-size: 0.75rem; width: 100%"
+                            style="font-size: 0.78rem; width: 100%; border-collapse: separate; border-spacing: 0 4px;"
                         >
                             <thead>
-                                <tr>
-                                    <th>Estratégia</th>
-                                    <th>Saldo</th>
-                                    <th>P&amp;L</th>
-                                    <th>ROI</th>
-                                    <th>Dias+</th>
-                                    <th>Bust</th>
+                                <tr style="color: var(--dim)">
+                                    <th style="padding: 6px 10px;">Estratégia</th>
+                                    <th style="padding: 6px 10px; text-align: right;">Saldo Final</th>
+                                    <th style="padding: 6px 10px; text-align: right;">PnL Geral</th>
+                                    <th style="padding: 6px 10px; text-align: center;">ROI %</th>
+                                    <th style="padding: 6px 10px; text-align: center;">Dias+</th>
+                                    <th style="padding: 6px 10px; text-align: center;">Quebras (Bust)</th>
                                 </tr>
                             </thead>
                             <tbody id="bt-strat-tbody">
@@ -2433,45 +2436,52 @@
                                         style="
                                             color: var(--muted);
                                             text-align: center;
+                                            padding: 12px;
                                         "
                                     >
-                                        Aguardando...
+                                        Aguardando execução do backtest...
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
-                    <!-- Tabela de resultados por dia -->
-                    <details>
-                        <summary
-                            style="
-                                cursor: pointer;
-                                font-size: 0.82rem;
-                                color: var(--muted);
-                                font-weight: 600;
-                                margin-bottom: 6px;
-                            "
-                        >
-                            📅 Detalhes por Dia
-                        </summary>
+                    <!-- Tabela de resultados por dia com dropdown interativo -->
+                    <div style="background: rgba(17, 24, 39, 0.4); padding: 12px; border-radius: var(--radius); border: 1px solid var(--border)">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                            <h3 style="font-size: 0.85rem; color: var(--muted); margin: 0; display: flex; align-items: center; gap: 6px;">
+                                📅 Detalhes por Dia
+                            </h3>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 0.72rem; color: var(--muted)">Estratégia:</span>
+                                <select id="bt-strat-select" onchange="renderDailyTable()" style="background: var(--bg); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 4px 8px; font-size: 0.78rem; outline: none; cursor: pointer; font-weight: 600;">
+                                    <!-- Populado via JS -->
+                                </select>
+                            </div>
+                        </div>
                         <div style="overflow-x: auto">
-                            <table id="bt-table" style="font-size: 0.75rem">
+                            <table id="bt-table" style="font-size: 0.78rem; width: 100%">
                                 <thead>
-                                    <tr>
-                                        <th>Data</th>
-                                        <th>Trades</th>
-                                        <th>WR</th>
-                                        <th>flat</th>
-                                        <th>soros</th>
-                                        <th>mart.</th>
-                                        <th>fib</th>
-                                        <th>dale.</th>
+                                    <tr style="color: var(--dim)">
+                                        <th style="padding: 6px 10px; text-align: left;">Data</th>
+                                        <th style="padding: 6px 10px; text-align: center;">Trades</th>
+                                        <th style="padding: 6px 10px; text-align: center;">WR Sinais</th>
+                                        <th style="padding: 6px 10px; text-align: right;">Saldo Inicial</th>
+                                        <th style="padding: 6px 10px; text-align: right;">Saldo Final</th>
+                                        <th style="padding: 6px 10px; text-align: right;">PnL do Dia</th>
+                                        <th style="padding: 6px 10px; text-align: center;">ROI</th>
+                                        <th style="padding: 6px 10px; text-align: center;">Resultado / Stop</th>
                                     </tr>
                                 </thead>
-                                <tbody id="bt-real-tbody"></tbody>
+                                <tbody id="bt-real-tbody">
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; color: var(--muted); padding: 12px;">
+                                            Escolha uma data e rode o backtest para ver os detalhes diários.
+                                        </td>
+                                    </tr>
+                                </tbody>
                             </table>
                         </div>
-                    </details>
+                    </div>
                     <!-- Nota -->
                     <div
                         style="
@@ -2765,8 +2775,8 @@
                             return r.json();
                         });
                         if (fb.balance != null) {
-                            $("balance").textContent =
-                                "$" + parseFloat(fb.balance).toFixed(2);
+                            $("balance-pnl-total").innerHTML =
+                                `<span style="color: var(--dim)">Conta Deriv: $${parseFloat(fb.balance).toFixed(2)}</span>`;
                             toast(
                                 "\u2714 " +
                                     sel.value.toUpperCase() +
@@ -4630,6 +4640,9 @@
                     var results = d.results || [];
                     if (results.length === 0) return;
 
+                    // Guarda dados em cache global
+                    window._lastBacktestData = d;
+
                     // Descobre nomes das estratégias dos dados (dinâmico)
                     var snames = [];
                     var summary = d.summary || {};
@@ -4640,187 +4653,161 @@
                         snames = Object.keys(results[0].strategies);
                     }
 
+                    // Popula dropdown se estiver vazio
+                    var select = $("bt-strat-select");
+                    if (select && select.options.length === 0 && snames.length > 0) {
+                        snames.forEach(function (s) {
+                            var opt = document.createElement("option");
+                            opt.value = s;
+                            opt.textContent = s;
+                            if (s === "Super-Frankenstein") opt.selected = true;
+                            select.appendChild(opt);
+                        });
+                    }
+
                     // Tabela comparativa
                     var stb = $("bt-strat-tbody");
                     if (stb && snames.length > 0) {
-                        // Computa stats acumulados dos results disponíveis
                         var rows = snames.map(function (s) {
                             var ss = stratSummary[s];
-                            // Se tem summary final, usa
+                            var final_bal = 0, pnl = 0, roi = 0, posDays = 0, totalDays = summary.total_days || results.length || 1, busted = 0;
+                            
                             if (ss) {
-                                var pnlCls = ss.total_pnl >= 0 ? "win" : "loss";
-                                var bustTxt =
-                                    ss.busted_days > 0
-                                        ? '<span style="color:var(--red)">' +
-                                          ss.busted_days +
-                                          "</span>"
-                                        : "0";
-                                return (
-                                    '<tr><td style="font-weight:600">' +
-                                    s +
-                                    "</td>" +
-                                    '<td class="' +
-                                    (ss.final_balance >= (d.start_balance || 50)
-                                        ? "win"
-                                        : "loss") +
-                                    '">$' +
-                                    ss.final_balance.toFixed(2) +
-                                    "</td>" +
-                                    '<td class="' +
-                                    pnlCls +
-                                    '">' +
-                                    (ss.total_pnl >= 0 ? "+" : "") +
-                                    ss.total_pnl.toFixed(2) +
-                                    "</td>" +
-                                    '<td class="' +
-                                    pnlCls +
-                                    '">' +
-                                    (ss.roi_pct >= 0 ? "+" : "") +
-                                    ss.roi_pct.toFixed(1) +
-                                    "%" +
-                                    '<div style="width: 100%; min-width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 3px;">' +
-                                    '<div style="height: 100%; width: ' + Math.min(100, Math.max(0, Math.abs(ss.roi_pct))) + '%; background: ' + (ss.roi_pct >= 0 ? 'var(--green)' : 'var(--red)') + '; border-radius: 2px;"></div>' +
-                                    '</div>' +
-                                    "</td>" +
-                                    "<td>" +
-                                    ss.positive_days +
-                                    "/" +
-                                    summary.total_days +
-                                    "</td>" +
-                                    "<td>" +
-                                    bustTxt +
-                                    "</td></tr>"
-                                );
+                                final_bal = ss.final_balance;
+                                pnl = ss.total_pnl;
+                                roi = ss.roi_pct;
+                                posDays = ss.positive_days;
+                                busted = ss.busted_days;
+                            } else {
+                                var lastSt = results[results.length - 1].strategies || {};
+                                var ls = lastSt[s] || {};
+                                final_bal = ls.balance || 0;
+                                pnl = final_bal - (d.start_balance || 50.0);
+                                roi = (pnl / (d.start_balance || 50.0)) * 100;
+                                posDays = results.filter(function (r) {
+                                    var st = r.strategies || {};
+                                    return st[s] && st[s].pnl > 0;
+                                }).length;
+                                busted = results.filter(function (r) {
+                                    var st = r.strategies || {};
+                                    return st[s] && st[s].busted;
+                                }).length;
                             }
-                            // Se ainda running, computa do último result
-                            var lastSt =
-                                results[results.length - 1].strategies || {};
-                            var ls = lastSt[s] || {};
-                            var bal = ls.balance || 0;
-                            var pnl = bal - (d.start_balance || 50);
-                            var posDays = results.filter(function (r) {
-                                var st = r.strategies || {};
-                                return st[s] && st[s].pnl > 0;
-                            }).length;
-                            var bustDays = results.filter(function (r) {
-                                var st = r.strategies || {};
-                                return st[s] && st[s].busted;
-                            }).length;
+
                             var pnlCls = pnl >= 0 ? "win" : "loss";
-                            var roi = (pnl / (d.start_balance || 50)) * 100;
-                            return (
-                                '<tr><td style="font-weight:600">' +
-                                s +
-                                "</td>" +
-                                '<td class="' +
-                                (bal >= (d.start_balance || 50)
-                                    ? "win"
-                                    : "loss") +
-                                '">$' +
-                                bal.toFixed(2) +
-                                "</td>" +
-                                '<td class="' +
-                                pnlCls +
-                                '">' +
-                                (pnl >= 0 ? "+" : "") +
-                                pnl.toFixed(2) +
-                                "</td>" +
-                                '<td class="' +
-                                pnlCls +
-                                '">' +
-                                (roi >= 0 ? "+" : "") +
-                                roi.toFixed(1) +
-                                "%" +
-                                '<div style="width: 100%; min-width: 60px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-top: 3px;">' +
-                                '<div style="height: 100%; width: ' + Math.min(100, Math.max(0, Math.abs(roi))) + '%; background: ' + (roi >= 0 ? 'var(--green)' : 'var(--red)') + '; border-radius: 2px;"></div>' +
-                                '</div>' +
-                                "</td>" +
-                                "<td>" +
-                                posDays +
-                                "/" +
-                                results.length +
-                                "</td>" +
-                                "<td>" +
-                                (bustDays > 0
-                                    ? '<span style="color:var(--red)">' +
-                                      bustDays +
-                                      "</span>"
-                                    : "0") +
-                                "</td></tr>"
-                            );
+                            var isSF = s === "Super-Frankenstein";
+                            
+                            // Estilo de destaque para a estratégia PCS preferida
+                            var rowStyle = isSF 
+                                ? 'background: rgba(139, 92, 246, 0.08); border-left: 3px solid var(--purple); font-weight: 600;' 
+                                : '';
+                            var nameDisplay = isSF 
+                                ? `<span style="color: #c084fc; display: inline-flex; align-items: center; gap: 4px;">⚡ ${s} <span style="background: var(--purple-bg); color: var(--purple); font-size: 0.62rem; padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.3)">RECOMENDADA</span></span>`
+                                : s;
+
+                            var bustTxt = busted > 0 
+                                ? `<strong style="color: var(--red); font-size: 1.1em;">${busted}</strong>` 
+                                : '<span style="color: var(--dim)">0</span>';
+
+                            return `
+                                <tr style="${rowStyle}">
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 0.82rem;">${nameDisplay}</td>
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; font-weight: bold; font-family: monospace;" class="${final_bal >= (d.start_balance || 50) ? 'win' : 'loss'}">$${final_bal.toFixed(2)}</td>
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; font-weight: bold; font-family: monospace;" class="${pnlCls}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td>
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center;" class="${pnlCls}">
+                                        <strong style="font-size:1.05em;">${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%</strong>
+                                        <div style="width: 80px; height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin: 3px auto 0 auto;">
+                                            <div style="height: 100%; width: ${Math.min(100, Math.max(0, Math.abs(roi)))}%; background: ${roi >= 0 ? 'var(--green)' : 'var(--red)'}; border-radius: 2px;"></div>
+                                        </div>
+                                    </td>
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center; font-weight: 500;">
+                                        ${posDays} <span style="color: var(--dim); font-size: 0.85em;">/ ${totalDays} dias</span>
+                                    </td>
+                                    <td style="padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center;">${bustTxt}</td>
+                                </tr>
+                            `;
                         });
                         stb.innerHTML = rows.join("");
                     }
 
-                    // Tabela diária
-                    var tb = $("bt-real-tbody");
-                    if (!tb) return;
-                    // Atualiza header dinâmico
-                    var thead = tb.parentElement
-                        ? tb.parentElement.querySelector("thead tr")
-                        : null;
-                    if (thead && snames.length > 0) {
-                        thead.innerHTML =
-                            "<th>Data</th><th>Sig</th><th>WR</th>" +
-                            snames
-                                .map(function (s) {
-                                    return (
-                                        "<th>" +
-                                        s.replace("_", " ").substring(0, 10) +
-                                        "</th>"
-                                    );
-                                })
-                                .join("");
-                    }
-                    tb.innerHTML = results
-                        .map(function (r) {
-                            var strats = r.strategies || {};
-                            // Pega WR e trades do primeiro strategy que tiver dados
-                            var firstS = strats[snames[0]] || {};
-                            var wr = firstS.signal_wr || firstS.wr || 0;
-                            var trades = firstS.trades || 0;
-                            var wrCls =
-                                wr >= 80 ? "win" : wr < 60 ? "loss" : "";
-                            var cells =
-                                "<td>" +
-                                r.date +
-                                "</td><td>" +
-                                trades +
-                                '</td><td class="' +
-                                wrCls +
-                                '">' +
-                                wr.toFixed(0) +
-                                "%</td>";
-                            snames.forEach(function (s) {
-                                var ss = strats[s];
-                                if (!ss) {
-                                    cells += "<td>&mdash;</td>";
-                                    return;
-                                }
-                                var cls = ss.busted
-                                    ? "loss"
-                                    : ss.pnl >= 0
-                                      ? "win"
-                                      : "loss";
-                                var icon = ss.stopped_sl
-                                    ? "S"
-                                    : ss.busted
-                                      ? "X"
-                                      : "";
-                                cells +=
-                                    '<td><span class="' +
-                                    cls +
-                                    '">$' +
-                                    ss.balance.toFixed(0) +
-                                    icon +
-                                    "</span></td>";
-                            });
-                            return "<tr>" + cells + "</tr>";
-                        })
-                        .join("");
+                    // Renderiza a tabela diária interativa
+                    renderDailyTable();
+
                 } catch (e) {
                     console.warn("pollBacktestStatus err:", e);
                 }
+            }
+
+            // Renderiza tabela diária baseada na estratégia ativa no select
+            function renderDailyTable() {
+                var d = window._lastBacktestData;
+                if (!d) return;
+                var select = $("bt-strat-select");
+                if (!select) return;
+                var activeStrat = select.value;
+                if (!activeStrat) return;
+
+                var results = d.results || [];
+                var tb = $("bt-real-tbody");
+                if (!tb) return;
+
+                if (results.length === 0) {
+                    tb.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--muted); padding: 12px;">Nenhum resultado disponível no momento.</td></tr>';
+                    return;
+                }
+
+                tb.innerHTML = results.map(function (r) {
+                    var strats = r.strategies || {};
+                    var ss = strats[activeStrat];
+                    if (!ss) {
+                        return `<tr><td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3);"><strong>${r.date}</strong></td><td colspan="7" style="text-align:center; color:var(--dim)">Sem operações nesta estratégia</td></tr>`;
+                    }
+
+                    var trades = ss.trades || 0;
+                    var wr = ss.signal_wr || ss.wr || 0;
+                    var start_bal = ss.start_balance || d.start_balance || 50.0;
+                    var end_bal = ss.balance || 50.0;
+                    var pnl = ss.pnl || 0.0;
+                    var roi = (pnl / start_bal) * 100;
+                    
+                    var pnlCls = pnl >= 0 ? "win" : "loss";
+                    var pnlText = (pnl >= 0 ? "+" : "") + pnl.toFixed(2);
+                    var wrCls = wr >= 80 ? "win" : wr < 60 ? "loss" : "";
+                    
+                    // Badge de status elegante com cores HSL adequadas
+                    var statusBadge = "";
+                    if (ss.busted) {
+                        statusBadge = `<span style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.68em; display: inline-block;">💥 BUSTED</span>`;
+                    } else if (ss.stop === "DOBROU") {
+                        statusBadge = `<span style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.68em; display: inline-block;">🎯 DOBROU</span>`;
+                    } else if (ss.stop === "SL") {
+                        statusBadge = `<span style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.68em; display: inline-block;">⛔ STOP LOSS</span>`;
+                    } else if (ss.stop === "TRAIL") {
+                        statusBadge = `<span style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.68em; display: inline-block;">🔒 TRAILING</span>`;
+                    } else if (pnl >= 0) {
+                        statusBadge = `<span style="background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 0.68em; display: inline-block;">✅ SUCESSO</span>`;
+                    } else {
+                        statusBadge = `<span style="background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 2px 6px; border-radius: 4px; font-size: 0.68em; display: inline-block;">❌ NEGATIVO</span>`;
+                    }
+
+                    return `
+                        <tr>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3);"><strong>${r.date}</strong></td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: center; font-weight: bold; color: var(--blue);">${trades}</td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: center;" class="${wrCls}">${wr.toFixed(0)}%</td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: right; color: var(--dim); font-family: monospace;">$${start_bal.toFixed(2)}</td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: right; font-weight: bold; font-family: monospace;">$${end_bal.toFixed(2)}</td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: right; font-weight: bold; font-family: monospace;" class="${pnlCls}">$${pnlText}</td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: center;" class="${pnlCls}">
+                                <strong style="font-size:0.95em;">${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%</strong>
+                                <div style="width: 60px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin: 3px auto 0 auto;">
+                                    <div style="height: 100%; width: ${Math.min(100, Math.max(0, Math.abs(roi)))}%; background: ${pnl >= 0 ? 'var(--green)' : 'var(--red)'}; border-radius: 2px;"></div>
+                                </div>
+                            </td>
+                            <td style="padding: 7px 10px; border-bottom: 1px solid rgba(55, 65, 81, 0.3); text-align: center;">${statusBadge}</td>
+                        </tr>
+                    `;
+                }).join("");
             }
 
             // Formata segundos como '1m 23s' ou '45s'
@@ -4912,33 +4899,42 @@
                     var d = await fetch("/api/balance").then(function (r) {
                         return r.json();
                     });
-                    if (d.balance && d.balance !== "\u2014") {
-                        $("balance").textContent = "$" + d.balance;
-                        var bp = $("balance-pnl-total");
-                        if (bp && d.pnl_total != null) {
-                            var pt = d.pnl_total,
-                                ib = d.initial_balance || 10000;
-                            bp.textContent =
-                                "in\u00edcio $" +
-                                ib.toFixed(2) +
-                                ": " +
-                                (pt >= 0 ? "+" : "") +
-                                pt.toFixed(2);
-                            bp.style.color =
-                                pt >= 0 ? "var(--green)" : "var(--red)";
+                    
+                    // 1) Atualiza Banca Virtual e seu ROI no sub-label (nunca somem!)
+                    if (d.virtual_balance != null) {
+                        var pt = d.daily_net_profit || 0,
+                            ib = d.initial_balance || 50.0;
+                        var vb = d.virtual_balance;
+                        var pct = (pt / ib) * 100;
+                        
+                        $("balance").textContent = "$" + vb.toFixed(2);
+                        
+                        var bsub = $("balance-sub");
+                        if (bsub) {
+                            bsub.innerHTML = 
+                                `in&iacute;cio $${ib.toFixed(2)}: ` +
+                                `<span style="color: ${pt >= 0 ? "var(--green)" : "var(--red)"}; font-weight: bold">${pt >= 0 ? "+" : ""}${pt.toFixed(2)} (${pt >= 0 ? "+" : ""}${pct.toFixed(1)}%)</span>`;
                         }
-                        if (_forecastBalance === 0) {
-                            var fb = parseFloat(
-                                String(d.balance).replace(/[^0-9.]/g, ""),
-                            );
-                            if (fb > 0) {
-                                _forecastBalance = fb;
-                                var h30 = document.getElementById(
-                                    "inp-hist30d-balance",
-                                );
-                                if (h30 && document.activeElement !== h30)
-                                    h30.value = fb.toFixed(2);
+                    }
+                    
+                    // 2) Atualiza o saldo real da conta da Deriv no rodapé do card
+                    var bp = $("balance-pnl-total");
+                    if (bp) {
+                        if (d.balance && d.balance !== "—" && d.balance !== "\u2014") {
+                            bp.innerHTML = `<span style="color: var(--dim)">Conta Deriv: $${parseFloat(d.balance).toFixed(2)}</span>`;
+                            
+                            // Atualiza projeção inicial se necessário
+                            if (_forecastBalance === 0) {
+                                var fb = parseFloat(String(d.balance).replace(/[^0-9.]/g, ""));
+                                if (fb > 0) {
+                                    _forecastBalance = fb;
+                                    var h30 = document.getElementById("inp-hist30d-balance");
+                                    if (h30 && document.activeElement !== h30)
+                                        h30.value = fb.toFixed(2);
+                                }
                             }
+                        } else {
+                            bp.innerHTML = `<span style="color: var(--dim)">Conta Deriv: &mdash;</span>`;
                         }
                     }
                 } catch (e) {}

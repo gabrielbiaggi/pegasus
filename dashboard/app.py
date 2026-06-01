@@ -509,9 +509,17 @@ def api_balance(response: Response):
     except (ValueError, TypeError):
         bal_float = 0.0
     risk_state = _read_risk_state()
-    ini_bal = float(risk_state.get("start_of_day_balance", 0)) or _initial_balance()
+    ini_bal = float(risk_state.get("start_of_day_balance", 50.0)) or _initial_balance()
+    daily_net_profit = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
+    virtual_balance = round(ini_bal + daily_net_profit, 2)
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
-    return {"balance": bal, "pnl_total": pnl_total, "initial_balance": ini_bal}
+    return {
+        "balance": bal,
+        "pnl_total": pnl_total,
+        "initial_balance": ini_bal,
+        "virtual_balance": virtual_balance,
+        "daily_net_profit": daily_net_profit
+    }
 
 
 @app.post("/api/fetch-balance")
