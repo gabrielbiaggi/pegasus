@@ -468,7 +468,31 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
         print(f"[WARN] write_state: {e}", flush=True)
 
 
-# ── Deploy do vencedor ────────────────────────────────────────────────────────
+# Estado global para debouncing de deploy
+_last_deploy_time = 0.0
+_pending_deploy_env = None
+_pending_deploy_msg = ""
+DEPLOY_COOLDOWN = 120.0  # 2 minutos de cooldown mínimo para o bot ao vivo respirar
+
+
+def try_deploy_winner(env_vars: dict, msg: str, force: bool = False) -> bool:
+    global _last_deploy_time, _pending_deploy_env, _pending_deploy_msg
+    now = time.time()
+    if force or (now - _last_deploy_time >= DEPLOY_COOLDOWN):
+        print(f"   🚀 Iniciando deploy do campeão...", flush=True)
+        ok = deploy_winner(env_vars, msg)
+        if ok:
+            _last_deploy_time = now
+            _pending_deploy_env = None
+            _pending_deploy_msg = ""
+        return ok
+    else:
+        _pending_deploy_env = env_vars.copy()
+        _pending_deploy_msg = msg
+        rem = int(DEPLOY_COOLDOWN - (now - _last_deploy_time))
+        print(f"   ⏳ Deploy em cooldown. Campeão registrado para deploy automático em {rem}s para evitar race condition/loop de restart.", flush=True)
+        return False
+
 
 def _is_on_server() -> bool:
     return Path("/opt/pegasus").exists() and Path.cwd() == Path("/opt/pegasus")
@@ -635,7 +659,7 @@ def main():
 
         if not is_bot_running:
             print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando...", flush=True)
-            deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now")
+            try_deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now", force=True)
     else:
         print("   🤖 [Ultra-Estresse] Bot ao vivo permanece em espera (OFFLINE) para prioridade de CPU/RAM.", flush=True)
 
@@ -647,6 +671,11 @@ def main():
     # ── Loop infinito de otimização ──────────────────────────────────────────
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         while True:
+            # 0. Verifica se há deploy pendente cujo cooldown expirou
+            if _pending_deploy_env is not None and (time.time() - _last_deploy_time >= DEPLOY_COOLDOWN):
+                print(f"   ⏰ Cooldown expirou. Executando deploy pendente do último campeão encontrado.", flush=True)
+                try_deploy_winner(_pending_deploy_env, _pending_deploy_msg, force=True)
+
             # 1. Verifica e aplica o Modo Ultra-Estresse na rodada ativa
             is_stress = _read_stress_config()
             if is_stress and _is_on_server():
@@ -800,7 +829,7 @@ def main():
                     print(f"{'★'*70}\n", flush=True)
 
                     # Deploy no bot ao vivo
-                    ok = deploy_winner(best_env,
+                    ok = try_deploy_winner(best_env,
                         f"opt-v3 it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
                     if ok:
                         print(f"   ✅ Bot ao vivo reiniciado com novos parâmetros!\n", flush=True)

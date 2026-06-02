@@ -3276,7 +3276,7 @@
                 if (id === "modal-optimizer") {
                     pollOptimizerStatus(); // poll imediato
                     if (_optPollTimer) clearInterval(_optPollTimer);
-                    _optPollTimer = setInterval(pollOptimizerStatus, 500); // 500ms enquanto aberto
+                    _optPollTimer = setInterval(pollOptimizerStatus, 1000); // 1000ms enquanto aberto
                 }
             }
             function closeModal(id) {
@@ -5225,6 +5225,8 @@
 
             // ── Optimizer Modal ─────────────────────────────────────────────
             var _optPollTimer = null;
+            var _last_rendered_max_iter = 0;
+            var _last_rendered_best_iter = 0;
 
 
             async function pollOptimizerStatus() {
@@ -5466,49 +5468,58 @@
                     // ── Tabela de iterações v3 — com coluna Live Bot ──────────────────────────
                     var tbody = document.getElementById("opt-iter-tbody");
                     if (tbody && iters_all.length > 0) {
-                        var iters = iters_all.slice().reverse().slice(0, 200);
-                        tbody.innerHTML = iters.map(function(it) {
-                            var sfDay   = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : null);
-                            var liveDay = it.live_avg_daily != null ? it.live_avg_daily : null;
-                            var posD    = it.positive_days != null ? it.positive_days : "—";
-                            var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
-                            var scoreStr= it.score != null ? it.score.toFixed(1) : "—";
-                            var sharpeStr = it.sharpe != null ? it.sharpe.toFixed(2) : "—";
-                            var sortinoStr = it.sortino != null ? it.sortino.toFixed(2) : "—";
-                            var ddStr = it.drawdown != null ? "$" + it.drawdown.toFixed(2) : "—";
-                            var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
-                            var rowBg   = it.is_best ? "background:rgba(16,185,129,0.1);border-left:3px solid var(--green);" : "";
-                            var sfColor = sfDay != null && sfDay > (_baselineAvgDay || 0) ? "color:var(--green)" : "color:var(--red)";
-                            var sfStr   = sfDay != null ? "$" + sfDay.toFixed(2) : "—";
-                            var liveStr = liveDay != null ? "$" + liveDay.toFixed(2) : "—";
-                            var liveCol = liveDay != null && liveDay > 0 ? "color:#60a5fa" : "color:#f87171";
+                        var currentMaxIter = d.current_iteration || 0;
+                        var currentBestIter = (best && best.iteration) ? best.iteration : 0;
+                        if (currentMaxIter !== _last_rendered_max_iter || currentBestIter !== _last_rendered_best_iter) {
+                            _last_rendered_max_iter = currentMaxIter;
+                            _last_rendered_best_iter = currentBestIter;
                             
-                            var badge = "";
-                            if (it.is_best) {
-                                badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
-                            } else if (sfDay > 50.0) {
-                                badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $50)</span>';
-                            } else if (sfDay > 0 && (it.positive_days || 0) >= 20) {
-                                badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
-                            } else {
-                                badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
-                            }
+                            var iters = iters_all.slice().reverse().slice(0, 200);
+                            tbody.innerHTML = iters.map(function(it) {
+                                var sfDay   = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : null);
+                                var liveDay = it.live_avg_daily != null ? it.live_avg_daily : null;
+                                var posD    = it.positive_days != null ? it.positive_days : "—";
+                                var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
+                                var scoreStr= it.score != null ? it.score.toFixed(1) : "—";
+                                var sharpeStr = it.sharpe != null ? it.sharpe.toFixed(2) : "—";
+                                var sortinoStr = it.sortino != null ? it.sortino.toFixed(2) : "—";
+                                var ddStr = it.drawdown != null ? "$" + it.drawdown.toFixed(2) : "—";
+                                var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
+                                var rowBg   = it.is_best ? "background:rgba(16,185,129,0.1);border-left:3px solid var(--green);" : "";
+                                var sfColor = sfDay != null && sfDay > (_baselineAvgDay || 0) ? "color:var(--green)" : "color:var(--red)";
+                                var sfStr   = sfDay != null ? "$" + sfDay.toFixed(2) : "—";
+                                var liveStr = liveDay != null ? "$" + liveDay.toFixed(2) : "—";
+                                var liveCol = liveDay != null && liveDay > 0 ? "color:#60a5fa" : "color:#f87171";
+                                
+                                var badge = "";
+                                if (it.is_best) {
+                                    badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
+                                } else if (sfDay > 50.0) {
+                                    badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $50)</span>';
+                                } else if (sfDay > 0 && (it.positive_days || 0) >= 20) {
+                                    badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
+                                } else {
+                                    badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
+                                }
 
-                            return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
-                                + '<td style="padding:6px 8px;color:var(--muted);font-size:.75rem">#' + it.iteration + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace;' + sfColor + '">' + sfStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;' + liveCol + '">' + liveStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;color:var(--green)">' + posD + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;color:var(--muted)">' + consist + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:var(--cyan)">' + scoreStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#8b5cf6">' + sharpeStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ec4899">' + sortinoStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ef4444">' + ddStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:right;color:var(--dim);font-size:.73rem">' + timeStr + '</td>'
-                                + '<td style="padding:6px 8px;text-align:center">' + badge + '</td>'
-                                + '</tr>';
-                        }).join("");
+                                return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
+                                    + '<td style="padding:6px 8px;color:var(--muted);font-size:.75rem">#' + it.iteration + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace;' + sfColor + '">' + sfStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-family:monospace;' + liveCol + '">' + liveStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;color:var(--green)">' + posD + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;color:var(--muted)">' + consist + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:var(--cyan)">' + scoreStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#8b5cf6">' + sharpeStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ec4899">' + sortinoStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ef4444">' + ddStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:right;color:var(--dim);font-size:.73rem">' + timeStr + '</td>'
+                                    + '<td style="padding:6px 8px;text-align:center">' + badge + '</td>'
+                                    + '</tr>';
+                            }).join("");
+                        }
                     } else if (tbody && iters_all.length === 0) {
+                        _last_rendered_max_iter = 0;
+                        _last_rendered_best_iter = 0;
                         tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer calculando baseline...</td></tr>';
                     }
 
