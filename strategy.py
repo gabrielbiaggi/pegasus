@@ -346,47 +346,57 @@ def score_accumulator_row(
 ) -> int:
     config = config or AccumulatorStrategyConfig()
     required = ["bb_width_percent", "tick_atr_percent", "recent_move_percent"]
-    if row[required].isna().any():
-        return 0
+    
+    is_dict = isinstance(row, dict)
+    if is_dict:
+        if any(row.get(k) is None or pd.isna(row[k]) for k in required):
+            return 0
+    else:
+        if row[required].isna().any():
+            return 0
 
     score = 0
     # Primary 3 indicators (max 10 pts: squeeze=4, atr=4, stability=2)
-    if row["bb_width_percent"] <= config.max_bb_width_percent:
+    bb_w = row.get("bb_width_percent") if is_dict else row["bb_width_percent"]
+    tick_atr = row.get("tick_atr_percent") if is_dict else row["tick_atr_percent"]
+    recent_m = row.get("recent_move_percent") if is_dict else row["recent_move_percent"]
+    
+    if bb_w is not None and bb_w <= config.max_bb_width_percent:
         score += config.squeeze_weight
-    if row["tick_atr_percent"] <= config.max_tick_atr_percent:
+    if tick_atr is not None and tick_atr <= config.max_tick_atr_percent:
         score += config.atr_weight
-    if row["recent_move_percent"] <= config.max_recent_move_percent:
+    if recent_m is not None and recent_m <= config.max_recent_move_percent:
         score += config.stability_weight
     # Quant indicators: 1 pt each (max 10 pts) — todos os 10 contribuem ao score
     h = row.get("hurst_exponent")
-    if not pd.isna(h) and float(h) < config.max_hurst_exponent:
+    if h is not None and not pd.isna(h) and float(h) < config.max_hurst_exponent:
         score += 1
     ti = row.get("tick_imbalance")
-    if not pd.isna(ti) and abs(int(ti)) < config.max_abs_tick_imbalance:
+    if ti is not None and not pd.isna(ti) and abs(int(ti)) < config.max_abs_tick_imbalance:
         score += 1
     hi = row.get("hawkes_intensity")
-    if not pd.isna(hi) and float(hi) <= config.max_hawkes_intensity:
+    if hi is not None and not pd.isna(hi) and float(hi) <= config.max_hawkes_intensity:
         score += 1
     vz = row.get("velocity_zscore")
-    if not pd.isna(vz) and abs(float(vz)) <= config.max_velocity_zscore:
+    if vz is not None and not pd.isna(vz) and abs(float(vz)) <= config.max_velocity_zscore:
         score += 1
     az = row.get("acceleration_zscore")
-    if not pd.isna(az) and abs(float(az)) <= config.max_acceleration_zscore:
+    if az is not None and not pd.isna(az) and abs(float(az)) <= config.max_acceleration_zscore:
         score += 1
     pd_ = row.get("pmi_distance_percent")
-    if not pd.isna(pd_) and float(pd_) <= config.max_pmi_distance_percent:
+    if pd_ is not None and not pd.isna(pd_) and float(pd_) <= config.max_pmi_distance_percent:
         score += 1
     muu = row.get("markov_p_up_given_up")
-    if not pd.isna(muu) and float(muu) < config.max_markov_continuation_prob:
+    if muu is not None and not pd.isna(muu) and float(muu) < config.max_markov_continuation_prob:
         score += 1
     mdd = row.get("markov_p_down_given_down")
-    if not pd.isna(mdd) and float(mdd) < config.max_markov_continuation_prob:
+    if mdd is not None and not pd.isna(mdd) and float(mdd) < config.max_markov_continuation_prob:
         score += 1
     se = row.get("shannon_entropy")
-    if not pd.isna(se) and float(se) >= config.min_shannon_entropy:
+    if se is not None and not pd.isna(se) and float(se) >= config.min_shannon_entropy:
         score += 1
     kz = row.get("kalman_residual_zscore")
-    if not pd.isna(kz) and abs(float(kz)) <= config.max_kalman_residual_zscore:
+    if kz is not None and not pd.isna(kz) and abs(float(kz)) <= config.max_kalman_residual_zscore:
         score += 1
     return score
 
@@ -1275,8 +1285,14 @@ def generate_calm_accu_signal(
 
     # --- Full indicator voting system ---
     p_loss: Optional[float] = None
-    if df is not None and len(df) >= config.minimum_ticks:
-        last = df.iloc[-1]
+    if df is not None:
+        is_df = isinstance(df, pd.DataFrame)
+        if is_df:
+            if len(df) < config.minimum_ticks:
+                return None, 0, None
+            last = df.iloc[-1]
+        else:
+            last = df
 
         # Layer 1+2: Base score from 13 indicators (3 primary + 10 quant) — max 20
         score = score_accumulator_row(last, config)
@@ -1328,11 +1344,14 @@ def generate_calm_accu_signal(
         # Layer 4: Calculus & chaos indicator votes — 10 additional points
         # Derivative energy (kinetic proxy): low = calm market = good for ACCU
         deriv_energy = _val("derivative_energy", 0.0)
-        de_median = (
-            df["derivative_energy"].median()
-            if "derivative_energy" in df.columns
-            else 1.0
-        )
+        if "deriv_energy_median_100" in last:
+            de_median = last["deriv_energy_median_100"]
+        else:
+            de_median = (
+                df["derivative_energy"].median()
+                if is_df and "derivative_energy" in df.columns
+                else 1.0
+            )
         if de_median > 0 and deriv_energy <= de_median:
             score += 1
 
@@ -1401,8 +1420,9 @@ def generate_calm_accu_signal(
 
         # --- HMM regime gate ---
         if config.hmm_high_variance_blocks and _HMM_AVAILABLE:
-            if hmm_regime_is_high_variance(
-                df["close"],
+            close_series = df["close"] if is_df else None
+            if close_series is not None and hmm_regime_is_high_variance(
+                close_series,
                 n_states=config.hmm_n_states,
                 window=config.hmm_window,
             ):
@@ -1422,17 +1442,35 @@ def generate_calm_accu_signal(
             return None, 0, None
 
         # --- P(LOSS) XGBoost ensemble gate (final AI check) ---
-        if config.use_ensemble and ensemble_scorer is not None:
-            p_loss = ensemble_scorer.predict_loss_probability(last)
-            if p_loss >= config.ensemble_min_prob:
+        p_loss = _val("p_loss", -1.0)
+        if p_loss < 0:
+            if config.use_ensemble and ensemble_scorer is not None:
+                p_loss = ensemble_scorer.predict_loss_probability(last)
+                if p_loss >= config.ensemble_min_prob:
+                    logger.warning(
+                        "⛔ CALM ACCU BLOCKED: P(LOSS)=%.4f >= %.4f — IA vetou",
+                        p_loss,
+                        config.ensemble_min_prob,
+                    )
+                    return None, 0, None
+                logger.info(
+                    "CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓",
+                    p_loss,
+                    config.ensemble_min_prob,
+                )
+            else:
+                p_loss = None
+        else:
+            # We found it in last, check if it exceeds ensemble_min_prob
+            if config.use_ensemble and p_loss >= config.ensemble_min_prob:
                 logger.warning(
-                    "⛔ CALM ACCU BLOCKED: P(LOSS)=%.4f >= %.4f — IA vetou",
+                    "⛔ CALM ACCU BLOCKED: P(LOSS)=%.4f >= %.4f — IA vetou (cached)",
                     p_loss,
                     config.ensemble_min_prob,
                 )
                 return None, 0, None
             logger.info(
-                "CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓",
+                "CALM ACCU P(LOSS)=%.4f (limiar=%.4f) ✓ (cached)",
                 p_loss,
                 config.ensemble_min_prob,
             )

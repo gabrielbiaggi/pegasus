@@ -4,12 +4,20 @@ from logging.handlers import RotatingFileHandler
 
 
 def setup_logger() -> logging.Logger:
+    is_optimizer = os.getenv("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true"
+    logger = logging.getLogger(os.getenv("BOT_NAME", "Pegasus"))
+    if is_optimizer:
+        logger.setLevel(logging.ERROR)
+        logger.propagate = False
+        if not logger.handlers:
+            logger.addHandler(logging.NullHandler())
+        return logger
+
     os.makedirs("logs", exist_ok=True)
 
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    logger = logging.getLogger(os.getenv("BOT_NAME", "Pegasus"))
     logger.setLevel(level)
     logger.propagate = False
 

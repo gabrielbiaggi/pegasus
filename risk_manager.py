@@ -1,3 +1,4 @@
+import os
 import json
 import time
 from collections import deque
@@ -607,6 +608,8 @@ class RiskManager:
         )
 
     def _save_state(self) -> None:
+        if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
+            return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         cooldown_epoch = 0.0
         if self.cooldown_until > 0:

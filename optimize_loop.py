@@ -396,96 +396,34 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
 
 def _run_one(args) -> dict | None:
     """
-    Roda um backtest em subprocess. Executa em processo filho (multiprocessing).
-    Usa arquivo temporário para não colidir com outros workers.
+    Roda um backtest diretamente em memória. Executa em processo filho (multiprocessing).
+    Evita sobrecarga de subprocessos e I/O de disco.
     """
     env_vars, worker_id = args
-    tmp = Path(f"logs/backtest_worker_{worker_id}.json")
-
-    # Prepara ambiente
-    my_env = os.environ.copy()
-    my_env.update(env_vars)
-    my_env["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
-    my_env["PEGASUS_OPTIMIZER_RUN"] = "true"
-
-    if tmp.exists():
-        tmp.unlink()
-
-    cmd = [
-        "nice", "-n", "19",
-        ".venv/bin/python", "backtest_engine.py",
-        START_DATE, END_DATE, START_BALANCE, str(tmp),
-    ]
+    
+    # Define prioridade baixa de CPU (nice -n 19) no processo worker
     try:
-        subprocess.run(
-            cmd, env=my_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True, timeout=600,
+        os.nice(19)
+    except Exception:
+        pass
+
+    import backtest_engine
+    
+    # Garante flags de otimização no dicionário de overrides
+    env_vars = env_vars.copy()
+    env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
+    env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
+
+    try:
+        return backtest_engine.run_backtest_direct(
+            start_date_str=START_DATE,
+            end_date_str=END_DATE,
+            start_balance=float(START_BALANCE),
+            env_overrides=env_vars,
         )
     except Exception as e:
+        print(f"   [worker {worker_id}] erro: {e}", flush=True)
         return None
-
-    if not tmp.exists():
-        return None
-
-    try:
-        data    = json.loads(tmp.read_text(encoding="utf-8"))
-        results = data.get("results", [])
-        if not results:
-            return None
-        summary_sf = data.get("summary", {}).get("strategies", {}).get("Super-Frankenstein", {})
-        summary_live = data.get("summary", {}).get("strategies", {}).get("Pegasus Live Sniper (9% TP)", {})
-
-        m = compute_score(results)   # Primary: Super-Frankenstein
-        
-        # Copia estatísticas avançadas do backtest
-        m["sharpe_ratio"] = summary_sf.get("sharpe_ratio", 0.0)
-        m["sortino_ratio"] = summary_sf.get("sortino_ratio", 0.0)
-        m["max_drawdown"] = summary_sf.get("max_drawdown", 0.0)
-
-        # Secondary: track Pegasus Live Sniper to monitor live bot correlation
-        live = compute_score(results, "Pegasus Live Sniper (9% TP)")
-        m["live_avg_daily"]   = live["avg_daily_profit"]
-        m["live_positive_days"] = live["positive_days"]
-        m["live_total_pnl"]   = live["total_pnl"]
-        m["live_sharpe"]      = summary_live.get("sharpe_ratio", 0.0)
-        m["live_sortino"]     = summary_live.get("sortino_ratio", 0.0)
-        m["live_drawdown"]    = summary_live.get("max_drawdown", 0.0)
-        
-        m["_env"] = env_vars   # salva os params junto
-
-        # Ponderação Avançada do Score Geral (Multi-Métrica + Risco)
-        # Bônus por consistência estatística de Sharpe/Sortino
-        sharpe_val = m["sharpe_ratio"]
-        sortino_val = m["sortino_ratio"]
-        max_dd_val = m["max_drawdown"]
-        
-        m["score"] += sharpe_val * 8.0
-        m["score"] += sortino_val * 6.0
-        
-        # Penalização por rebaixamento máximo (drawdown)
-        if max_dd_val > 15.0:
-            m["score"] -= max_dd_val * 3.0
-        elif max_dd_val > 5.0:
-            m["score"] -= max_dd_val * 1.0
-
-        # Evita overfitting com Live Bot
-        live_avg = live["avg_daily_profit"]
-        if live_avg < 0.0:
-            m["score"] -= abs(live_avg) * 8.0
-        else:
-            m["score"] += live_avg * 3.0
-
-        m["score"] = round(m["score"], 4)
-        return m
-    except Exception:
-        return None
-    finally:
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
 
 
 # ── Estado e dashboard ────────────────────────────────────────────────────────

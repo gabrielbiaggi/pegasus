@@ -204,6 +204,12 @@ async def _download_day_async(day: _date, out_path: Path) -> int:
 # Cache da cobertura do max.csv: lemos apenas uma vez o range de datas
 _max_csv_range: tuple[_date, _date] | None = None  # (day_min, day_max)
 
+# Caches globais em RAM para otimização extrema
+_day_df_cache: dict[_date, pd.DataFrame] = {}
+_indicators_df_cache: dict[_date, pd.DataFrame] = {}
+_indicators_list_cache: dict[_date, list[dict]] = {}
+
+
 
 def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
     """Lê o range de DATAS do max.csv uma única vez e guarda em cache."""
@@ -356,6 +362,10 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     Carrega ticks de um dia. Prefere carregar de arquivo diário local ou max.csv;
     senão cai no PostgreSQL e salva localmente como cache diário para evitar queries futuras.
     """
+    global _day_df_cache
+    if day in _day_df_cache:
+        return _day_df_cache[day]
+
     daily_path = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
     
     # 1. Primeiro verifica se existe o CSV diário local (é MUITO mais rápido que PG)
@@ -372,6 +382,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
                 rets = np.zeros(len(q))
                 rets[1:] = np.abs(np.diff(q) / q[:-1])
                 df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
+                _day_df_cache[day] = df
                 return df
         except Exception:
             pass
@@ -386,6 +397,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
             print(f"(cached localmente)", end=" ", flush=True)
         except Exception as e:
             print(f"(erro ao salvar cache: {e})", end=" ", flush=True)
+        _day_df_cache[day] = df
         return df
 
     # 3. Se PG falhar, tenta ler do max.csv
@@ -406,11 +418,12 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
             rets = np.zeros(len(q))
             rets[1:] = np.abs(np.diff(q) / q[:-1])
             df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
-            # Também salva cache do max.csv no diário para acelerar leituras futuras
+            # Também salva cache do max.csv no diário para acelerar leituras futures
             try:
                 df.to_csv(daily_path, index=False)
             except Exception:
                 pass
+            _day_df_cache[day] = df
             return df
     except Exception:
         pass
@@ -718,6 +731,124 @@ def _replay_strategy(
         }
 
 
+def _precalculate_metrics_for_row(row: dict, config: AccumulatorStrategyConfig) -> tuple[int, bool]:
+    # Hard blocks
+    hurst = row.get("hurst_exponent")
+    cusum = row.get("cusum_score")
+    hard_blocked = (hurst is not None and hurst > 0.70) or (cusum is not None and cusum > 8.0)
+    
+    required = ["bb_width_percent", "tick_atr_percent", "recent_move_percent"]
+    if any(row.get(k) is None or pd.isna(row[k]) for k in required):
+        return 0, hard_blocked
+
+    score = 0
+    bb_w = row.get("bb_width_percent")
+    tick_atr = row.get("tick_atr_percent")
+    recent_m = row.get("recent_move_percent")
+    
+    if bb_w is not None and bb_w <= config.max_bb_width_percent:
+        score += config.squeeze_weight
+    if tick_atr is not None and tick_atr <= config.max_tick_atr_percent:
+        score += config.atr_weight
+    if recent_m is not None and recent_m <= config.max_recent_move_percent:
+        score += config.stability_weight
+        
+    h = row.get("hurst_exponent")
+    if h is not None and not pd.isna(h) and float(h) < config.max_hurst_exponent:
+        score += 1
+    ti = row.get("tick_imbalance")
+    if ti is not None and not pd.isna(ti) and abs(int(ti)) < config.max_abs_tick_imbalance:
+        score += 1
+    hi = row.get("hawkes_intensity")
+    if hi is not None and not pd.isna(hi) and float(hi) <= config.max_hawkes_intensity:
+        score += 1
+    vz = row.get("velocity_zscore")
+    if vz is not None and not pd.isna(vz) and abs(float(vz)) <= config.max_velocity_zscore:
+        score += 1
+    az = row.get("acceleration_zscore")
+    if az is not None and not pd.isna(az) and abs(float(az)) <= config.max_acceleration_zscore:
+        score += 1
+    pd_ = row.get("pmi_distance_percent")
+    if pd_ is not None and not pd.isna(pd_) and float(pd_) <= config.max_pmi_distance_percent:
+        score += 1
+    muu = row.get("markov_p_up_given_up")
+    if muu is not None and not pd.isna(muu) and float(muu) < config.max_markov_continuation_prob:
+        score += 1
+    mdd = row.get("markov_p_down_given_down")
+    if mdd is not None and not pd.isna(mdd) and float(mdd) < config.max_markov_continuation_prob:
+        score += 1
+    se = row.get("shannon_entropy")
+    if se is not None and not pd.isna(se) and float(se) >= config.min_shannon_entropy:
+        score += 1
+    kz = row.get("kalman_residual_zscore")
+    if kz is not None and not pd.isna(kz) and abs(float(kz)) <= config.max_kalman_residual_zscore:
+        score += 1
+        
+    def _val(name: str, default: float = 0.0) -> float:
+        v = row.get(name, default)
+        try:
+            f = float(v if v is not None else default)
+        except (TypeError, ValueError):
+            f = default
+        return default if f != f else f
+
+    bayesian = _val("bayesian_prob_up", 0.5)
+    if 0.30 <= bayesian <= 0.70:
+        score += 1
+    renyi = _val("renyi_entropy", 0.5)
+    if renyi >= 0.40:
+        score += 1
+    fisher = _val("fisher_information", 0.0)
+    if fisher > 0.0:
+        score += 1
+    wavelet = _val("wavelet_energy_ratio", 0.5)
+    if wavelet < 0.70:
+        score += 1
+    cusum_val = _val("cusum_score", 0.0)
+    if cusum_val < 5.0:
+        score += 1
+    tail_dep = _val("tail_dependence", 0.0)
+    if tail_dep < 0.30:
+        score += 1
+    mi = _val("mi_flow", 0.0)
+    if mi < 0.15:
+        score += 1
+
+    deriv_energy = _val("derivative_energy", 0.0)
+    de_median = row.get("deriv_energy_median_100", 1.0)
+    if de_median > 0 and deriv_energy <= de_median:
+        score += 1
+    jerk_z = _val("jerk_zscore", 0.0)
+    if jerk_z < 2.0:
+        score += 1
+    curv_z = _val("curvature_zscore", 0.0)
+    if curv_z < 2.0:
+        score += 1
+    ret_z = _val("return_zscore", 0.0)
+    if abs(ret_z) < 2.0:
+        score += 1
+    lyap = _val("lyapunov_exponent", 0.0)
+    if lyap < 0.5:
+        score += 1
+    trend_ex = _val("trend_exhaustion", 0.0)
+    if abs(trend_ex) < 0.01:
+        score += 1
+    int_mom = _val("integral_momentum_div", 0.0)
+    if abs(int_mom) < 0.5:
+        score += 1
+    autocorr = _val("return_autocorr_lag1", 0.0)
+    if abs(autocorr) < 0.3:
+        score += 1
+    skew = _val("return_skewness", 0.0)
+    if abs(skew) < 1.0:
+        score += 1
+    run_len = _val("run_length", 0.0)
+    if abs(run_len) < 5:
+        score += 1
+        
+    return score, hard_blocked
+
+
 def _collect_day_outcomes(
     day: _date,
     day_df: pd.DataFrame,
@@ -728,6 +859,7 @@ def _collect_day_outcomes(
     """Coleta WIN/LOSS outcomes para TODAS as configs de TP e score.
     Retorna {config_name: [(is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at)]}, elapsed.
     """
+    global _indicators_df_cache, _indicators_list_cache
     data_dir = Path(__file__).parent / "data"
     t0 = time.time()
     t_last_progress = t0
@@ -737,18 +869,6 @@ def _collect_day_outcomes(
     avgs = day_df["avg_ret"].values
     epochs = day_df["epoch"].values
     total_ticks = len(day_df)
-
-    # Determina quais índices serão avaliados (amostrados) no backtest
-    sample_indices = []
-    for w in range(TICK_COUNT, len(day_df)):
-        if hours[w] in BLOCKED_HOURS:
-            continue
-        if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
-            continue
-        avg = avgs[w]
-        if np.isnan(avg) or avg >= CALM_THRESH:
-            continue
-        sample_indices.append(w)
 
     # ─── SISTEMA DE CACHE DE INDICADORES (Super Otimização com RAM Disk /dev/shm) ───
     shm_dir = Path("/dev/shm/pegasus_cache")
@@ -766,76 +886,95 @@ def _collect_day_outcomes(
     filename = f"indicators_BOOM1000_{day.isoformat()}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
-    
-    # Se o arquivo estiver no disco mas ausente do RAM disk, copia para RAM disk para acesso rápido subsequente
-    if cache_dir != disk_dir and not cache_path.exists() and disk_path.exists():
-        try:
-            import shutil
-            shutil.copy2(disk_path, cache_path)
-        except Exception as e:
-            print(f"  [SHM] Erro ao copiar {filename} para /dev/shm: {e}", flush=True)
-            # Fallback temporário para o disco
-            cache_path = disk_path
 
     day_indicators_df = None
-    if cache_path.exists():
-        try:
-            day_indicators_df = pd.read_feather(cache_path)
-        except Exception as e:
-            print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
-            # Se deu erro e estamos no SHM, tenta no disco como backup
-            if cache_path != disk_path and disk_path.exists():
-                try:
-                    day_indicators_df = pd.read_feather(disk_path)
-                    # Tenta corrigir a cópia no SHM
-                    import shutil
-                    shutil.copy2(disk_path, cache_path)
-                except Exception:
-                    pass
+    if day in _indicators_df_cache:
+        day_indicators_df = _indicators_df_cache[day]
+    else:
+        # Se o arquivo estiver no disco mas ausente do RAM disk, copia para RAM disk para acesso rápido subsequente
+        if cache_dir != disk_dir and not cache_path.exists() and disk_path.exists():
+            try:
+                import shutil
+                shutil.copy2(disk_path, cache_path)
+            except Exception as e:
+                print(f"  [SHM] Erro ao copiar {filename} para /dev/shm: {e}", flush=True)
+                cache_path = disk_path
 
-    if day_indicators_df is None:
-        # Se não houver cache, calcula usando o superconjunto de indices de amostragem
-        # (usando o limiar máximo de 2.5e-6 para cobrir qualquer candidato da busca)
-        max_calm_thresh = 2.5e-6
-        super_indices = []
-        for w in range(TICK_COUNT, len(day_df)):
-            if hours[w] in BLOCKED_HOURS:
-                continue
-            if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
-                continue
-            avg = avgs[w]
-            if np.isnan(avg) or avg >= max_calm_thresh:
-                continue
-            super_indices.append(w)
-            
-        day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
-        try:
-            day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg, sample_indices=super_indices)
-            day_indicators_df = day_indicators_df.reset_index(drop=True)
-            # Pre-calcula as probabilidades de perda do XGBoost em lote
-            if _ensemble_scorer is not None:
-                try:
-                    day_indicators_df["p_loss"] = _ensemble_scorer.predict_loss_probability_batch(day_indicators_df)
-                except Exception as e:
-                    print(f"  Erro no batch predict XGBoost: {e}", flush=True)
-                    day_indicators_df["p_loss"] = None
-            else:
-                day_indicators_df["p_loss"] = None
+        if cache_path.exists():
+            try:
+                day_indicators_df = pd.read_feather(cache_path)
+            except Exception as e:
+                print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
+                if cache_path != disk_path and disk_path.exists():
+                    try:
+                        day_indicators_df = pd.read_feather(disk_path)
+                        import shutil
+                        shutil.copy2(disk_path, cache_path)
+                    except Exception:
+                        pass
+
+        if day_indicators_df is None:
+            # Determina quais índices serão avaliados (amostrados) no backtest
+            max_calm_thresh = 2.5e-6
+            super_indices = []
+            for w in range(TICK_COUNT, len(day_df)):
+                if hours[w] in BLOCKED_HOURS:
+                    continue
+                if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
+                    continue
+                avg = avgs[w]
+                if np.isnan(avg) or avg >= max_calm_thresh:
+                    continue
+                super_indices.append(w)
                 
-            # Salva no cache ativo (/dev/shm ou disco)
-            day_indicators_df.to_feather(cache_path)
-            
-            # Se salvou no RAM disk, persiste também no disco permanente
-            if cache_dir != disk_dir:
-                try:
-                    import shutil
-                    shutil.copy2(cache_path, disk_path)
-                except Exception as e:
-                    print(f"  [SHM] Erro ao persistir {filename} no disco: {e}", flush=True)
-        except Exception as e:
-            print(f"  Erro ao pre-calcular indicadores para o dia {day}: {e}", flush=True)
-            return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
+            day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
+            try:
+                day_indicators_df = calculate_tick_indicators(day_ticks, config=accu_cfg, sample_indices=super_indices)
+                day_indicators_df = day_indicators_df.reset_index(drop=True)
+                # Pre-calcula as probabilidades de perda do XGBoost em lote
+                if _ensemble_scorer is not None:
+                    try:
+                        day_indicators_df["p_loss"] = _ensemble_scorer.predict_loss_probability_batch(day_indicators_df)
+                    except Exception as e:
+                        print(f"  Erro no batch predict XGBoost: {e}", flush=True)
+                        day_indicators_df["p_loss"] = None
+                else:
+                    day_indicators_df["p_loss"] = None
+                    
+                day_indicators_df.to_feather(cache_path)
+                
+                if cache_dir != disk_dir:
+                    try:
+                        import shutil
+                        shutil.copy2(cache_path, disk_path)
+                    except Exception as e:
+                        print(f"  [SHM] Erro ao persistir {filename} no disco: {e}", flush=True)
+            except Exception as e:
+                print(f"  Erro ao pre-calcular indicadores para o dia {day}: {e}", flush=True)
+                return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
 
+        if day_indicators_df is not None:
+            _indicators_df_cache[day] = day_indicators_df
+
+    # Convert to list of dicts for lightning fast O(1) retrieval
+    if day in _indicators_list_cache:
+        indicators_list = _indicators_list_cache[day]
+    else:
+        # Pre-calcula a mediana rolante de 100 ticks da derivative_energy para evitar calcular no loop
+        if "deriv_energy_median_100" not in day_indicators_df.columns:
+            if "derivative_energy" in day_indicators_df.columns:
+                day_indicators_df["deriv_energy_median_100"] = day_indicators_df["derivative_energy"].rolling(100).median()
+            else:
+                day_indicators_df["deriv_energy_median_100"] = 1.0
+        indicators_list = day_indicators_df.to_dict('records')
+        
+        # Precompute score and hard blocks
+        for r in indicators_list:
+            sc, hb = _precalculate_metrics_for_row(r, accu_cfg)
+            r["precalculated_score"] = sc
+            r["hard_blocked"] = hb
+            
+        _indicators_list_cache[day] = indicators_list
 
     # Pre-calcula win_ticks para cada TP unico
     tp_to_wt: dict[float, int] = {}
@@ -850,15 +989,18 @@ def _collect_day_outcomes(
         if c.get("is_super_frank", False):
             max_wt = max(max_wt, 9)
 
-    # Score levels unicos
-    score_levels = sorted(set(c["score"] for c in STRATEGY_CONFIGS))
-
     # Outcomes: uma lista separada para cada (tp, score)
     outcomes: dict[str, list[tuple]] = {c["name"]: [] for c in STRATEGY_CONFIGS}
     i = TICK_COUNT
     total_signals = 0
 
     while i < len(day_df) - max_wt - SLIPPAGE - 1:
+        # ─── OTIMIZAÇÃO DE ALINHAMENTO POR SALTO ───
+        rem = (i - TICK_COUNT) % SAMPLE_EVERY
+        if rem != 0:
+            i += (SAMPLE_EVERY - rem)
+            continue
+
         now = time.time()
         if (
             state is not None
@@ -878,59 +1020,43 @@ def _collect_day_outcomes(
             t_last_progress = now
 
         if hours[i] in BLOCKED_HOURS:
-            i += 1
-            continue
-        if (i - TICK_COUNT) % SAMPLE_EVERY != 0:
-            i += 1
+            i += SAMPLE_EVERY
             continue
         avg = avgs[i]
         if np.isnan(avg) or avg >= CALM_THRESH:
-            i += 1
+            i += SAMPLE_EVERY
             continue
 
-        # Slice do dataframe pré-calculado em O(1) de tempo!
-        if i >= len(day_indicators_df):
-            i += 1
+        if i >= len(indicators_list):
+            i += SAMPLE_EVERY
             continue
             
-        df_ind = day_indicators_df.iloc[i - TICK_COUNT + 1 : i + 1]
-        if df_ind.empty or len(df_ind) < accu_cfg.minimum_ticks:
-            i += 1
+        row = indicators_list[i]
+        
+        # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
+        if row.get("hard_blocked", False):
+            i += SAMPLE_EVERY
             continue
             
-        df_ind = df_ind.reset_index(drop=True)
-        prices_list = list(prices[i - TICK_COUNT + 1 : i + 1])
-
-        try:
-            signal, score, p_loss = generate_calm_accu_signal(
-                prices_list,
-                threshold=CALM_THRESH,
-                lookback=10,
-                df=df_ind,
-                config=accu_cfg,
-                ensemble_scorer=_ensemble_scorer,
-            )
-        except Exception:
-            i += 1
+        score = row.get("precalculated_score", 0)
+        if score < CALM_MIN_SCORE:
+            i += SAMPLE_EVERY
             continue
 
-        if signal != "ACCU":
-            i += 1
-            continue
-
-        # XGBoost P(LOSS) filter — idêntico ao bot real
-        if _ensemble_scorer is not None and p_loss is not None:
+        p_loss = row.get("p_loss")
+        
+        # XGBoost P(LOSS) filter
+        if p_loss is not None:
             if p_loss > ENSEMBLE_MIN_PROB:
-                i += 1
+                i += SAMPLE_EVERY
                 continue  # sinal fraco, pula
 
-        row = df_ind.iloc[-1]
         cusum_v = float(row.get("cusum_score", 0) or 0)
         hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
         shannon_v = float(row.get("shannon_entropy", 0) or 0)
         kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
         if cusum_v > CUSUM_MAX or hurst_v < HURST_MIN:
-            i += 1
+            i += SAMPLE_EVERY
             continue
 
         # Score do sinal
@@ -940,11 +1066,10 @@ def _collect_day_outcomes(
         # Entry idx com slippage
         entry_idx = i + SLIPPAGE
         if entry_idx >= len(prices) - max_wt:
-            i += 1
+            i += SAMPLE_EVERY
             continue
 
         # Verifica outcome para cada (TP, score) combo
-        # Checa per-tick barrier para diferentes durações
         max_hold = max_wt
         barrier_hit_at = None  # tick onde a barreira foi atingida
         for j in range(1, max_hold + 1):
@@ -1265,6 +1390,227 @@ def main() -> None:
     _write_state(out_path, state)
 
     print(f"\n✅ Concluído em {state['elapsed_s']:.0f}s")
+
+
+def apply_config(env_overrides: dict):
+    global STAKE, MAX_STAKE, GROWTH_RATE, TP_PCT, MAX_HOLD, SOROS_STEPS, SOROS_COOLDOWN, STOP_GAIN, TRAILING_S, TRAILING_L
+    global CUSUM_MAX, HURST_MIN, CALM_THRESH, TICK_COUNT, CALM_MIN_SCORE, ENSEMBLE_MIN_PROB, BLOCKED_HOURS, WIN_TICKS
+    global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg
+    
+    os.environ.update(env_overrides)
+    if os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
+        import logging
+        logging.getLogger("Pegasus").setLevel(logging.ERROR)
+    
+    STAKE = float(os.environ.get("STAKE", "5"))
+    MAX_STAKE = float(os.environ.get("MAX_STAKE", "10"))
+    GROWTH_RATE = float(os.environ.get("ACCUMULATOR_GROWTH_RATE", "0.03"))
+    TP_PCT = float(os.environ.get("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30")) / 100.0
+    MAX_HOLD = int(os.environ.get("ACCUMULATOR_MAX_HOLD_TICKS", "80"))
+    SOROS_STEPS = int(os.environ.get("SOROS_MAX_STEPS", "3"))
+    SOROS_COOLDOWN = int(os.environ.get("ACCUMULATOR_COOLDOWN_TICKS", "5"))
+    STOP_GAIN = float(os.environ.get("STOP_GAIN_PCT", "100.0")) / 100.0
+    TRAILING_S = float(os.environ.get("DAILY_TRAILING_START", "30.0")) / 100.0
+    TRAILING_L = float(os.environ.get("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+
+    CUSUM_MAX = float(os.environ.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
+    HURST_MIN = float(os.environ.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
+    CALM_THRESH = float(os.environ.get("CALM_ACCU_THRESHOLD", "1.5e-6"))
+    TICK_COUNT = int(os.environ.get("TICK_COUNT", "100"))
+    CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
+    ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
+    
+    _v = 1.0
+    WIN_TICKS = MAX_HOLD
+    for _j in range(1, MAX_HOLD + 1):
+        _v *= 1 + GROWTH_RATE
+        if _v - 1.0 >= TP_PCT:
+            WIN_TICKS = _j
+            break
+            
+    _blocked_raw = os.environ.get("BLOCKED_UTC_HOURS", "5,6,7,8,9")
+    BLOCKED_HOURS = set()
+    for _h in _blocked_raw.split(","):
+        _h = _h.strip()
+        if _h.isdigit():
+            BLOCKED_HOURS.add(int(_h))
+            
+    import dataclasses
+    accu_cfg = dataclasses.replace(
+        accu_cfg,
+        min_score=CALM_MIN_SCORE,
+        calm_min_score=CALM_MIN_SCORE,
+        ensemble_min_prob=ENSEMBLE_MIN_PROB,
+    )
+    
+    STRATEGY_CONFIGS = _generate_strategy_configs()
+    STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
+
+
+def run_backtest_direct(
+    start_date_str: str,
+    end_date_str: str,
+    start_balance: float,
+    env_overrides: dict,
+) -> dict | None:
+    apply_config(env_overrides)
+    
+    start_date = _date.fromisoformat(start_date_str)
+    end_date = _date.fromisoformat(end_date_str)
+    
+    days: list[_date] = []
+    cur = start_date
+    while cur <= end_date:
+        days.append(cur)
+        cur += timedelta(days=1)
+        
+    data_dir = Path(__file__).parent / "data"
+    
+    days_with_data = []
+    for day in days:
+        if _ensure_day_ticks(day, data_dir):
+            days_with_data.append(day)
+            
+    accumulate_balance = os.environ.get("BACKTEST_COMPOUNDING", "false").strip().lower() == "true"
+    
+    total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
+    balances = {s: start_balance for s in STRATEGY_NAMES}
+    results = []
+    
+    for day in days_with_data:
+        day_df = _load_day_df(day, data_dir)
+        if day_df is None:
+            continue
+            
+        if not accumulate_balance:
+            balances = {s: start_balance for s in STRATEGY_NAMES}
+            
+        result = _sim_day_multi(
+            day,
+            day_df,
+            balances,
+            state=None,
+            out_path=None,
+            t_global=None,
+        )
+        
+        for s in STRATEGY_NAMES:
+            total_pnls[s] += result["strategies"][s]["pnl"]
+            
+        results.append(result)
+        
+    n = len(results)
+    if n == 0:
+        return None
+        
+    summary = {"total_days": n, "strategies": {}}
+    for s in STRATEGY_NAMES:
+        total_pnl = round(total_pnls[s], 2)
+        final_bal = start_balance + total_pnl
+        busted_days = sum(1 for r in results if r["strategies"].get(s, {}).get("busted", False))
+        pos_days = sum(1 for r in results if r["strategies"].get(s, {}).get("pnl", 0) > 0)
+        neg_days = sum(1 for r in results if r["strategies"].get(s, {}).get("pnl", 0) < 0)
+        active_days = sum(1 for r in results if r["strategies"].get(s, {}).get("trades", 0) > 0)
+        wrs = [r["strategies"].get(s, {}).get("signal_wr", 0) for r in results]
+        avg_wr = round(sum(wrs) / len(wrs), 1) if wrs else 0
+
+        active_pnls = [r["strategies"].get(s, {}).get("pnl", 0) for r in results if r["strategies"].get(s, {}).get("trades", 0) > 0]
+        avg_daily_profit = round(sum(active_pnls) / len(active_pnls), 4) if active_pnls else 0.0
+        consistency_pct = round(pos_days / active_days * 100, 1) if active_days > 0 else 0.0
+
+        equity_curve = [start_balance]
+        curr_bal = start_balance
+        for r in results:
+            curr_bal += r["strategies"].get(s, {}).get("pnl", 0.0)
+            equity_curve.append(curr_bal)
+
+        peak = start_balance
+        max_dd = 0.0
+        for bal in equity_curve:
+            if bal > peak:
+                peak = bal
+            dd = peak - bal
+            if dd > max_dd:
+                max_dd = dd
+        max_dd_pct = (max_dd / peak * 100) if peak > 0 else 0.0
+
+        daily_pnls = [r["strategies"].get(s, {}).get("pnl", 0.0) for r in results]
+        mean_pnl = sum(daily_pnls) / len(daily_pnls) if daily_pnls else 0.0
+        
+        if len(daily_pnls) > 1:
+            variance = sum((x - mean_pnl) ** 2 for x in daily_pnls) / (len(daily_pnls) - 1)
+            std_dev = variance ** 0.5
+        else:
+            std_dev = 0.0
+
+        sharpe = (mean_pnl / std_dev) if std_dev > 0.001 else 0.0
+
+        downside_pnls = [x for x in daily_pnls if x < 0.0]
+        if downside_pnls:
+            downside_variance = sum(x ** 2 for x in downside_pnls) / len(daily_pnls)
+            downside_dev = downside_variance ** 0.5
+        else:
+            downside_dev = 0.0
+
+        sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (mean_pnl / 0.001 if mean_pnl > 0 else 0.0)
+
+        summary["strategies"][s] = {
+            "final_balance": round(final_bal, 2),
+            "total_pnl": total_pnl,
+            "roi_pct": round(total_pnl / start_balance * 100, 1),
+            "positive_days": pos_days,
+            "negative_days": neg_days,
+            "busted_days": busted_days,
+            "active_days": active_days,
+            "avg_daily_profit": avg_daily_profit,
+            "consistency_pct": consistency_pct,
+            "avg_signal_wr": avg_wr,
+            "sharpe_ratio": round(sharpe, 4),
+            "sortino_ratio": round(sortino, 4),
+            "max_drawdown": round(max_dd, 2),
+            "max_drawdown_pct": round(max_dd_pct, 1),
+        }
+        
+    from optimize_loop import compute_score
+    m = compute_score(results)
+    
+    summary_sf = summary["strategies"].get("Super-Frankenstein", {})
+    summary_live = summary["strategies"].get("Pegasus Live Sniper (9% TP)", {})
+    
+    m["sharpe_ratio"] = summary_sf.get("sharpe_ratio", 0.0)
+    m["sortino_ratio"] = summary_sf.get("sortino_ratio", 0.0)
+    m["max_drawdown"] = summary_sf.get("max_drawdown", 0.0)
+
+    live = compute_score(results, "Pegasus Live Sniper (9% TP)")
+    m["live_avg_daily"]   = live["avg_daily_profit"]
+    m["live_positive_days"] = live["positive_days"]
+    m["live_total_pnl"]   = live["total_pnl"]
+    m["live_sharpe"]      = summary_live.get("sharpe_ratio", 0.0)
+    m["live_sortino"]     = summary_live.get("sortino_ratio", 0.0)
+    m["live_drawdown"]    = summary_live.get("max_drawdown", 0.0)
+    
+    m["_env"] = env_overrides
+    
+    sharpe_val = m["sharpe_ratio"]
+    sortino_val = m["sortino_ratio"]
+    max_dd_val = m["max_drawdown"]
+    
+    m["score"] += sharpe_val * 8.0
+    m["score"] += sortino_val * 6.0
+    
+    if max_dd_val > 15.0:
+        m["score"] -= max_dd_val * 3.0
+    elif max_dd_val > 5.0:
+        m["score"] -= max_dd_val * 1.0
+
+    live_avg = live["avg_daily_profit"]
+    if live_avg < 0.0:
+        m["score"] -= abs(live_avg) * 8.0
+    else:
+        m["score"] += live_avg * 3.0
+
+    m["score"] = round(m["score"], 4)
+    return m
 
 
 if __name__ == "__main__":
