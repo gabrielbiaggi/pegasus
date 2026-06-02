@@ -139,7 +139,7 @@ def rand_params(base: dict) -> dict:
     return p
 
 
-def compute_score(results: list, strategy: str = "Pegasus Live Sniper (9% TP)") -> dict:
+def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     """
     Métricas REAIS de lucro diário com banca de $50 fixo.
     Retorna dict com avg_daily_profit, positive_days, score, etc.
@@ -229,7 +229,12 @@ def _run_one(args) -> dict | None:
         results = data.get("results", [])
         if not results:
             return None
-        m = compute_score(results)
+        m = compute_score(results)   # Primary: Super-Frankenstein
+        # Secondary: track Pegasus Live Sniper to monitor live bot correlation
+        live = compute_score(results, "Pegasus Live Sniper (9% TP)")
+        m["live_avg_daily"]   = live["avg_daily_profit"]
+        m["live_positive_days"] = live["positive_days"]
+        m["live_total_pnl"]   = live["total_pnl"]
         m["_env"] = env_vars   # salva os params junto
         return m
     except Exception:
