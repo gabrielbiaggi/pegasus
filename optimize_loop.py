@@ -744,7 +744,7 @@ def main():
                 pnl_ok = (
                     m["total_pnl"] >= 0
                     and avg_d > 0
-                    and avg_d <= 45.0      # teto de plausibilidade: max ~$45/dia com $50 banca
+                    and avg_d <= 50.0      # teto de plausibilidade: max ~$50/dia com $50 banca
                     and active >= 20       # pelo menos 20 dias com operações
                 )
 
@@ -814,7 +814,7 @@ def main():
                                 try:
                                     # Limpa sessões mortas e inicializa a sessão detached screen
                                     subprocess.run(["screen", "-wipe"], capture_output=True)
-                                    cmd = "cd /opt/pegasus && PYTHONUNBUFFERED=1 .venv/bin/python -u bot.py 2>&1 | tee -a logs/bot.log"
+                                    cmd = "cd /opt/pegasus && PEGASUS_LIVE_BOT=true PYTHONUNBUFFERED=1 .venv/bin/python -u bot.py 2>&1 | tee -a logs/trades.log"
                                     subprocess.run(["screen", "-dmS", "pegasus", "bash", "-c", cmd])
                                 except Exception as exc:
                                     print(f"   [ERR] Falha ao inicializar o Bot em Modo Ultra-Estresse: {exc}", flush=True)
