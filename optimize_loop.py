@@ -588,6 +588,7 @@ def main():
     print(SEP, flush=True)
 
     best_env = load_env()
+    original_env = best_env.copy()
 
     # Preenche parâmetros faltando com valores intermediários
     for key, space in PARAM_SPACE.items():
@@ -623,6 +624,7 @@ def main():
         iteration = max(h["iteration"] for h in history) + 1
         print(f"   📊 Carregado {len(history)} iterações do histórico do banco de dados (reiniciando no it#{iteration})", flush=True)
 
+    bot_was_synced = False
     db_best = _load_best_opt_run()
     if db_best:
         best_data, db_params = db_best
@@ -635,6 +637,19 @@ def main():
                     best_env[k] = str(db_params[k])
             best_env["OPTIMIZER_CHAMPION_ITERATION"] = str(best_data["iteration"])
         print(f"   🏆 Recorde anterior recuperado do DB: score={best_score:.2f} avg_day=${best_avg:.2f}/dia (it#{best_data['iteration']})", flush=True)
+
+        # Sincronização de startup se a iteração no .env for diferente da campeã do DB
+        original_deployed_it = original_env.get("OPTIMIZER_CHAMPION_ITERATION")
+        db_it_str = str(best_data["iteration"])
+        if original_deployed_it != db_it_str:
+            print(f"   🔄 [Startup Sync] Desalinhamento detectado: .env tem it#{original_deployed_it}, mas DB tem campeão it#{db_it_str}.", flush=True)
+            print(f"      Iniciando deploy forçado do campeão it#{db_it_str}...", flush=True)
+            ok = try_deploy_winner(best_env, f"Startup Sync: deploy campeão it#{db_it_str} do banco de dados", force=True)
+            if ok:
+                bot_was_synced = True
+                print(f"      ✅ Deploy de startup concluído com sucesso!", flush=True)
+            else:
+                print(f"      ⚠️  Deploy de startup retornou falha, mas parâmetros foram salvos no .env", flush=True)
     else:
         best_score = baseline_metrics["score"]
         best_pos   = baseline_metrics["positive_days"]
@@ -643,9 +658,9 @@ def main():
 
     write_state(iteration - 1, baseline_metrics, best_data, history)
 
-    # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse)
+    # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse e não foi sincronizado agora)
     is_stress = _read_stress_config()
-    if not is_stress:
+    if not is_stress and not bot_was_synced:
         is_bot_running = False
         if _is_on_server():
             try:

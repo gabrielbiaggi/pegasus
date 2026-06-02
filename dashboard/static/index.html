@@ -870,6 +870,18 @@
                     transform: rotate(360deg);
                 }
             }
+            @keyframes workerPulse {
+                0%, 100% {
+                    border-color: rgba(16, 185, 129, 0.3);
+                    box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
+                    transform: scale(1);
+                }
+                50% {
+                    border-color: rgba(16, 185, 129, 0.8);
+                    box-shadow: 0 0 16px rgba(16, 185, 129, 0.4);
+                    transform: scale(1.012);
+                }
+            }
             @media (max-width: 900px) {
                 .metrics {
                     grid-template-columns: repeat(2, 1fr);
@@ -5336,8 +5348,27 @@
                         }
                     }
 
-                    // activeBest será o melhor válido da lista, ou o melhor geral, ou fallback ao baseline
-                    var activeBest = highestValidIt || best || bl;
+                    // activeBest será o melhor válido da lista, ou o melhor geral (campeão histórico), ou fallback ao baseline
+                    var activeBest = bl;
+                    var maxVal = -999999;
+                    if (bl) {
+                        maxVal = bl.avg_daily_profit || 0;
+                        activeBest = bl;
+                    }
+                    if (highestValidIt) {
+                        var hVal = highestValidIt.avg_daily_profit !== undefined ? highestValidIt.avg_daily_profit : (highestValidIt.avg_daily !== undefined ? highestValidIt.avg_daily : 0);
+                        if (hVal > maxVal) {
+                            maxVal = hVal;
+                            activeBest = highestValidIt;
+                        }
+                    }
+                    if (best) {
+                        var bVal = best.avg_daily_profit !== undefined ? best.avg_daily_profit : (best.avg_daily !== undefined ? best.avg_daily : 0);
+                        if (bVal > maxVal) {
+                            maxVal = bVal;
+                            activeBest = best;
+                        }
+                    }
                     if (activeBest) {
                         var bestAvgDay = activeBest.avg_daily_profit !== undefined ? activeBest.avg_daily_profit : (activeBest.avg_daily !== undefined ? activeBest.avg_daily : 0);
                         var brDaily = document.getElementById("opt-best-daily");
@@ -5401,7 +5432,7 @@
                         var pct = Math.min(100, Math.max(0, (bestAvgDay / META_TARGET) * 100));
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";
-                        if (metaCur) metaCur.textContent = "Melhor válido: $" + bestAvgDay.toFixed(2) + "/dia" + (highestValidIt ? " (it#" + highestValidIt.iteration + ")" : "");
+                        if (metaCur) metaCur.textContent = "Melhor válido: $" + bestAvgDay.toFixed(2) + "/dia" + (activeBest && activeBest.iteration ? " (it#" + activeBest.iteration + ")" : "");
 
                         // ── Live Bot (métricas secundárias baseadas no activeBest ou best geral) ──
                         var liveDaily = document.getElementById("opt-live-daily");
@@ -5526,7 +5557,7 @@
                     // ── Badge de Deploy Sincronizado no Modal ──
                     var depBadge = document.getElementById("opt-deploy-badge");
                     if (depBadge) {
-                        var champIt = (best && best.iteration) ? best.iteration : (highestValidIt ? highestValidIt.iteration : null);
+                        var champIt = (activeBest && activeBest.iteration) ? activeBest.iteration : null;
                         var depIt = d.deployed_iteration;
                         if (champIt != null && depIt != null) {
                             depBadge.style.display = "inline-flex";
@@ -5561,7 +5592,12 @@
                                 var statusText = c.status || "Simulando...";
                                 var statusColor = "var(--green)";
                                 var animation = "pulse 1.5s infinite";
-                                if (statusText.indexOf("Finalizado") >= 0) {
+                                var statusIcon = '● ';
+                                if (statusText.indexOf("Simulando...") >= 0) {
+                                    statusColor = "var(--green)";
+                                    statusIcon = '<span class="spin" style="margin-right:2px;display:inline-block">⚙️</span> ';
+                                    animation = "none";
+                                } else if (statusText.indexOf("Finalizado") >= 0) {
                                     statusColor = "var(--cyan)";
                                     animation = "none";
                                 } else if (statusText.indexOf("Inválido") >= 0) {
@@ -5613,12 +5649,17 @@
                                         + '<span>Erro</span>'
                                         + '</div>';
                                 }
+
+                                var cardStyle = 'background:var(--bg2);border:1px solid rgba(96,165,250,.15);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;box-shadow:var(--shadow-premium-light);display:flex;flex-direction:column;justify-content:space-between;transition:all 0.3s ease;';
+                                if (statusText.indexOf("Simulando...") >= 0) {
+                                    cardStyle = 'background:rgba(16,185,129,0.02);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;display:flex;flex-direction:column;justify-content:space-between;animation:workerPulse 2s infinite;transition:all 0.3s ease;';
+                                }
                                 
-                                return '<div style="background:var(--bg2);border:1px solid rgba(96,165,250,.15);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;box-shadow:var(--shadow-premium-light);display:flex;flex-direction:column;justify-content:space-between">'
+                                return '<div style="' + cardStyle + '">'
                                     + '<div>'
                                     + '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.05);padding-bottom:3px;margin-bottom:4px">'
                                     + '<strong style="color:var(--cyan)">Worker #' + idx + '</strong>'
-                                    + '<span style="color:' + statusColor + ';font-size:.6rem;font-weight:700;animation:' + animation + '">● ' + statusText.split(" (")[0] + '</span>'
+                                    + '<span style="color:' + statusColor + ';font-size:.6rem;font-weight:700;animation:' + animation + '">' + statusIcon + statusText.split(" (")[0] + '</span>'
                                     + '</div>'
                                     + '<div style="color:var(--muted)">'
                                     + 'Stake: <span style="color:var(--text);font-weight:700">$' + stk + '</span> | CUSUM: <span style="color:var(--text)">' + cusum + '</span><br>'
