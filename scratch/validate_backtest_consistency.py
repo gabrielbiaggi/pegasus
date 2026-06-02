@@ -64,6 +64,10 @@ def main():
         env_overrides=env_fast
     )
     
+    # Clear RAM caches to prevent the second run from reusing the sampled RAM cache
+    backtest_engine._indicators_df_cache.clear()
+    backtest_engine._indicators_list_cache.clear()
+    
     # --- Roda 2: Full Tick-by-Tick Mode (SAMPLE_EVERY=1) ---
     print("\n▶ [2/2] Rodando modo FIDELIDADE REAL (Tick-by-tick / Amostragem = 1)...")
     env_full = params.copy()

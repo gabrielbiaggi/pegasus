@@ -883,7 +883,7 @@ def _collect_day_outcomes(
         except Exception:
             cache_dir = disk_dir
 
-    filename = f"indicators_BOOM1000_{day.isoformat()}.feather"
+    filename = f"indicators_BOOM1000_{day.isoformat()}_sample{SAMPLE_EVERY}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
 
