@@ -446,19 +446,12 @@ def main():
                 idx = futures[fut]
                 try:
                     m = fut.result()
-                    if m:
-                        results_batch.append((idx, m))
+                    if not m:
+                        continue
                 except Exception as e:
                     print(f"   [worker {idx}] erro: {e}", flush=True)
+                    continue
 
-            elapsed = time.time() - t0
-            throughput = N_WORKERS / elapsed * 60  # iterações/min
-
-            print(f"   ⏱  Rodada completada em {elapsed:.0f}s "
-                  f"({len(results_batch)}/{N_WORKERS} ok | {throughput:.0f} iter/min estimado)", flush=True)
-
-            # Avalia cada resultado
-            for idx, m in results_batch:
                 is_better = False
                 reason    = ""
 
@@ -491,12 +484,13 @@ def main():
                 icon = "🔥 NOVO RECORD!" if is_better else "   ·"
                 print(f"   [it#{iteration+idx}] {fmt(m)} → {icon}", flush=True)
 
+                est_elapsed = time.time() - t0
                 entry = {
                     "iteration":      iteration + idx,
                     "roi":            m["roi_pct"],
                     "pnl":            m["total_pnl"],
                     "busted":         m["negative_days"],
-                    "elapsed_s":      round(elapsed / N_WORKERS, 1),
+                    "elapsed_s":      round(est_elapsed, 1),
                     "is_best":        is_better,
                     "avg_daily":      m["avg_daily_profit"],
                     "positive_days":  m["positive_days"],
@@ -530,8 +524,13 @@ def main():
                     if ok:
                         print(f"   ✅ Bot ao vivo reiniciado com novos parâmetros!\n", flush=True)
 
-            # Atualiza dashboard após cada rodada
-            write_state(iteration + N_WORKERS - 1, baseline_metrics, best_data, history)
+                # Grava o estado de forma atômica e em tempo real para o dashboard ver
+                write_state(iteration + idx, baseline_metrics, best_data, history)
+
+            elapsed = time.time() - t0
+            throughput = N_WORKERS / elapsed * 60  # iterações/min
+
+            print(f"   ⏱  Rodada completada em {elapsed:.0f}s ({N_WORKERS}/{N_WORKERS} ok | {throughput:.0f} iter/min estimado)", flush=True)
             iteration += N_WORKERS
             time.sleep(0.2)  # respiração mínima
 
