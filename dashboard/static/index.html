@@ -5309,12 +5309,12 @@
                         var brBestDay = document.getElementById("opt-best-day");
                         var brWorstDay = document.getElementById("opt-worst-day");
                         if (brBestDay) {
-                            var bd = activeBest.best_day_pnl != null ? activeBest.best_day_pnl : 0;
-                            brBestDay.textContent = "$" + bd.toFixed(2);
+                            var bd = activeBest.best_day_pnl;
+                            brBestDay.textContent = (bd != null && bd !== undefined) ? "$" + bd.toFixed(2) : "—";
                         }
                         if (brWorstDay) {
-                            var wd = activeBest.worst_day_pnl != null ? activeBest.worst_day_pnl : 0;
-                            brWorstDay.textContent = "$" + wd.toFixed(2);
+                            var wd = activeBest.worst_day_pnl;
+                            brWorstDay.textContent = (wd != null && wd !== undefined) ? "$" + wd.toFixed(2) : "—";
                         }
 
                         // ── Meta: progress bar $0 → $50/dia usando o Melhor Válido Encontrado ──
