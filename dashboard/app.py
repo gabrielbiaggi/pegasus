@@ -298,13 +298,13 @@ def _today_df() -> pd.DataFrame:
             try:
                 df_csv = pd.read_csv(csv_file)
                 if not df_csv.empty and "timestamp" in df_csv.columns:
-                    df_csv["timestamp"] = pd.to_datetime(df_csv["timestamp"])
+                    df_csv["timestamp"] = pd.to_datetime(df_csv["timestamp"]).dt.tz_localize(None)
                     # Filtra operações do dia de hoje local
                     cutoff = pd.Timestamp(start_utc).tz_localize(None)
                     df_filtered = df_csv[df_csv["timestamp"] >= cutoff]
                     if not df_filtered.empty:
                         df = df_filtered.copy()
-            except Exception:
+            except Exception as e:
                 pass
 
     _pg_trades_cache = {"ts": now, "today": cache_key, "df": df}
