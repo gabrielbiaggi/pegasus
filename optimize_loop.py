@@ -408,6 +408,22 @@ def main():
 
     write_state(0, baseline_metrics, None, history)
 
+    # Garante que o bot ao vivo está online no startup
+    is_bot_running = False
+    if _is_on_server():
+        try:
+            check = subprocess.run(["pgrep", "-f", "python bot.py"], capture_output=True, timeout=5)
+            if check.returncode == 0:
+                is_bot_running = True
+        except Exception:
+            pass
+    else:
+        is_bot_running = True
+
+    if not is_bot_running:
+        print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando...", flush=True)
+        deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now")
+
     print(f"\n{'─'*70}", flush=True)
     print(f"  🚀 LOOP INFINITO — {N_WORKERS} backtests em paralelo por rodada", flush=True)
     print(f"  Critério: 1) + dias positivos  2) + lucro/dia  3) + score", flush=True)
