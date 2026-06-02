@@ -249,44 +249,66 @@ _pg_trades_cache: dict = {"ts": 0.0, "today": "", "df": None}
 
 
 def _today_df() -> pd.DataFrame:
-    """Read today's trades from PostgreSQL, filtered by current session start."""
+    """Read today's trades from PostgreSQL or local CSV fallback (no session restart filter)."""
     global _pg_trades_cache
     now = _time.monotonic()
-    today = datetime.now(timezone.utc).date().isoformat()
+    
+    # 1. Calcule o início do dia local do usuário em UTC
+    try:
+        tz_offset = int(_get_env("USER_TZ_OFFSET") or "-3")
+    except Exception:
+        tz_offset = -3
+        
+    from datetime import datetime as _datetime, timedelta as _timedelta, timezone as _timezone
+    utc_now = _datetime.now(_timezone.utc)
+    local_now = utc_now + _timedelta(hours=tz_offset)
+    local_today = local_now.date()
+    local_midnight = _datetime(local_today.year, local_today.month, local_today.day)
+    start_utc = local_midnight - _timedelta(hours=tz_offset)
+    
+    # Utiliza o cache se tiver sido atualizado há menos de 1 segundo
+    cache_key = local_today.isoformat()
     if (
         now - _pg_trades_cache["ts"] < 1.0
-        and _pg_trades_cache["today"] == today
+        and _pg_trades_cache.get("today") == cache_key
         and _pg_trades_cache["df"] is not None
     ):
         return _pg_trades_cache["df"]
 
-    # Ler session_start_ts do risk_state
-    session_start_ts = 0.0
-    try:
-        rs = _read_risk_state()
-        session_start_ts = float(rs.get("session_start_ts", 0.0))
-    except Exception:
-        pass
-
+    df = pd.DataFrame()
+    pg_ok = False
+    
+    # 2. Tenta ler do PostgreSQL
     try:
         conn = psycopg2.connect(_pg_dsn_str())
-        if session_start_ts > 0:
-            df = pd.read_sql(
-                "SELECT * FROM trades WHERE timestamp >= to_timestamp(%s) ORDER BY timestamp",
-                conn,
-                params=(session_start_ts,),
-            )
-        else:
-            df = pd.read_sql(
-                "SELECT * FROM trades WHERE timestamp::date = %s ORDER BY timestamp",
-                conn,
-                params=(today,),
-            )
+        df = pd.read_sql(
+            "SELECT * FROM trades WHERE timestamp >= %s ORDER BY timestamp",
+            conn,
+            params=(start_utc,),
+        )
         conn.close()
-        _pg_trades_cache = {"ts": now, "today": today, "df": df}
-        return df
-    except Exception:
-        return pd.DataFrame()
+        pg_ok = True
+    except Exception as exc:
+        pass
+
+    # 3. Tenta ler do CSV local se o DB falhar ou retornar vazio
+    if df.empty:
+        csv_file = BASE / "logs" / "trades.csv"
+        if csv_file.exists():
+            try:
+                df_csv = pd.read_csv(csv_file)
+                if not df_csv.empty and "timestamp" in df_csv.columns:
+                    df_csv["timestamp"] = pd.to_datetime(df_csv["timestamp"])
+                    # Filtra operações do dia de hoje local
+                    cutoff = pd.Timestamp(start_utc).tz_localize(None)
+                    df_filtered = df_csv[df_csv["timestamp"] >= cutoff]
+                    if not df_filtered.empty:
+                        df = df_filtered.copy()
+            except Exception:
+                pass
+
+    _pg_trades_cache = {"ts": now, "today": cache_key, "df": df}
+    return df
 
 
 _env_cache: dict = {"mtime": -1.0, "data": {}}
