@@ -5178,8 +5178,9 @@
 
                     // ── Melhor (v3 — Super-Frankenstein + Live Bot secundário) ──────────────
                     var best = d.best;
-                    if (best) {
-                        var bestAvgDay = best.avg_daily_profit || 0;
+                    var activeBest = best || bl;
+                    if (activeBest) {
+                        var bestAvgDay = activeBest.avg_daily_profit || 0;
                         var brDaily = document.getElementById("opt-best-daily");
                         var brPos   = document.getElementById("opt-best-pos");
                         var brImp   = document.getElementById("opt-improvement");
@@ -5188,9 +5189,12 @@
                             brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
                             brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
                         }
-                        if (brPos) brPos.textContent = "dias positivos: " + (best.positive_days != null ? best.positive_days : "—") + " (it#" + (best.iteration || 0) + ")";
+                        if (brPos) {
+                            var itNum = activeBest.iteration !== undefined ? activeBest.iteration : 0;
+                            brPos.textContent = "dias positivos: " + (activeBest.positive_days != null ? activeBest.positive_days : "—") + " (it#" + itNum + ")";
+                        }
                         if (brCons) {
-                            var cons = best.consistency_pct || 0;
+                            var cons = activeBest.consistency_pct || 0;
                             brCons.textContent = cons.toFixed(0) + "%";
                             brCons.style.color = cons >= 90 ? "var(--green)" : cons >= 60 ? "var(--yellow)" : "var(--red)";
                         }
@@ -5213,8 +5217,8 @@
                         // ── Live Bot (métricas secundárias) ──
                         var liveDaily = document.getElementById("opt-live-daily");
                         var livePos   = document.getElementById("opt-live-pos");
-                        var liveAvg   = best.live_avg_daily;
-                        var livePosD  = best.live_positive_days;
+                        var liveAvg   = activeBest.live_avg_daily;
+                        var livePosD  = activeBest.live_positive_days;
                         if (liveDaily && liveAvg != null) {
                             liveDaily.textContent = "$" + parseFloat(liveAvg).toFixed(2) + "/dia";
                             liveDaily.style.color = liveAvg > 0 ? "#60a5fa" : "#f87171";
