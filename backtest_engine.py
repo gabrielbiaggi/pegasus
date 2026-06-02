@@ -54,7 +54,7 @@ TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
 CALM_THRESH = float(os.getenv("CALM_ACCU_THRESHOLD", "1.5e-6"))
-SAMPLE_EVERY = 60
+SAMPLE_EVERY = int(os.getenv("BACKTEST_SAMPLE_EVERY", "60"))
 TICK_COUNT = int(os.getenv("TICK_COUNT", "100"))
 CALM_MIN_SCORE = int(os.getenv("CALM_ACCU_MIN_SCORE", "20"))
 
@@ -1408,7 +1408,7 @@ def main() -> None:
 def apply_config(env_overrides: dict):
     global STAKE, MAX_STAKE, GROWTH_RATE, TP_PCT, MAX_HOLD, SOROS_STEPS, SOROS_COOLDOWN, STOP_GAIN, TRAILING_S, TRAILING_L
     global CUSUM_MAX, HURST_MIN, CALM_THRESH, TICK_COUNT, CALM_MIN_SCORE, ENSEMBLE_MIN_PROB, BLOCKED_HOURS, WIN_TICKS
-    global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg
+    global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
     
     os.environ.update(env_overrides)
     if os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
@@ -1432,6 +1432,7 @@ def apply_config(env_overrides: dict):
     TICK_COUNT = int(os.environ.get("TICK_COUNT", "100"))
     CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
     ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
+    SAMPLE_EVERY = int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60"))
     
     _v = 1.0
     WIN_TICKS = MAX_HOLD
