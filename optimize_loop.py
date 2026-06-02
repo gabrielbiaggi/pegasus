@@ -42,6 +42,18 @@ ENV_PATH      = Path(".env")
 STATE_PATH    = Path("logs/optimizer_state.json")
 LOG_PATH      = Path("logs/optimizer_v2.log")
 
+# ── Modo Ultra-Estresse ────────────────────────────────────────────────────────
+def _read_stress_config() -> bool:
+    path = Path("logs/stress_config.json")
+    if not path.exists():
+        return False
+    try:
+        import json
+        data = json.loads(path.read_text())
+        return bool(data.get("ultra_stress", False))
+    except Exception:
+        return False
+
 # Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
 N_WORKERS = 8
 
@@ -252,17 +264,43 @@ def _run_one(args) -> dict | None:
         results = data.get("results", [])
         if not results:
             return None
+        summary_sf = data.get("summary", {}).get("strategies", {}).get("Super-Frankenstein", {})
+        summary_live = data.get("summary", {}).get("strategies", {}).get("Pegasus Live Sniper (9% TP)", {})
+
         m = compute_score(results)   # Primary: Super-Frankenstein
+        
+        # Copia estatísticas avançadas do backtest
+        m["sharpe_ratio"] = summary_sf.get("sharpe_ratio", 0.0)
+        m["sortino_ratio"] = summary_sf.get("sortino_ratio", 0.0)
+        m["max_drawdown"] = summary_sf.get("max_drawdown", 0.0)
+
         # Secondary: track Pegasus Live Sniper to monitor live bot correlation
         live = compute_score(results, "Pegasus Live Sniper (9% TP)")
         m["live_avg_daily"]   = live["avg_daily_profit"]
         m["live_positive_days"] = live["positive_days"]
         m["live_total_pnl"]   = live["total_pnl"]
+        m["live_sharpe"]      = summary_live.get("sharpe_ratio", 0.0)
+        m["live_sortino"]     = summary_live.get("sortino_ratio", 0.0)
+        m["live_drawdown"]    = summary_live.get("max_drawdown", 0.0)
+        
         m["_env"] = env_vars   # salva os params junto
 
-        # Ponderação do Score Geral com o Live Bot (Multi-Métrica)
-        # Evita overfitting: se a estratégia do bot real for perdedora com esses params,
-        # penaliza pesadamente o score. Se for lucrativa, recompensa!
+        # Ponderação Avançada do Score Geral (Multi-Métrica + Risco)
+        # Bônus por consistência estatística de Sharpe/Sortino
+        sharpe_val = m["sharpe_ratio"]
+        sortino_val = m["sortino_ratio"]
+        max_dd_val = m["max_drawdown"]
+        
+        m["score"] += sharpe_val * 8.0
+        m["score"] += sortino_val * 6.0
+        
+        # Penalização por rebaixamento máximo (drawdown)
+        if max_dd_val > 15.0:
+            m["score"] -= max_dd_val * 3.0
+        elif max_dd_val > 5.0:
+            m["score"] -= max_dd_val * 1.0
+
+        # Evita overfitting com Live Bot
         live_avg = live["avg_daily_profit"]
         if live_avg < 0.0:
             m["score"] -= abs(live_avg) * 8.0
@@ -441,21 +479,25 @@ def main():
 
     write_state(0, baseline_metrics, None, history)
 
-    # Garante que o bot ao vivo está online no startup
-    is_bot_running = False
-    if _is_on_server():
-        try:
-            check = subprocess.run(["pgrep", "-f", "python bot.py"], capture_output=True, timeout=5)
-            if check.returncode == 0:
-                is_bot_running = True
-        except Exception:
-            pass
-    else:
-        is_bot_running = True
+    # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse)
+    is_stress = _read_stress_config()
+    if not is_stress:
+        is_bot_running = False
+        if _is_on_server():
+            try:
+                check = subprocess.run(["pgrep", "-f", "python bot.py"], capture_output=True, timeout=5)
+                if check.returncode == 0:
+                    is_bot_running = True
+            except Exception:
+                pass
+        else:
+            is_bot_running = True
 
-    if not is_bot_running:
-        print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando...", flush=True)
-        deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now")
+        if not is_bot_running:
+            print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando...", flush=True)
+            deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now")
+    else:
+        print("   🤖 [Ultra-Estresse] Bot ao vivo permanece em espera (OFFLINE) para prioridade de CPU/RAM.", flush=True)
 
     print(f"\n{'─'*70}", flush=True)
     print(f"  🚀 LOOP INFINITO — {N_WORKERS} backtests em paralelo por rodada", flush=True)
@@ -465,6 +507,18 @@ def main():
     # ── Loop infinito de otimização ──────────────────────────────────────────
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         while True:
+            # 1. Verifica e aplica o Modo Ultra-Estresse na rodada ativa
+            is_stress = _read_stress_config()
+            if is_stress and _is_on_server():
+                try:
+                    # Encerra o live bot para liberar 100% de CPU/RAM da VM
+                    check = subprocess.run(["pgrep", "-f", "python bot.py"], capture_output=True, timeout=2)
+                    if check.returncode == 0:
+                        print("   🤖 [Ultra-Estresse] Pausando Bot ao Vivo para estresse máximo do Otimizador...", flush=True)
+                        subprocess.run(["screen", "-S", "pegasus", "-X", "quit"], capture_output=True)
+                except Exception:
+                    pass
+
             # Gera N_WORKERS candidatos diferentes
             candidates = [(rand_params(best_env), f"w{i}") for i in range(N_WORKERS)]
 
@@ -530,6 +584,9 @@ def main():
                     "negative_days":  m["negative_days"],
                     "consistency_pct": m["consistency_pct"],
                     "score":          m["score"],
+                    "sharpe":         m.get("sharpe_ratio", 0.0),
+                    "sortino":        m.get("sortino_ratio", 0.0),
+                    "drawdown":       m.get("max_drawdown", 0.0),
                     "ts":             time.time(),
                 }
                 history.append(entry)
@@ -547,6 +604,7 @@ def main():
                     print(f"     Dias positivos:  {m['positive_days']}/{m['active_days']} ({m['consistency_pct']:.0f}%)", flush=True)
                     print(f"     PnL total maio:  ${m['total_pnl']:.2f}  (ROI {m['roi_pct']:.1f}%)", flush=True)
                     print(f"     Melhor dia: ${m['best_day_pnl']:.2f} | Pior dia: ${m['worst_day_pnl']:.2f}", flush=True)
+                    print(f"     Sharpe: {m.get('sharpe_ratio', 0.0):.4f} | Sortino: {m.get('sortino_ratio', 0.0):.4f} | Max DD: ${m.get('max_drawdown', 0.0):.2f}", flush=True)
                     champ_params = {k: best_env.get(k) for k in PARAM_SPACE}
                     print(f"     Parâmetros campeões: {champ_params}", flush=True)
                     print(f"{'★'*70}\n", flush=True)
@@ -556,6 +614,16 @@ def main():
                         f"opt-v3 it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
                     if ok:
                         print(f"   ✅ Bot ao vivo reiniciado com novos parâmetros!\n", flush=True)
+                        if is_stress:
+                            print(f"   🤖 [Ultra-Estresse] Ativando Bot ao Vivo imediatamente para operar com a estratégia campeã!\n", flush=True)
+                            if _is_on_server():
+                                try:
+                                    # Limpa sessões mortas e inicializa a sessão detached screen
+                                    subprocess.run(["screen", "-wipe"], capture_output=True)
+                                    cmd = "cd /opt/pegasus && PYTHONUNBUFFERED=1 .venv/bin/python -u bot.py 2>&1 | tee -a logs/bot.log"
+                                    subprocess.run(["screen", "-dmS", "pegasus", "bash", "-c", cmd])
+                                except Exception as exc:
+                                    print(f"   [ERR] Falha ao inicializar o Bot em Modo Ultra-Estresse: {exc}", flush=True)
 
                 # Grava o estado de forma atômica e em tempo real para o dashboard ver
                 write_state(iteration + idx, baseline_metrics, best_data, history)

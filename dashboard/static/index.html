@@ -1018,18 +1018,11 @@
             </button>
             <button
                 class="btn btn-outline"
-                onclick="openModal('modal-backtest')"
-                style="border-color: var(--purple); color: var(--purple)"
-            >
-                &#x1f9ea; Backtest Real
-            </button>
-            <button
-                class="btn btn-outline"
                 id="opt-open-btn"
                 onclick="openModal('modal-optimizer')"
                 style="border-color: var(--cyan); color: var(--cyan); position:relative"
             >
-                &#x1f916; Optimizer
+                ⚔️ Arena de Otimização
                 <span id="opt-pulse" style="display:none;position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.2s infinite"></span>
             </button>
             <span class="sep">|</span>
@@ -2522,12 +2515,31 @@
             <div class="modal-content" style="max-width:1080px">
                 <div class="modal-header">
                     <h2 style="display:flex;align-items:center;gap:10px">
-                        🦅 Optimizer v3 — Auto-Aprendizado Contínuo
+                        ⚔️ Arena de Otimização & Experimentos
                         <span id="opt-status-badge" style="font-size:.7rem;padding:3px 10px;border-radius:20px;font-weight:600;background:var(--bg3);color:var(--muted)">■ —</span>
                     </h2>
                     <button class="modal-close" onclick="closeModal('modal-optimizer')">&#x2715;</button>
                 </div>
                 <div class="modal-body">
+
+                    <!-- ═══ SEÇÃO DE CONTROLE DA ARENA ═══ -->
+                    <div style="margin-bottom:20px;padding:16px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:var(--shadow-premium)">
+                        <div style="display:flex;align-items:center;gap:12px">
+                            <span style="font-size:.85rem;font-weight:700;color:var(--cyan)">⚙️ Controles da Arena:</span>
+                            <span id="opt-status-badge-panel" style="font-size:.75rem;padding:4px 12px;border-radius:20px;font-weight:700;background:var(--bg2);color:var(--muted)">■ —</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            <button id="btn-opt-start" class="btn btn-green" onclick="controlOptimizer('start')" style="font-size:.75rem;padding:6px 14px">▶ Iniciar</button>
+                            <button id="btn-opt-stop" class="btn btn-red" onclick="controlOptimizer('stop')" style="font-size:.75rem;padding:6px 14px">■ Parar</button>
+                            <button id="btn-opt-restart" class="btn" onclick="controlOptimizer('restart')" style="font-size:.75rem;padding:6px 14px;background:var(--bg2);color:var(--text);border:1px solid var(--border)">🔄 Reiniciar</button>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;padding-left:12px;border-left:1px solid var(--border)">
+                            <label class="toggle" style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:.75rem;color:var(--yellow)">
+                                <input type="checkbox" id="tog-opt-stress" onchange="toggleOptStress(this)">
+                                🤖 MODO ULTRA-ESTRESSE
+                            </label>
+                        </div>
+                    </div>
 
                     <!-- ═══ SEÇÃO 1: COMO FUNCIONA (Educacional) ═══ -->
                     <div style="margin-bottom:20px;padding:16px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(16,185,129,.06));border:1px solid rgba(99,102,241,.25);border-radius:var(--radius)">
@@ -2638,6 +2650,27 @@
                             <div id="opt-live-pos" style="font-size:.72rem;color:var(--muted)">dias positivos: —</div>
                             <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Métricas do bot real (backtest)</div>
                         </div>
+                        <!-- Sharpe Ratio -->
+                        <div style="background:var(--bg3);border:1px solid rgba(139,92,246,.3);padding:14px;border-radius:var(--radius);position:relative">
+                            <div style="font-size:.65rem;color:#8b5cf6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">📊 Sharpe Campeão</div>
+                            <div id="opt-best-sharpe" style="font-size:1.5rem;font-weight:700;color:#8b5cf6">—</div>
+                            <div style="font-size:.72rem;color:var(--muted)">retorno/volatilidade</div>
+                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Maior consistência de ganhos</div>
+                        </div>
+                        <!-- Sortino Ratio -->
+                        <div style="background:var(--bg3);border:1px solid rgba(236,72,153,.3);padding:14px;border-radius:var(--radius);position:relative">
+                            <div style="font-size:.65rem;color:#ec4899;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">📉 Sortino Campeão</div>
+                            <div id="opt-best-sortino" style="font-size:1.5rem;font-weight:700;color:#ec4899">—</div>
+                            <div style="font-size:.72rem;color:var(--muted)">retorno/downside risk</div>
+                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Foco em evitar dias muito ruins</div>
+                        </div>
+                        <!-- Drawdown -->
+                        <div style="background:var(--bg3);border:1px solid rgba(239,68,68,.3);padding:14px;border-radius:var(--radius);position:relative">
+                            <div style="font-size:.65rem;color:#ef4444;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🛡️ Max DD Campeão</div>
+                            <div id="opt-best-drawdown" style="font-size:1.5rem;font-weight:700;color:#ef4444">—</div>
+                            <div style="font-size:.72rem;color:var(--muted)">rebaixamento máximo</div>
+                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Pior queda na banca simulada</div>
+                        </div>
                     </div>
 
                     <!-- ═══ SEÇÃO 4: TABELA DE ITERAÇÕES MELHORADA ═══ -->
@@ -2656,12 +2689,15 @@
                                         <th style="padding:8px 8px;text-align:right;color:var(--muted);font-weight:600">Dias ✅</th>
                                         <th style="padding:8px 8px;text-align:right;color:var(--muted);font-weight:600">Consist.</th>
                                         <th style="padding:8px 8px;text-align:right;color:var(--cyan);font-weight:600">Score</th>
+                                        <th style="padding:8px 8px;text-align:right;color:#8b5cf6;font-weight:600">Sharpe</th>
+                                        <th style="padding:8px 8px;text-align:right;color:#ec4899;font-weight:600">Sortino</th>
+                                        <th style="padding:8px 8px;text-align:right;color:#ef4444;font-weight:600">Max DD</th>
                                         <th style="padding:8px 8px;text-align:right;color:var(--muted);font-weight:600">Tempo</th>
                                         <th style="padding:8px 8px;text-align:center;color:var(--muted);font-weight:600">Resultado</th>
                                     </tr>
                                 </thead>
                                 <tbody id="opt-iter-tbody">
-                                    <tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">Carregando dados do optimizer...</td></tr>
+                                    <tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Carregando dados do optimizer...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -5155,18 +5191,27 @@
                 try {
                     var d = await fetch("/api/optimizer/status?t=" + new Date().getTime()).then(function(r){ return r.json(); });
 
-                    // Badge e pulse no botão da toolbar
+                    // Badge e pulse no botão da toolbar e no painel interno
                     var badge = document.getElementById("opt-status-badge");
+                    var badgePanel = document.getElementById("opt-status-badge-panel");
                     var pulse = document.getElementById("opt-pulse");
                     var runDot = document.getElementById("opt-running-dot");
                     if (d.running) {
                         if (badge) { badge.textContent = "● RODANDO"; badge.style.background = "var(--green-bg)"; badge.style.color = "var(--green)"; }
+                        if (badgePanel) { badgePanel.textContent = "● RODANDO"; badgePanel.style.background = "var(--green-bg)"; badgePanel.style.color = "var(--green)"; }
                         if (pulse) pulse.style.display = "block";
                         if (runDot) runDot.style.display = "block";
                     } else {
                         if (badge) { badge.textContent = "■ PARADO"; badge.style.background = "var(--red-bg)"; badge.style.color = "var(--red)"; }
+                        if (badgePanel) { badgePanel.textContent = "■ PARADO"; badgePanel.style.background = "var(--red-bg)"; badgePanel.style.color = "var(--red)"; }
                         if (pulse) pulse.style.display = "none";
                         if (runDot) runDot.style.display = "none";
+                    }
+
+                    // Sincroniza toggle de ultra_stress
+                    var togStress = document.getElementById("tog-opt-stress");
+                    if (togStress) {
+                        togStress.checked = !!d.ultra_stress;
                     }
 
                     // ── Baseline (v2: métricas de lucro diário real) ─────────────────────────
@@ -5210,6 +5255,10 @@
                         var brImp   = document.getElementById("opt-improvement");
                         var brCons  = document.getElementById("opt-best-consist");
                         
+                        var brSharpe = document.getElementById("opt-best-sharpe");
+                        var brSortino = document.getElementById("opt-best-sortino");
+                        var brDrawdown = document.getElementById("opt-best-drawdown");
+
                         if (brDaily) {
                             brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
                             brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
@@ -5228,6 +5277,20 @@
                             var imp = bestAvgDay - _baselineAvgDay;
                             brImp.textContent = (imp >= 0 ? "+" : "") + "$" + imp.toFixed(2) + "/dia";
                             brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
+                        }
+                        
+                        // Atualiza os novos cards de métricas quant avançadas
+                        if (brSharpe) {
+                            var sh = activeBest.sharpe != null ? activeBest.sharpe : (activeBest.sharpe_ratio != null ? activeBest.sharpe_ratio : 0);
+                            brSharpe.textContent = sh.toFixed(2);
+                        }
+                        if (brSortino) {
+                            var so = activeBest.sortino != null ? activeBest.sortino : (activeBest.sortino_ratio != null ? activeBest.sortino_ratio : 0);
+                            brSortino.textContent = so.toFixed(2);
+                        }
+                        if (brDrawdown) {
+                            var dd = activeBest.drawdown != null ? activeBest.drawdown : (activeBest.max_drawdown != null ? activeBest.max_drawdown : 0);
+                            brDrawdown.textContent = "$" + dd.toFixed(2);
                         }
 
                         // ── Meta: progress bar $0 → $50/dia usando o Melhor Válido Encontrado ──
@@ -5312,6 +5375,9 @@
                             var posD    = it.positive_days != null ? it.positive_days : "—";
                             var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
                             var scoreStr= it.score != null ? it.score.toFixed(1) : "—";
+                            var sharpeStr = it.sharpe != null ? it.sharpe.toFixed(2) : "—";
+                            var sortinoStr = it.sortino != null ? it.sortino.toFixed(2) : "—";
+                            var ddStr = it.drawdown != null ? "$" + it.drawdown.toFixed(2) : "—";
                             var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
                             var rowBg   = it.is_best ? "background:rgba(16,185,129,0.1);border-left:3px solid var(--green);" : "";
                             var sfColor = sfDay != null && sfDay > (_baselineAvgDay || 0) ? "color:var(--green)" : "color:var(--red)";
@@ -5337,15 +5403,46 @@
                                 + '<td style="padding:6px 8px;text-align:right;color:var(--green)">' + posD + '</td>'
                                 + '<td style="padding:6px 8px;text-align:right;color:var(--muted)">' + consist + '</td>'
                                 + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:var(--cyan)">' + scoreStr + '</td>'
+                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#8b5cf6">' + sharpeStr + '</td>'
+                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ec4899">' + sortinoStr + '</td>'
+                                + '<td style="padding:6px 8px;text-align:right;font-family:monospace;color:#ef4444">' + ddStr + '</td>'
                                 + '<td style="padding:6px 8px;text-align:right;color:var(--dim);font-size:.73rem">' + timeStr + '</td>'
                                 + '<td style="padding:6px 8px;text-align:center">' + badge + '</td>'
                                 + '</tr>';
                         }).join("");
                     } else if (tbody && iters_all.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer calculando baseline...</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer calculando baseline...</td></tr>';
                     }
 
                 } catch(e) { console.warn("pollOptimizerStatus err:", e); }
+            }
+
+            async function controlOptimizer(action) {
+                try {
+                    var r = await fetch("/api/optimizer/" + action, { method: "POST" }).then(function(res){ return res.json(); });
+                    if (r.ok) {
+                        toast(r.msg, "var(--green)");
+                    } else {
+                        toast(r.msg || "Erro ao controlar optimizer", "var(--red)");
+                    }
+                    pollOptimizerStatus();
+                } catch(e) {
+                    toast("Erro de conexão", "var(--red)");
+                }
+            }
+
+            async function toggleOptStress(elem) {
+                try {
+                    var r = await fetch("/api/optimizer/toggle_stress?enabled=" + elem.checked, { method: "POST" }).then(function(res){ return res.json(); });
+                    if (r.ok) {
+                        toast(elem.checked ? "Ultra-Estresse Ativado 🤖" : "Ultra-Estresse Desativado 🛡️", "var(--cyan)");
+                    } else {
+                        toast("Falha ao salvar configuração", "var(--red)");
+                    }
+                    pollOptimizerStatus();
+                } catch(e) {
+                    toast("Erro de conexão", "var(--red)");
+                }
             }
 
         </script>

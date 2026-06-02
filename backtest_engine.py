@@ -413,27 +413,60 @@ def _calc_win_ticks(tp_pct: float) -> int:
     return 80
 
 
-STRATEGY_CONFIGS = [
-    # 1. Sniper Otimizado (30% TP) - Lucro Otimizado com Hold de 9 ticks e Stake $10!
-    {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-    # 2. Sniper Só Soros (30% TP)
-    {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
-    # 3. Sniper Só Gale (30% TP)
-    {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
-    # 4. Sniper Flat $10 (30% TP)
-    {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-    # 5. Conservador 3% TP ($10 stake)
-    {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-    # 6. Conservador Flat $10 (1-Tick Flat)
-    {"name": "Conservador Flat $10", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-    # 7. Pegasus Live Sniper (9% TP, $15)
-    {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-    # 8. Frankenstein Sniper (30% TP, $5, 1 Gale)
-    {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
-    # 9. Super-Frankenstein (Regime-Adaptive Compounding Sniper)
-    {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
-]
+def _generate_strategy_configs() -> list[dict]:
+    configs = []
+    
+    # 1. Mantém os 9 Sniperes base como referência crucial
+    base_configs = [
+        {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
+        {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
+        {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+        {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Conservador Flat $10", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+        {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
+        {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
+    ]
+    configs.extend(base_configs)
 
+    # 2. Gera variações estatísticas robustas combinando TP, Stakes e Recuperação (até atingir 50 configs)
+    tps = [0.05, 0.15, 0.25, 0.35, 0.45]
+    modes = ["flat5", "flat10", "dynamic_10", "dynamic_15"]
+    soros_opts = [(True, 2), (False, 0)]
+    gale_opts = [(True, 1), (True, 2), (False, 0)]
+    
+    idx = 10
+    for tp in tps:
+        for mode in modes:
+            for use_soros, soros_steps in soros_opts:
+                for use_martingale, max_gales in gale_opts:
+                    if len(configs) >= 50:
+                        break
+                    
+                    # Nome amigável identificando as propriedades da estratégia
+                    name = f"Regime #{idx} (TP {int(tp*100)}% | {mode.replace('flat', '$')}"
+                    if use_soros:
+                        name += f" + S{soros_steps}"
+                    if use_martingale:
+                        name += f" + G{max_gales}"
+                    name += ")"
+                    
+                    configs.append({
+                        "name": name,
+                        "tp": tp,
+                        "score": 25,
+                        "mode": mode,
+                        "use_soros": use_soros,
+                        "soros_steps": soros_steps,
+                        "use_martingale": use_martingale,
+                        "max_gales": max_gales
+                    })
+                    idx += 1
+                    
+    return configs
+
+STRATEGY_CONFIGS = _generate_strategy_configs()
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
@@ -1122,6 +1155,46 @@ def main() -> None:
             avg_daily_profit = round(sum(active_pnls) / len(active_pnls), 4) if active_pnls else 0.0
             consistency_pct = round(pos_days / active_days * 100, 1) if active_days > 0 else 0.0
 
+            # ── 1. Curva de Patrimônio e Max Drawdown ────────────────────────
+            equity_curve = [start_balance]
+            curr_bal = start_balance
+            for r in results:
+                curr_bal += r["strategies"].get(s, {}).get("pnl", 0.0)
+                equity_curve.append(curr_bal)
+
+            peak = start_balance
+            max_dd = 0.0
+            for bal in equity_curve:
+                if bal > peak:
+                    peak = bal
+                dd = peak - bal
+                if dd > max_dd:
+                    max_dd = dd
+            max_dd_pct = (max_dd / peak * 100) if peak > 0 else 0.0
+
+            # ── 2. Sharpe e Sortino Ratios ───────────────────────────────────
+            daily_pnls = [r["strategies"].get(s, {}).get("pnl", 0.0) for r in results]
+            mean_pnl = sum(daily_pnls) / len(daily_pnls) if daily_pnls else 0.0
+            
+            # Desvio padrão
+            if len(daily_pnls) > 1:
+                variance = sum((x - mean_pnl) ** 2 for x in daily_pnls) / (len(daily_pnls) - 1)
+                std_dev = variance ** 0.5
+            else:
+                std_dev = 0.0
+
+            sharpe = (mean_pnl / std_dev) if std_dev > 0.001 else 0.0
+
+            # Desvio de queda (Downside deviation)
+            downside_pnls = [x for x in daily_pnls if x < 0.0]
+            if downside_pnls:
+                downside_variance = sum(x ** 2 for x in downside_pnls) / len(daily_pnls)
+                downside_dev = downside_variance ** 0.5
+            else:
+                downside_dev = 0.0
+
+            sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (mean_pnl / 0.001 if mean_pnl > 0 else 0.0)
+
             summary["strategies"][s] = {
                 "final_balance": round(final_bal, 2),
                 "total_pnl": total_pnl,
@@ -1133,6 +1206,10 @@ def main() -> None:
                 "avg_daily_profit": avg_daily_profit,
                 "consistency_pct": consistency_pct,
                 "avg_signal_wr": avg_wr,
+                "sharpe_ratio": round(sharpe, 4),
+                "sortino_ratio": round(sortino, 4),
+                "max_drawdown": round(max_dd, 2),
+                "max_drawdown_pct": round(max_dd_pct, 1),
             }
         state["summary"] = summary
 

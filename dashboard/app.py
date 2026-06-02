@@ -1134,6 +1134,96 @@ _OPT_LOG_PATH = BASE / ".." / ".." / ".." / ".gemini" / "antigravity-ide" / "bra
 _OPT_LOG_ALT = Path("/home/bill/.gemini/antigravity-ide/brain/b252b907-47a5-4f8c-8466-4a339d25a4b5/.system_generated/tasks/task-4123.log")
 
 
+def _optimizer_running() -> bool:
+    if Path("/opt/pegasus").exists():
+        r = subprocess.run(["systemctl", "is-active", "pegasus-optimizer.service"], capture_output=True)
+        if r.returncode == 0:
+            return True
+    pid_file = BASE / "logs" / "optimizer_v2.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            pass
+    r = subprocess.run(["pgrep", "-f", "python.*optimize_loop.py"], capture_output=True)
+    return r.returncode == 0
+
+
+def _read_stress_config() -> bool:
+    path = BASE / "logs" / "stress_config.json"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text())
+        return bool(data.get("ultra_stress", False))
+    except Exception:
+        return False
+
+
+def _write_stress_config(enabled: bool) -> None:
+    path = BASE / "logs" / "stress_config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps({"ultra_stress": enabled}, indent=2))
+    except Exception as e:
+        print(f"Error writing stress config: {e}")
+
+
+def _start_optimizer() -> bool:
+    if _optimizer_running():
+        return True
+    if Path("/opt/pegasus").exists():
+        try:
+            subprocess.run(["sudo", "systemctl", "start", "pegasus-optimizer.service"], check=True)
+            return True
+        except Exception:
+            pass
+    cmd = [VENV_PYTHON, str(BASE / "optimize_loop.py")]
+    try:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        log_file = open(BASE / "logs" / "optimizer_v2.log", "a")
+        p = subprocess.Popen(
+            cmd,
+            cwd=str(BASE),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True
+        )
+        (BASE / "logs" / "optimizer_v2.pid").write_text(str(p.pid))
+        return True
+    except Exception as e:
+        print(f"Error starting optimizer: {e}")
+        return False
+
+
+def _stop_optimizer() -> bool:
+    if Path("/opt/pegasus").exists():
+        try:
+            subprocess.run(["sudo", "systemctl", "stop", "pegasus-optimizer.service"], check=True)
+            subprocess.run(["pkill", "-f", "python.*optimize_loop.py"], capture_output=True)
+            return True
+        except Exception:
+            pass
+    pid_file = BASE / "logs" / "optimizer_v2.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 15)
+            _time.sleep(1)
+            try:
+                os.kill(pid, 9)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    subprocess.run(["pkill", "-f", "python.*optimize_loop.py"], capture_output=True)
+    return True
+
+
 @app.get("/api/optimizer/status")
 def optimizer_status(response: Response):
     """Retorna o status ao vivo do loop de otimização de parâmetros."""
@@ -1147,22 +1237,50 @@ def optimizer_status(response: Response):
             import time as _t
             data = json.loads(state_file.read_text(encoding="utf-8"))
             mtime = state_file.stat().st_mtime
-            # Considerado rodando se atualizado nos últimos 5 minutos
-            data["running"] = (_t.time() - mtime) < 300
+            # Considerado rodando se processo ativo
+            data["running"] = _optimizer_running()
             data["last_update_ago_s"] = int(_t.time() - mtime)
+            data["ultra_stress"] = _read_stress_config()
             return data
         except Exception as exc:
             pass
 
     # Fallback: retorna idle
     return {
-        "running": False,
+        "running": _optimizer_running(),
         "iterations": [],
         "best": None,
         "baseline": None,
         "current_iteration": 0,
         "last_update_ago_s": 9999,
+        "ultra_stress": _read_stress_config(),
     }
+
+
+@app.post("/api/optimizer/start")
+def optimizer_start():
+    ok = _start_optimizer()
+    return {"ok": ok, "msg": "Optimizer iniciado." if ok else "Falha ao iniciar."}
+
+
+@app.post("/api/optimizer/stop")
+def optimizer_stop():
+    ok = _stop_optimizer()
+    return {"ok": ok, "msg": "Optimizer parado." if ok else "Falha ao parar."}
+
+
+@app.post("/api/optimizer/restart")
+def optimizer_restart():
+    _stop_optimizer()
+    _time.sleep(2)
+    ok = _start_optimizer()
+    return {"ok": ok, "msg": "Optimizer reiniciado." if ok else "Falha ao reiniciar."}
+
+
+@app.post("/api/optimizer/toggle_stress")
+def optimizer_toggle_stress(enabled: bool):
+    _write_stress_config(enabled)
+    return {"ok": True, "ultra_stress": enabled}
 
 
 @app.get("/api/history30d")
