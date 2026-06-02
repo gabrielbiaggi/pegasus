@@ -2579,7 +2579,7 @@
                     <!-- ═══ SEÇÃO 2: META DO DIA ═══ -->
                     <div id="opt-meta-section" style="margin-bottom:16px;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius)">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                            <div style="font-size:.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700">🎯 Meta: Dobrar a Banca — $50 → $100 em 1 dia</div>
+                            <div style="font-size:.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700">🎯 Meta Realista: Lucro de $30.00/dia (60%-80% da Banca)</div>
                             <div id="opt-meta-pct" style="font-size:.85rem;font-weight:700;color:var(--yellow)">0% do caminho</div>
                         </div>
                         <div style="background:var(--bg2);border-radius:100px;height:10px;overflow:hidden">
@@ -2588,7 +2588,7 @@
                         <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:.68rem;color:var(--muted)">
                             <span>Baseline: $0.42/dia (27/31)</span>
                             <span id="opt-meta-current">Melhor atual: —</span>
-                            <span>Meta: $50/dia (31/31)</span>
+                            <span>Meta: $30/dia (31/31)</span>
                         </div>
                     </div>
 
@@ -5297,7 +5297,7 @@
                         var metaBar = document.getElementById("opt-meta-bar");
                         var metaPct = document.getElementById("opt-meta-pct");
                         var metaCur = document.getElementById("opt-meta-current");
-                        var META_TARGET = 50.0;
+                        var META_TARGET = 30.0;
                         var pct = Math.min(100, Math.max(0, (bestAvgDay / META_TARGET) * 100));
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";

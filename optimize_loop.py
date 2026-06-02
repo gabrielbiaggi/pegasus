@@ -203,24 +203,24 @@ N_WORKERS = 8
 
 # ── Espaço de busca (hill-climbing gaussiano + perturbação discreta) ─────────
 PARAM_SPACE = {
-    # Score mínimo do ensemble (16–32): mais baixo = mais trades, menos filtro
-    "CALM_ACCU_MIN_SCORE":          {"type": "int",       "min": 10, "max": 35,   "step": 1},
-    # Prob mínima XGBoost (0.18–0.45): mais baixo = mais entradas
-    "ENSEMBLE_MIN_PROB":            {"type": "float",     "min": 0.18, "max": 0.45, "step": 0.01},
-    # CUSUM máximo p/ entrada (2.5–12): CRÍTICO — aumentar libera mais trades
-    "CALM_ACCU_MAX_ENTRY_CUSUM":    {"type": "float",     "min": 2.5,  "max": 12.0, "step": 0.5},
-    # Hurst mínimo (0.30–0.58): mais baixo = aceita mais regimes
-    "ACCUMULATOR_MIN_HURST_EXPONENT": {"type": "float",  "min": 0.30, "max": 0.58, "step": 0.01},
-    # Limiar de volatilidade (mais alto = mais trades em mercado volátil)
+    # Score mínimo do ensemble (4–18): menor score = mais trades (anteriormente 10-35 limitava muito)
+    "CALM_ACCU_MIN_SCORE":          {"type": "int",       "min": 4,   "max": 18,   "step": 1},
+    # Prob mínima XGBoost (0.15–0.40): controle fino de falso positivo
+    "ENSEMBLE_MIN_PROB":            {"type": "float",     "min": 0.15, "max": 0.40, "step": 0.01},
+    # CUSUM máximo p/ entrada (3.5–25.0): CUSUM < 3.5 causava prejuízo, aumentar libera mais trades
+    "CALM_ACCU_MAX_ENTRY_CUSUM":    {"type": "float",     "min": 3.5,  "max": 25.0, "step": 0.5},
+    # Hurst mínimo (0.25–0.48): menores expoentes Hurst geraram os melhores lucros
+    "ACCUMULATOR_MIN_HURST_EXPONENT": {"type": "float",  "min": 0.25, "max": 0.48, "step": 0.01},
+    # Limiar de volatilidade (tolerância de ruído para boom)
     "CALM_ACCU_THRESHOLD":          {"type": "float_sci", "min": 0.5e-6, "max": 5.0e-6},
-    # XGBoost bypass (0.08–0.30): quando XGB pode ser ignorado
-    "PCS_XGB_BYPASS_LIMIT":         {"type": "float",     "min": 0.08, "max": 0.30, "step": 0.01},
-    # Take profit regime B+ agressivo (5–25 ticks)
-    "PCS_REGIME_B_PLUS_TP":         {"type": "float",     "min": 3.0,  "max": 25.0, "step": 1.0},
-    # Take profit regime B- defensivo (1–8 ticks)
-    "PCS_REGIME_B_MINUS_TP":        {"type": "float",     "min": 1.0,  "max": 8.0,  "step": 0.5},
-    # Stake base (1–8$): maior stake = mais lucro E mais risco
-    "STAKE":                        {"type": "float",     "min": 1.0,  "max": 8.0,  "step": 0.5},
+    # XGBoost bypass (0.10–0.35): limiar dinâmico quando em gale
+    "PCS_XGB_BYPASS_LIMIT":         {"type": "float",     "min": 0.10, "max": 0.35, "step": 0.01},
+    # Take profit regime B+ agressivo (15–35 ticks): lucros altos de maio concentraram-se aqui
+    "PCS_REGIME_B_PLUS_TP":         {"type": "float",     "min": 15.0, "max": 35.0, "step": 1.0},
+    # Take profit regime B- defensivo (4–12 ticks): otimização de fundo de poço
+    "PCS_REGIME_B_MINUS_TP":        {"type": "float",     "min": 4.0,  "max": 12.0, "step": 0.5},
+    # Stake base (5–12$): excluir menor de 5$ (lucros irrisórios) e elevar teto p/ $12 (meta de $30/dia)
+    "STAKE":                        {"type": "float",     "min": 5.0,  "max": 12.0, "step": 0.5},
 }
 
 FROZEN_PARAMS = set()  # todos os params são livres
