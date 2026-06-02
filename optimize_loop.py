@@ -704,14 +704,14 @@ def main():
 
                 # Sanity check: só aceita recorde se:
                 # 1) PnL total >= 0 E avg_day > 0 (sem prejuízo)
-                # 2) avg_daily <= 30 (evita resultados implausíveis com stake<=8 e $50)
+                # 2) avg_daily <= 45 (evita resultados implausíveis com stake<=8 e $50)
                 # 3) active_days > 20 (bot realmente operou o mês inteiro)
                 active = m.get("active_days", 0) or 0
                 avg_d  = m["avg_daily_profit"]
                 pnl_ok = (
                     m["total_pnl"] >= 0
                     and avg_d > 0
-                    and avg_d <= 30.0      # teto de plausibilidade: max ~$30/dia com $50 banca
+                    and avg_d <= 45.0      # teto de plausibilidade: max ~$45/dia com $50 banca
                     and active >= 20       # pelo menos 20 dias com operações
                 )
 

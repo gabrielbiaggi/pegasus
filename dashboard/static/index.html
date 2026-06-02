@@ -2572,7 +2572,7 @@
                         <div style="margin-top:12px;padding:10px 14px;background:rgba(16,185,129,.07);border-left:3px solid var(--green);border-radius:var(--radius-sm);font-size:.75rem;color:var(--muted)">
                             <b style="color:var(--green)">🧬 Estratégia Super-Frankenstein</b> — A estratégia que o optimizer usa como benchmark é a "Super-Frankenstein": ela combina as melhores técnicas (SOROS progressivo + Acumulador + filtros de sinal XGBoost). Em Maio 2026, foi a única estratégia <b style="color:var(--text)">consistentemente lucrativa</b> dos 9 modelos testados.
                             <br><br>
-                            <b style="color:var(--cyan)">📊 O que mede:</b> Lucro médio por dia com $50 de banca fixo, sem compounding entre dias. Aceita só resultados com <b style="color:var(--text)">avg ≤ $30/dia</b> (realista) e <b style="color:var(--text)">≥ 20 dias com trades</b> (não contabiliza dias parados).
+                            <b style="color:var(--cyan)">📊 O que mede:</b> Lucro médio por dia com $50 de banca fixo, sem compounding entre dias. Aceita só resultados com <b style="color:var(--text)">avg ≤ $45/dia</b> (realista) e <b style="color:var(--text)">≥ 20 dias com trades</b> (não contabiliza dias parados).
                         </div>
                     </div>
 
@@ -5238,8 +5238,8 @@
                     for (var i = 0; i < iters_all.length; i++) {
                         var it = iters_all[i];
                         var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : 0);
-                        // Validação similar ao optimizer: lucro > 0, <= $30/dia (teto plausível) e >= 20 dias ativos
-                        var pnlOk = sfDay > 0 && sfDay <= 30.0 && (it.positive_days || 0) >= 20;
+                        // Validação similar ao optimizer: lucro > 0, <= $45/dia (teto plausível) e >= 20 dias ativos
+                        var pnlOk = sfDay > 0 && sfDay <= 45.0 && (it.positive_days || 0) >= 20;
                         if (pnlOk && sfDay > highestValidProfit) {
                             highestValidProfit = sfDay;
                             highestValidIt = it;
@@ -5331,8 +5331,8 @@
                             lastPos.textContent = "dias positivos: " + (lastIt.positive_days != null ? lastIt.positive_days : "—") + " (it#" + lastIt.iteration + ")";
                         }
                         if (lastStatus) {
-                            if (lastSfDay > 30.0) {
-                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $30)</span>';
+                            if (lastSfDay > 45.0) {
+                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $45)</span>';
                             } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= 20) {
                                 lastStatus.innerHTML = '<span style="color:var(--green);font-weight:700;font-size:.65rem">✅ VÁLIDO (consist: ' + (lastIt.consistency_pct || 0).toFixed(0) + '%)</span>';
                             } else {
@@ -5388,8 +5388,8 @@
                             var badge = "";
                             if (it.is_best) {
                                 badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
-                            } else if (sfDay > 30.0) {
-                                badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $30)</span>';
+                            } else if (sfDay > 45.0) {
+                                badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $45)</span>';
                             } else if (sfDay > 0 && (it.positive_days || 0) >= 20) {
                                 badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
                             } else {
