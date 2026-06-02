@@ -2591,10 +2591,17 @@
                         </div>
                         <!-- Super-Frank Melhor -->
                         <div style="background:var(--bg3);border:1px solid var(--green);padding:14px;border-radius:var(--radius);position:relative">
-                            <div style="font-size:.65rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🧬 Melhor Super-Frank</div>
+                            <div style="font-size:.65rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🧬 Melhor Super-Frank (Válido)</div>
                             <div id="opt-best-daily" style="font-size:1.5rem;font-weight:700;color:var(--green)">—</div>
                             <div id="opt-best-pos" style="font-size:.72rem;color:var(--muted)">dias positivos: —</div>
-                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Melhor resultado no backtest</div>
+                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Melhor resultado válido no backtest</div>
+                        </div>
+                        <!-- Último Backtest -->
+                        <div style="background:var(--bg3);border:1px solid var(--cyan);padding:14px;border-radius:var(--radius);position:relative">
+                            <div style="font-size:.65rem;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🔬 Último Testado</div>
+                            <div id="opt-last-daily" style="font-size:1.5rem;font-weight:700;color:var(--text)">—</div>
+                            <div id="opt-last-pos" style="font-size:.72rem;color:var(--muted)">dias positivos: —</div>
+                            <div id="opt-last-status" style="font-size:.65rem;color:var(--dim);margin-top:4px">Aguardando iteração...</div>
                         </div>
                         <!-- Ganho vs Baseline -->
                         <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
@@ -5176,22 +5183,40 @@
                         if (bPos) bPos.textContent = "dias positivos: " + (bl.positive_days != null ? bl.positive_days : "—") + " | consist: " + (bl.consistency_pct != null ? bl.consistency_pct.toFixed(0) + "%" : "—");
                     }
 
-                    // ── Melhor (v3 — Super-Frankenstein + Live Bot secundário) ──────────────
-                    var best = d.best;
-                    var activeBest = best || bl;
+                    // ── Histórico de iterações do Optimizer ───────────────────────
+                    var iters_all = d.iterations || [];
+
+                    // ── Encontra o Melhor Válido e o Último Testado na lista em Tempo Real ──
+                    var highestValidProfit = _baselineAvgDay;
+                    var highestValidIt = null;
+                    for (var i = 0; i < iters_all.length; i++) {
+                        var it = iters_all[i];
+                        var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : 0);
+                        // Validação similar ao optimizer: lucro > 0, <= $30/dia (teto plausível) e >= 20 dias ativos
+                        var pnlOk = sfDay > 0 && sfDay <= 30.0 && (it.positive_days || 0) >= 20;
+                        if (pnlOk && sfDay > highestValidProfit) {
+                            highestValidProfit = sfDay;
+                            highestValidIt = it;
+                        }
+                    }
+
+                    // activeBest será o melhor válido da lista, ou o melhor geral, ou fallback ao baseline
+                    var activeBest = highestValidIt || best || bl;
                     if (activeBest) {
-                        var bestAvgDay = activeBest.avg_daily_profit || 0;
+                        var bestAvgDay = activeBest.avg_daily_profit !== undefined ? activeBest.avg_daily_profit : (activeBest.avg_daily !== undefined ? activeBest.avg_daily : 0);
                         var brDaily = document.getElementById("opt-best-daily");
                         var brPos   = document.getElementById("opt-best-pos");
                         var brImp   = document.getElementById("opt-improvement");
                         var brCons  = document.getElementById("opt-best-consist");
+                        
                         if (brDaily) {
                             brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
                             brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
                         }
                         if (brPos) {
                             var itNum = activeBest.iteration !== undefined ? activeBest.iteration : 0;
-                            brPos.textContent = "dias positivos: " + (activeBest.positive_days != null ? activeBest.positive_days : "—") + " (it#" + itNum + ")";
+                            var posD = activeBest.positive_days !== undefined ? activeBest.positive_days : "—";
+                            brPos.textContent = "dias positivos: " + posD + " (it#" + itNum + ")";
                         }
                         if (brCons) {
                             var cons = activeBest.consistency_pct || 0;
@@ -5204,7 +5229,7 @@
                             brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
                         }
 
-                        // ── Meta: progress bar $0 → $50/dia ──
+                        // ── Meta: progress bar $0 → $50/dia usando o Melhor Válido Encontrado ──
                         var metaBar = document.getElementById("opt-meta-bar");
                         var metaPct = document.getElementById("opt-meta-pct");
                         var metaCur = document.getElementById("opt-meta-current");
@@ -5212,13 +5237,13 @@
                         var pct = Math.min(100, Math.max(0, (bestAvgDay / META_TARGET) * 100));
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";
-                        if (metaCur) metaCur.textContent = "Melhor atual: $" + bestAvgDay.toFixed(2) + "/dia";
+                        if (metaCur) metaCur.textContent = "Melhor válido: $" + bestAvgDay.toFixed(2) + "/dia" + (highestValidIt ? " (it#" + highestValidIt.iteration + ")" : "");
 
-                        // ── Live Bot (métricas secundárias) ──
+                        // ── Live Bot (métricas secundárias baseadas no activeBest ou best geral) ──
                         var liveDaily = document.getElementById("opt-live-daily");
                         var livePos   = document.getElementById("opt-live-pos");
-                        var liveAvg   = activeBest.live_avg_daily;
-                        var livePosD  = activeBest.live_positive_days;
+                        var liveAvg   = activeBest.live_avg_daily || (best ? best.live_avg_daily : null);
+                        var livePosD  = activeBest.live_positive_days || (best ? best.live_positive_days : null);
                         if (liveDaily && liveAvg != null) {
                             liveDaily.textContent = "$" + parseFloat(liveAvg).toFixed(2) + "/dia";
                             liveDaily.style.color = liveAvg > 0 ? "#60a5fa" : "#f87171";
@@ -5226,12 +5251,42 @@
                         if (livePos && livePosD != null) livePos.textContent = "dias positivos: " + livePosD;
                     }
 
+                    // ── Última Iteração Completada (Tempo Real) ──
+                    var lastIt = iters_all.length > 0 ? iters_all[iters_all.length - 1] : null;
+                    var lastDaily = document.getElementById("opt-last-daily");
+                    var lastPos = document.getElementById("opt-last-pos");
+                    var lastStatus = document.getElementById("opt-last-status");
+
+                    if (lastIt) {
+                        var lastSfDay = lastIt.avg_daily != null ? lastIt.avg_daily : (lastIt.pnl != null ? lastIt.pnl / 31 : null);
+                        if (lastDaily) {
+                            lastDaily.textContent = lastSfDay != null ? "$" + lastSfDay.toFixed(2) + "/dia" : "—";
+                            lastDaily.style.color = "var(--text)";
+                        }
+                        if (lastPos) {
+                            lastPos.textContent = "dias positivos: " + (lastIt.positive_days != null ? lastIt.positive_days : "—") + " (it#" + lastIt.iteration + ")";
+                        }
+                        if (lastStatus) {
+                            if (lastSfDay > 30.0) {
+                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $30)</span>';
+                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= 20) {
+                                lastStatus.innerHTML = '<span style="color:var(--green);font-weight:700;font-size:.65rem">✅ VÁLIDO (consist: ' + (lastIt.consistency_pct || 0).toFixed(0) + '%)</span>';
+                            } else {
+                                lastStatus.innerHTML = '<span style="color:#f59e0b;font-weight:700;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
+                            }
+                        }
+                    } else {
+                        if (lastDaily) lastDaily.textContent = "—";
+                        if (lastPos) lastPos.textContent = "dias positivos: —";
+                        if (lastStatus) lastStatus.innerHTML = '<span style="color:var(--dim)">Aguardando iteração...</span>';
+                    }
+
                     // ── Contador, workers, records e última atualização ───────────────────────
                     var ict = document.getElementById("opt-iter-count");
                     var irc = document.getElementById("opt-record-count");
                     var ilu = document.getElementById("opt-last-update");
                     var iwk = document.getElementById("opt-workers");
-                    var iters_all = d.iterations || [];
+                    
                     var nRec = iters_all.filter(function(x){return x.is_best;}).length;
                     if (ict) ict.textContent = "de " + (d.current_iteration || 0) + " iterações";
                     if (irc) irc.textContent = nRec;
@@ -5262,9 +5317,18 @@
                             var sfStr   = sfDay != null ? "$" + sfDay.toFixed(2) : "—";
                             var liveStr = liveDay != null ? "$" + liveDay.toFixed(2) : "—";
                             var liveCol = liveDay != null && liveDay > 0 ? "color:#60a5fa" : "color:#f87171";
-                            var badge   = it.is_best
-                                ? '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>'
-                                : '<span style="color:var(--dim);font-size:.7rem">·</span>';
+                            
+                            var badge = "";
+                            if (it.is_best) {
+                                badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
+                            } else if (sfDay > 30.0) {
+                                badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $30)</span>';
+                            } else if (sfDay > 0 && (it.positive_days || 0) >= 20) {
+                                badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
+                            } else {
+                                badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
+                            }
+
                             return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
                                 + '<td style="padding:6px 8px;color:var(--muted);font-size:.75rem">#' + it.iteration + '</td>'
                                 + '<td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace;' + sfColor + '">' + sfStr + '</td>'
