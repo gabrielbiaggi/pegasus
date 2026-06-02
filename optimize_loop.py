@@ -186,6 +186,31 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
         conn.close()
     return None
 
+def _load_top_champions() -> list[dict]:
+    db_path = Path("logs/results.db")
+    if not db_path.exists():
+        return []
+    champions = []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            "SELECT DISTINCT params FROM optimizer_history ORDER BY score DESC LIMIT 5"
+        )
+        rows = cursor.fetchall()
+        for r in rows:
+            try:
+                p = json.loads(r["params"])
+                if p:
+                    champions.append(p)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[WARN] _load_top_champions error: {e}", flush=True)
+    finally:
+        conn.close()
+    return champions
+
 # ── Modo Ultra-Estresse ────────────────────────────────────────────────────────
 def _read_stress_config() -> bool:
     path = Path("logs/stress_config.json")
@@ -679,8 +704,16 @@ def main():
                 except Exception:
                     pass
 
-            # Gera N_WORKERS candidatos diferentes
-            candidates = [(rand_params(best_env), f"w{i}") for i in range(N_WORKERS)]
+            # Carrega o pool de campeões históricos para busca evolutiva multi-champion
+            champs = _load_top_champions()
+            champion_pool = []
+            for c in champs:
+                champion_pool.append({k: str(v) for k, v in c.items()})
+            if not champion_pool:
+                champion_pool = [best_env]
+
+            # Gera N_WORKERS candidatos perturbando campeões históricos aleatórios do pool
+            candidates = [(rand_params(random.choice(champion_pool)), f"w{i}") for i in range(N_WORKERS)]
 
             print(f"🔄 Iterações {iteration}–{iteration + N_WORKERS - 1} "
                   f"({N_WORKERS} em paralelo)...", flush=True)
