@@ -3276,7 +3276,7 @@
                 if (id === "modal-optimizer") {
                     pollOptimizerStatus(); // poll imediato
                     if (_optPollTimer) clearInterval(_optPollTimer);
-                    _optPollTimer = setInterval(pollOptimizerStatus, 3000); // 3s enquanto aberto
+                    _optPollTimer = setInterval(pollOptimizerStatus, 500); // 500ms enquanto aberto
                 }
             }
             function closeModal(id) {
