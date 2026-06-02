@@ -5077,6 +5077,23 @@
             setInterval(fetchIndicators, 3000);
             setInterval(fetchSessions, 30000);
             setInterval(fetchHistory30d, 60000);
+
+            // Poll do status do optimizer em segundo plano a cada 5s para manter toolbar atualizada sem cache
+            setInterval(async function () {
+                try {
+                    var d = await fetch("/api/optimizer/status?t=" + new Date().getTime()).then(function(r){ return r.json(); });
+                    var badge = document.getElementById("opt-status-badge");
+                    var pulse = document.getElementById("opt-pulse");
+                    if (d.running) {
+                        if (badge) { badge.textContent = "● RODANDO"; badge.style.background = "var(--green-bg)"; badge.style.color = "var(--green)"; }
+                        if (pulse) pulse.style.display = "block";
+                    } else {
+                        if (badge) { badge.textContent = "■ PARADO"; badge.style.background = "var(--red-bg)"; badge.style.color = "var(--red)"; }
+                        if (pulse) pulse.style.display = "none";
+                    }
+                } catch(e) {}
+            }, 5000);
+
             setInterval(async function () {
                 try {
                     var d = await fetch("/api/balance").then(function (r) {
@@ -5129,7 +5146,7 @@
 
             async function pollOptimizerStatus() {
                 try {
-                    var d = await fetch("/api/optimizer/status").then(function(r){ return r.json(); });
+                    var d = await fetch("/api/optimizer/status?t=" + new Date().getTime()).then(function(r){ return r.json(); });
 
                     // Badge e pulse no botão da toolbar
                     var badge = document.getElementById("opt-status-badge");
