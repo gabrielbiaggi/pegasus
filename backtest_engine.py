@@ -1568,9 +1568,12 @@ def run_backtest_direct(
 
         sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (mean_pnl / 0.001 if mean_pnl > 0 else 0.0)
 
+        total_trades = sum(r["strategies"].get(s, {}).get("trades", 0) for r in results)
+
         summary["strategies"][s] = {
             "final_balance": round(final_bal, 2),
             "total_pnl": total_pnl,
+            "total_trades": total_trades,
             "roi_pct": round(total_pnl / start_balance * 100, 1),
             "positive_days": pos_days,
             "negative_days": neg_days,
@@ -1624,6 +1627,7 @@ def run_backtest_direct(
         m["score"] += live_avg * 3.0
 
     m["score"] = round(m["score"], 4)
+    m["summary"] = summary
     return m
 
 

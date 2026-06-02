@@ -87,12 +87,16 @@ def main():
     
     pnl_fast = res_fast.get("total_pnl", 0.0)
     pnl_full = res_full.get("total_pnl", 0.0)
-    trades_fast = res_fast.get("total_trades", 0)
-    trades_full = res_full.get("total_trades", 0)
-    winrate_fast = res_fast.get("avg_win_rate", 0.0)
-    winrate_full = res_full.get("avg_win_rate", 0.0)
-    cons_fast = res_fast.get("consistency", 0.0)
-    cons_full = res_full.get("consistency", 0.0)
+    
+    sf_fast = res_fast.get("summary", {}).get("strategies", {}).get("Super-Frankenstein", {})
+    sf_full = res_full.get("summary", {}).get("strategies", {}).get("Super-Frankenstein", {})
+    
+    trades_fast = sf_fast.get("total_trades", 0)
+    trades_full = sf_full.get("total_trades", 0)
+    winrate_fast = sf_fast.get("avg_signal_wr", 0.0)
+    winrate_full = sf_full.get("avg_signal_wr", 0.0)
+    cons_fast = res_fast.get("consistency_pct", 0.0)
+    cons_full = res_full.get("consistency_pct", 0.0)
     
     print(f"{'Retorno Total (PnL)':<25} | ${pnl_fast:<29.2f} | ${pnl_full:<29.2f}")
     print(f"{'Total de Trades':<25} | {trades_fast:<30} | {trades_full:<30}")
