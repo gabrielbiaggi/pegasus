@@ -34,7 +34,7 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-START_DATE    = "2026-05-01"
+START_DATE    = "2026-01-01"
 END_DATE      = "2026-05-31"
 START_BALANCE = "50.0"       # NUNCA mude: banca base real do usuário
 
@@ -226,26 +226,28 @@ def _read_stress_config() -> bool:
 # Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
 N_WORKERS = 8
 
-# ── Espaço de busca (hill-climbing gaussiano + perturbação discreta) ─────────
+# ── Espaço de busca focado no DNA do campeão it#508 (Jan-Mai 2026) ─────────────
+# it#508: STAKE=11.0 CUSUM=7.0 MIN_SCORE=14 XGB=0.314 HURST=0.47
+# Busca ±30% ao redor dos valores campeões — maximiza chance de superar
 PARAM_SPACE = {
-    # Score mínimo do ensemble (4–18): menor score = mais trades (anteriormente 10-35 limitava muito)
-    "CALM_ACCU_MIN_SCORE":          {"type": "int",       "min": 4,   "max": 18,   "step": 1},
-    # Prob mínima XGBoost (0.15–0.40): controle fino de falso positivo
-    "ENSEMBLE_MIN_PROB":            {"type": "float",     "min": 0.15, "max": 0.40, "step": 0.01},
-    # CUSUM máximo p/ entrada (3.5–25.0): CUSUM < 3.5 causava prejuízo, aumentar libera mais trades
-    "CALM_ACCU_MAX_ENTRY_CUSUM":    {"type": "float",     "min": 3.5,  "max": 25.0, "step": 0.5},
-    # Hurst mínimo (0.25–0.48): menores expoentes Hurst geraram os melhores lucros
-    "ACCUMULATOR_MIN_HURST_EXPONENT": {"type": "float",  "min": 0.25, "max": 0.48, "step": 0.01},
-    # Limiar de volatilidade (tolerância de ruído para boom)
-    "CALM_ACCU_THRESHOLD":          {"type": "float_sci", "min": 0.5e-6, "max": 5.0e-6},
-    # XGBoost bypass (0.10–0.35): limiar dinâmico quando em gale
-    "PCS_XGB_BYPASS_LIMIT":         {"type": "float",     "min": 0.10, "max": 0.35, "step": 0.01},
-    # Take profit regime B+ agressivo (15–35 ticks): lucros altos de maio concentraram-se aqui
-    "PCS_REGIME_B_PLUS_TP":         {"type": "float",     "min": 15.0, "max": 35.0, "step": 1.0},
-    # Take profit regime B- defensivo (4–12 ticks): otimização de fundo de poço
-    "PCS_REGIME_B_MINUS_TP":        {"type": "float",     "min": 4.0,  "max": 12.0, "step": 0.5},
-    # Stake base (5–12$): excluir menor de 5$ (lucros irrisórios) e elevar teto p/ $12 (meta de $30/dia)
-    "STAKE":                        {"type": "float",     "min": 5.0,  "max": 12.0, "step": 0.5},
+    # Score mínimo do ensemble: it#508=14 → busca 9–19
+    "CALM_ACCU_MIN_SCORE":             {"type": "int",       "min": 9,    "max": 19,   "step": 1},
+    # Prob mínima XGBoost: it#508=0.314 → busca 0.22–0.42
+    "ENSEMBLE_MIN_PROB":               {"type": "float",     "min": 0.22, "max": 0.42, "step": 0.01},
+    # CUSUM máximo: it#508=7.0 → busca 4.5–10.5
+    "CALM_ACCU_MAX_ENTRY_CUSUM":       {"type": "float",     "min": 4.5,  "max": 10.5, "step": 0.5},
+    # Hurst mínimo: it#508=0.47 → busca 0.35–0.55 (ligeiramente maior p/ robustez multi-mês)
+    "ACCUMULATOR_MIN_HURST_EXPONENT":  {"type": "float",     "min": 0.35, "max": 0.55, "step": 0.01},
+    # Limiar de volatilidade: it#508=1.91e-6 → busca 0.5e-6–5.0e-6
+    "CALM_ACCU_THRESHOLD":             {"type": "float_sci", "min": 0.5e-6, "max": 5.0e-6},
+    # XGB bypass: it#508=0.25 → busca 0.15–0.35
+    "PCS_XGB_BYPASS_LIMIT":            {"type": "float",     "min": 0.15, "max": 0.35, "step": 0.01},
+    # TP regime B+: it#508=18.0 → busca 12.0–28.0
+    "PCS_REGIME_B_PLUS_TP":            {"type": "float",     "min": 12.0, "max": 28.0, "step": 1.0},
+    # TP regime B-: it#508=11.0 → busca 6.0–14.0
+    "PCS_REGIME_B_MINUS_TP":           {"type": "float",     "min": 6.0,  "max": 14.0, "step": 0.5},
+    # Stake: it#508=11.0 → busca 9.0–13.0 (foco na zona lucrativa)
+    "STAKE":                           {"type": "float",     "min": 9.0,  "max": 13.0, "step": 0.5},
 }
 
 FROZEN_PARAMS = set()  # todos os params são livres
@@ -365,17 +367,22 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     # 3. Penalidade Catástrofe (dias com grandes perdas)
     bust_pen = sum(20.0 for d in days if d["pnl"] < -20.0)
 
-    # 4. Score Base (Super-Frankenstein)
-    # Valoriza lucro e consistência, pune volatilidade, rebaixamentos e dias vermelhos
+    # 4. Score Base — normalizado por dias ativos para funcionar em qualquer período (1 mês ou 5 meses)
+    # n_pos e n_neg são normalizados: divide pelo número de dias ativos para manter escala
+    norm = n_act if n_act > 0 else 1
+    consist_bonus = (n_pos / norm)  # 0.0–1.0 — fracção de dias positivos
+    neg_rate      = (n_neg / norm)  # 0.0–1.0 — fracção de dias negativos
+
     score = (
-        avg_day   * 12.0    # Lucro médio/dia — peso aumentado de 10 para 12
-        + n_pos   * 4.0     # Cada dia positivo = +4 pts (aumentado de 3)
-        + consist * 0.6     # % Consistência (aumentado de 0.5)
-        - n_neg   * 10.0    # Penalidade por dia negativo (aumentado de 8)
-        - std_dev * 3.0     # Penalidade por volatilidade diária
-        - dd_penalty        # Penalidade por rebaixamento / pior dia
-        - bust_pen          # Penalidade catástrofe
+        avg_day        * 12.0    # Lucro médio/dia — independente de período
+        + consist_bonus * 600.0  # Bônus de consistência normalizado (substitui n_pos * 4)
+        + consist       * 0.6    # % Consistência (reforço)
+        - neg_rate      * 1500.0 # Penalidade por dias negativos normalizada (substitui n_neg * 10)
+        - std_dev       * 3.0    # Penalidade por volatilidade diária
+        - dd_penalty             # Penalidade por rebaixamento / pior dia
+        - bust_pen               # Penalidade catástrofe
     )
+
 
     return {
         "avg_daily_profit": round(avg_day, 4),
@@ -775,7 +782,7 @@ def main():
                     m["total_pnl"] >= 0
                     and avg_d > 0
                     and avg_d <= 50.0      # teto de plausibilidade: max ~$50/dia com $50 banca
-                    and active >= 20       # pelo menos 20 dias com operações
+                    and active >= 100      # 5 meses: pelo menos 100 dias com operações (de ~151)
                 )
 
                 if pnl_ok:
