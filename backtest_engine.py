@@ -685,18 +685,49 @@ def _collect_day_outcomes(
             continue
         sample_indices.append(w)
 
-    # ─── SISTEMA DE CACHE DE INDICADORES (Super Otimização) ─────────────────────────
-    cache_dir = data_dir / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / f"indicators_BOOM1000_{day.isoformat()}.csv.gz"
+    # ─── SISTEMA DE CACHE DE INDICADORES (Super Otimização com RAM Disk /dev/shm) ───
+    shm_dir = Path("/dev/shm/pegasus_cache")
+    disk_dir = data_dir / "cache"
+    disk_dir.mkdir(parents=True, exist_ok=True)
     
+    # Tenta usar o RAM disk (/dev/shm) se ele for gravável
+    cache_dir = shm_dir
+    if not cache_dir.exists():
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            cache_dir = disk_dir
+
+    filename = f"indicators_BOOM1000_{day.isoformat()}.csv.gz"
+    cache_path = cache_dir / filename
+    disk_path = disk_dir / filename
+    
+    # Se o arquivo estiver no disco mas ausente do RAM disk, copia para RAM disk para acesso rápido subsequente
+    if cache_dir != disk_dir and not cache_path.exists() and disk_path.exists():
+        try:
+            import shutil
+            shutil.copy2(disk_path, cache_path)
+        except Exception as e:
+            print(f"  [SHM] Erro ao copiar {filename} para /dev/shm: {e}", flush=True)
+            # Fallback temporário para o disco
+            cache_path = disk_path
+
     day_indicators_df = None
     if cache_path.exists():
         try:
             day_indicators_df = pd.read_csv(cache_path, compression="gzip")
         except Exception as e:
             print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
-            
+            # Se deu erro e estamos no SHM, tenta no disco como backup
+            if cache_path != disk_path and disk_path.exists():
+                try:
+                    day_indicators_df = pd.read_csv(disk_path, compression="gzip")
+                    # Tenta corrigir a cópia no SHM
+                    import shutil
+                    shutil.copy2(disk_path, cache_path)
+                except Exception:
+                    pass
+
     if day_indicators_df is None:
         # Se não houver cache, calcula usando o superconjunto de indices de amostragem
         # (usando o limiar máximo de 2.5e-6 para cobrir qualquer candidato da busca)
@@ -726,8 +757,16 @@ def _collect_day_outcomes(
             else:
                 day_indicators_df["p_loss"] = None
                 
-            # Salva no cache para uso futuro
+            # Salva no cache ativo (/dev/shm ou disco)
             day_indicators_df.to_csv(cache_path, index=False, compression="gzip")
+            
+            # Se salvou no RAM disk, persiste também no disco permanente
+            if cache_dir != disk_dir:
+                try:
+                    import shutil
+                    shutil.copy2(cache_path, disk_path)
+                except Exception as e:
+                    print(f"  [SHM] Erro ao persistir {filename} no disco: {e}", flush=True)
         except Exception as e:
             print(f"  Erro ao pre-calcular indicadores para o dia {day}: {e}", flush=True)
             return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0

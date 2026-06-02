@@ -42,8 +42,8 @@ ENV_PATH      = Path(".env")
 STATE_PATH    = Path("logs/optimizer_state.json")
 LOG_PATH      = Path("logs/optimizer_v2.log")
 
-# Paralelismo: usa 6 dos 8 cores (deixa 2 pro dashboard+bot)
-N_WORKERS = 6
+# Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
+N_WORKERS = 8
 
 # ── Espaço de busca (hill-climbing gaussiano + perturbação discreta) ─────────
 PARAM_SPACE = {
@@ -208,6 +208,7 @@ def _run_one(args) -> dict | None:
         tmp.unlink()
 
     cmd = [
+        "nice", "-n", "19",
         ".venv/bin/python", "backtest_engine.py",
         START_DATE, END_DATE, START_BALANCE, str(tmp),
     ]
