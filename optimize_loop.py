@@ -143,6 +143,7 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     """
     Métricas REAIS de lucro diário com banca de $50 fixo.
     Retorna dict com avg_daily_profit, positive_days, score, etc.
+    Inclui penalização de volatilidade (Standard Deviation) e pior dia (Drawdown).
     """
     days = []
     for r in results:
@@ -164,14 +165,35 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     best_day  = max((d["pnl"] for d in days), default=0.0)
     worst_day = min((d["pnl"] for d in days), default=0.0)
 
-    # Score: maximiza lucro diário e dias positivos, penaliza dias ruins
-    bust_pen = sum(15.0 for d in days if d["pnl"] < -25)
+    # 1. Volatilidade Diária (Standard Deviation) de dias ativos
+    active_pnls = [d["pnl"] for d in active]
+    if len(active_pnls) > 1:
+        mean_pnl = sum(active_pnls) / len(active_pnls)
+        variance = sum((x - mean_pnl) ** 2 for x in active_pnls) / len(active_pnls)
+        std_dev = variance ** 0.5
+    else:
+        std_dev = 0.0
+
+    # 2. Penalização de Drawdown / Pior Dia
+    dd_penalty = 0.0
+    if worst_day < -15.0:
+        dd_penalty = abs(worst_day) * 4.0   # Penalização severa para perdas críticas (>30% da banca)
+    elif worst_day < -5.0:
+        dd_penalty = abs(worst_day) * 1.5   # Penalização moderada
+
+    # 3. Penalidade Catástrofe (dias com grandes perdas)
+    bust_pen = sum(20.0 for d in days if d["pnl"] < -20.0)
+
+    # 4. Score Base (Super-Frankenstein)
+    # Valoriza lucro e consistência, pune volatilidade, rebaixamentos e dias vermelhos
     score = (
-        avg_day   * 10.0    # lucro médio/dia — mais importante
-        + n_pos   * 3.0     # cada dia positivo = +3 pts
-        + consist * 0.5     # % consistência
-        - n_neg   * 8.0     # penalidade por dia negativo
-        - bust_pen          # penalidade catástrofe
+        avg_day   * 12.0    # Lucro médio/dia — peso aumentado de 10 para 12
+        + n_pos   * 4.0     # Cada dia positivo = +4 pts (aumentado de 3)
+        + consist * 0.6     # % Consistência (aumentado de 0.5)
+        - n_neg   * 10.0    # Penalidade por dia negativo (aumentado de 8)
+        - std_dev * 3.0     # Penalidade por volatilidade diária
+        - dd_penalty        # Penalidade por rebaixamento / pior dia
+        - bust_pen          # Penalidade catástrofe
     )
 
     return {
@@ -237,6 +259,17 @@ def _run_one(args) -> dict | None:
         m["live_positive_days"] = live["positive_days"]
         m["live_total_pnl"]   = live["total_pnl"]
         m["_env"] = env_vars   # salva os params junto
+
+        # Ponderação do Score Geral com o Live Bot (Multi-Métrica)
+        # Evita overfitting: se a estratégia do bot real for perdedora com esses params,
+        # penaliza pesadamente o score. Se for lucrativa, recompensa!
+        live_avg = live["avg_daily_profit"]
+        if live_avg < 0.0:
+            m["score"] -= abs(live_avg) * 8.0
+        else:
+            m["score"] += live_avg * 3.0
+
+        m["score"] = round(m["score"], 4)
         return m
     except Exception:
         return None
