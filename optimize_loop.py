@@ -655,6 +655,7 @@ def main():
             for k in PARAM_SPACE:
                 if k in db_params:
                     best_env[k] = str(db_params[k])
+            best_env["OPTIMIZER_CHAMPION_ITERATION"] = str(best_data["iteration"])
         print(f"   🏆 Recorde anterior recuperado do DB: score={best_score:.2f} avg_day=${best_avg:.2f}/dia (it#{best_data['iteration']})", flush=True)
     else:
         best_score = baseline_metrics["score"]
@@ -717,6 +718,27 @@ def main():
 
             print(f"🔄 Iterações {iteration}–{iteration + N_WORKERS - 1} "
                   f"({N_WORKERS} em paralelo)...", flush=True)
+
+            # Atualiza o arquivo de estado indicando que estamos ativamente avaliando estes candidatos
+            try:
+                with _state_lock:
+                    state_data = {}
+                    if STATE_PATH.exists():
+                        try:
+                            state_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+                    state_data["running"] = True
+                    state_data["current_iteration"] = iteration
+                    state_data["evaluating_candidates"] = [
+                        {k: c[0].get(k) for k in PARAM_SPACE if k in c[0]}
+                        for c in candidates
+                    ]
+                    tmp = STATE_PATH.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(state_data, indent=2, ensure_ascii=False), encoding="utf-8")
+                    tmp.replace(STATE_PATH)
+            except Exception as e:
+                print(f"[WARN] pre-write_state: {e}", flush=True)
 
             t0 = time.time()
             futures = {pool.submit(_run_one, c): i for i, c in enumerate(candidates)}
@@ -790,6 +812,7 @@ def main():
                     best_pos   = m["positive_days"]
                     best_avg   = m["avg_daily_profit"]
                     best_env   = m["_env"].copy()
+                    best_env["OPTIMIZER_CHAMPION_ITERATION"] = str(iteration + idx)
                     best_data  = {**m, "iteration": iteration + idx, "reason": reason}
 
                     print(f"\n{'★'*70}", flush=True)

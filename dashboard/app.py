@@ -218,6 +218,7 @@ def _last_calm_accu_signal() -> dict:
         "cusum": round(cusum, 2) if cusum is not None else None,
         "stake": stake,
         "mode": mode,
+        "ensemble_min_prob": float(_get_env("ENSEMBLE_MIN_PROB") or "0.30"),
         # confidence = 1 - P(LOSS), scaled 0-100 for the bar
         "confidence": round((1.0 - p_loss) * 100, 1) if p_loss is not None else None,
     }
@@ -518,6 +519,9 @@ def api_status(response: Response):
         "account_mode": _get_env("ACCOUNT_MODE") or "demo",
         "calm_accu_threshold": _get_env("CALM_ACCU_THRESHOLD") or "7.3e-7",
         "calm_accu_lookback": _get_env("CALM_ACCU_LOOKBACK") or "10",
+        "ensemble_min_prob": float(_get_env("ENSEMBLE_MIN_PROB") or "0.30"),
+        "accumulator_min_hurst_exponent": float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.45"),
+        "calm_accu_max_entry_cusum": float(_get_env("CALM_ACCU_MAX_ENTRY_CUSUM") or "5.0"),
     }
 
 
@@ -928,6 +932,14 @@ def _compute_regime(ind: dict) -> dict:
     ):
         is_medium_calm = True
 
+    # Rótulos de regime dinâmicos com base nos parâmetros atuais do .env
+    regime_tp = float(_get_env("ACCUMULATOR_TAKE_PROFIT_PERCENT") or "30.0")
+    regime_hold = int(_get_env("ACCUMULATOR_MAX_HOLD_TICKS") or "9")
+    regime_b_plus_tp = float(_get_env("PCS_REGIME_B_PLUS_TP") or "9.0")
+    regime_b_plus_hold = int(_get_env("PCS_REGIME_B_PLUS_HOLD") or "3")
+    regime_b_minus_tp = float(_get_env("PCS_REGIME_B_MINUS_TP") or "3.0")
+    regime_b_minus_hold = int(_get_env("PCS_REGIME_B_MINUS_HOLD") or "1")
+
     if blocked_by:
         status = "wait"
         regime_label = "Bloqueado / Aguardando Calmaria"
@@ -935,13 +947,13 @@ def _compute_regime(ind: dict) -> dict:
     else:
         status = "ok"
         if is_absolute_calm:
-            regime_label = "🔥 Regime A: Sniper Pro (30% TP, 9 Ticks, Soros ATIVO)"
+            regime_label = f"🔥 Regime A: Sniper Pro ({regime_tp:.1f}% TP, {regime_hold} Ticks, Soros ATIVO)"
             regime_color = "#10b981"  # emerald green
         elif is_medium_calm:
-            regime_label = "🌾 Regime B+: Medium Harvester (9% TP, 3 Ticks, Soros OFF)"
+            regime_label = f"🌾 Regime B+: Medium Harvester ({regime_b_plus_tp:.1f}% TP, {regime_b_plus_hold} Ticks, Soros OFF)"
             regime_color = "#3b82f6"  # bright blue
         else:
-            regime_label = "🛡️ Regime B-: Defensive (3% TP, 1 Tick, Soros OFF)"
+            regime_label = f"🛡️ Regime B-: Defensive ({regime_b_minus_tp:.1f}% TP, {regime_b_minus_hold} Ticks, Soros OFF)"
             regime_color = "#eab308"  # amber/yellow
 
     return {
@@ -1230,6 +1242,10 @@ def optimizer_status(response: Response):
     if response:
         response.headers["Cache-Control"] = "no-store"
 
+    # We can read the current deployed iteration from the environment!
+    deployed_it = _get_env("OPTIMIZER_CHAMPION_ITERATION")
+    deployed_iteration_val = int(deployed_it) if deployed_it else None
+
     # Tenta ler o arquivo de estado direto (gerado pelo optimizer)
     state_file = BASE / "logs" / "optimizer_state.json"
     if state_file.exists():
@@ -1241,6 +1257,7 @@ def optimizer_status(response: Response):
             data["running"] = _optimizer_running()
             data["last_update_ago_s"] = int(_t.time() - mtime)
             data["ultra_stress"] = _read_stress_config()
+            data["deployed_iteration"] = deployed_iteration_val
             return data
         except Exception as exc:
             pass
@@ -1254,6 +1271,7 @@ def optimizer_status(response: Response):
         "current_iteration": 0,
         "last_update_ago_s": 9999,
         "ultra_stress": _read_stress_config(),
+        "deployed_iteration": deployed_iteration_val,
     }
 
 

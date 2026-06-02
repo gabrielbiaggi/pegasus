@@ -2579,16 +2579,30 @@
                     <!-- ═══ SEÇÃO 2: META DO DIA ═══ -->
                     <div id="opt-meta-section" style="margin-bottom:16px;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius)">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                            <div style="font-size:.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700">🎯 Meta Realista: Lucro de $30.00/dia (60%-80% da Banca)</div>
-                            <div id="opt-meta-pct" style="font-size:.85rem;font-weight:700;color:var(--yellow)">0% do caminho</div>
+                            <div id="opt-meta-title" style="font-size:.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700">🎯 Meta Realista: Lucro de $50.00/dia (100% da Banca)</div>
+                            <div style="display:flex;align-items:center;gap:10px">
+                                <span id="opt-deploy-badge" style="display:none"></span>
+                                <div id="opt-meta-pct" style="font-size:.85rem;font-weight:700;color:var(--yellow)">0% do caminho</div>
+                            </div>
                         </div>
                         <div style="background:var(--bg2);border-radius:100px;height:10px;overflow:hidden">
                             <div id="opt-meta-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#10b981);border-radius:100px;transition:width .6s ease"></div>
                         </div>
                         <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:.68rem;color:var(--muted)">
-                            <span>Baseline: $0.42/dia (27/31)</span>
+                            <span id="opt-meta-baseline">Baseline: —</span>
                             <span id="opt-meta-current">Melhor atual: —</span>
-                            <span>Meta: $30/dia (31/31)</span>
+                            <span>Meta: $50/dia (31/31)</span>
+                        </div>
+                    </div>
+
+                    <!-- ═══ SEÇÃO: WORKERS EM TEMPO REAL ═══ -->
+                    <div id="opt-workers-section" style="margin-bottom:16px;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);display:none">
+                        <div style="font-size:.72rem;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+                            <span>🔬 Buscando Gaps no Mercado (Avaliação de Workers)</span>
+                            <span style="font-size:.65rem;color:var(--green);animation:pulse 1.5s infinite">● 8 Cores Dedicados em Paralelo</span>
+                        </div>
+                        <div id="opt-workers-container" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">
+                            <!-- Workers carregados via JS -->
                         </div>
                     </div>
 
@@ -3762,35 +3776,32 @@
                         lv = si[lk];
                     if (lv != null && lv === lv) {
                         le.textContent = parseFloat(lv).toFixed(3);
+                        var thresholds = window.pegasusThresholds || {
+                            ensemble_min_prob: 0.30,
+                            accumulator_min_hurst_exponent: 0.45,
+                            calm_accu_max_entry_cusum: 5.0
+                        };
                         if (lk.includes("zscore"))
                             le.style.color =
-                                Math.abs(lv) > 2
+                                Math.abs(lv) > 1.5
                                     ? "var(--red)"
-                                    : Math.abs(lv) > 1
+                                    : Math.abs(lv) > 1.0
                                       ? "var(--yellow)"
                                       : "var(--green)";
-                        else if (lk === "hurst_exponent")
-                            le.style.color =
-                                lv > 0.6
-                                    ? "var(--green)"
-                                    : lv < 0.4
-                                      ? "var(--red)"
-                                      : "var(--yellow)";
-                        else if (lk === "bayesian_prob_up")
+                        else if (lk === "hurst_exponent") {
+                            var minH = thresholds.accumulator_min_hurst_exponent;
+                            le.style.color = lv >= minH ? "var(--green)" : "var(--red)";
+                        } else if (lk === "bayesian_prob_up")
                             le.style.color =
                                 lv > 0.65
                                     ? "var(--green)"
                                     : lv < 0.35
                                       ? "var(--red)"
                                       : "var(--yellow)";
-                        else if (lk === "cusum_score")
-                            le.style.color =
-                                lv > 3.5
-                                    ? "var(--red)"
-                                    : lv > 2
-                                      ? "var(--yellow)"
-                                      : "var(--green)";
-                        else le.style.color = "var(--fg)";
+                        else if (lk === "cusum_score") {
+                            var maxC = thresholds.calm_accu_max_entry_cusum;
+                            le.style.color = lv > maxC ? "var(--red)" : (lv > maxC * 0.7 ? "var(--yellow)" : "var(--green)");
+                        } else le.style.color = "var(--fg)";
                     } else {
                         le.textContent = "\u2014";
                         le.style.color = "var(--muted)";
@@ -3821,6 +3832,11 @@
                         return r.json();
                     });
                     _connFailed = 0;
+                    window.pegasusThresholds = {
+                        ensemble_min_prob: d.ensemble_min_prob,
+                        accumulator_min_hurst_exponent: d.accumulator_min_hurst_exponent,
+                        calm_accu_max_entry_cusum: d.calm_accu_max_entry_cusum
+                    };
                     $("conn-err").style.display = "none";
                     _botRunning = !!d.running;
                     applyButtonStates(_botRunning);
@@ -4123,22 +4139,38 @@
                             "/" +
                             scoreMax +
                             (sig.mode ? " | " + sig.mode : "");
-                        var conf =
-                            sig.confidence != null
-                                ? sig.confidence
-                                : 100 - (sig.p_loss || 0) * 100;
-                        sc.textContent =
-                            "P(LOSS)=" +
-                            (sig.p_loss != null
-                                ? (sig.p_loss * 100).toFixed(2) + "%"
-                                : "\u2014");
-                        cb.style.width = Math.min(conf, 100) + "%";
-                        cb.style.background =
-                            conf >= 97
-                                ? "var(--green)"
-                                : conf >= 90
-                                  ? "var(--yellow)"
-                                  : "var(--red)";
+                        var pLoss = sig.p_loss != null ? sig.p_loss : null;
+                        var limitProb = (d && d.ensemble_min_prob != null) ? d.ensemble_min_prob : (sig.ensemble_min_prob != null ? sig.ensemble_min_prob : 0.30);
+                        
+                        if (pLoss != null) {
+                            var pLossPctVal = pLoss * 100;
+                            var limitPctVal = limitProb * 100;
+                            sc.textContent = "P(LOSS)=" + pLossPctVal.toFixed(2) + "% (Limite: " + limitPctVal.toFixed(1) + "%)";
+                            
+                            // Fator de segurança: quanto menor P(LOSS), mais cheia a barra de segurança!
+                            var safety = 100 - (pLoss / limitProb) * 100;
+                            safety = Math.max(0, Math.min(100, safety));
+                            cb.style.width = safety.toFixed(1) + "%";
+                            
+                            if (pLoss < limitProb) {
+                                if (pLoss > limitProb - 0.05) {
+                                    cb.style.background = "var(--yellow)";
+                                    sc.style.color = "var(--yellow)";
+                                } else {
+                                    cb.style.background = "var(--green)";
+                                    sc.style.color = "var(--green)";
+                                }
+                            } else {
+                                cb.style.background = "var(--red)";
+                                sc.style.color = "var(--red)";
+                                sc.textContent += " [BLOQUEADO]";
+                            }
+                        } else {
+                            sc.textContent = "P(LOSS)=\u2014";
+                            cb.style.width = "0%";
+                            cb.style.background = "var(--muted)";
+                            sc.style.color = "var(--muted)";
+                        }
                         if (se)
                             se.textContent =
                                 (sig.hurst != null ? "H=" + sig.hurst : "") +
@@ -5240,6 +5272,12 @@
                             bDaily.style.color = _baselineAvgDay >= 0 ? "var(--green)" : "var(--red)";
                         }
                         if (bPos) bPos.textContent = "dias positivos: " + (bl.positive_days != null ? bl.positive_days : "—") + " | consist: " + (bl.consistency_pct != null ? bl.consistency_pct.toFixed(0) + "%" : "—");
+                        
+                        // Atualiza a meta baseline de forma dinâmica
+                        var bBase = document.getElementById("opt-meta-baseline");
+                        if (bBase) {
+                            bBase.textContent = "Baseline: $" + _baselineAvgDay.toFixed(2) + "/dia (" + (bl.positive_days != null ? bl.positive_days : "—") + "/" + (bl.total_days != null ? bl.total_days : "31") + ")";
+                        }
                     }
 
                     // ── Histórico de iterações do Optimizer ───────────────────────
@@ -5321,7 +5359,7 @@
                         var metaBar = document.getElementById("opt-meta-bar");
                         var metaPct = document.getElementById("opt-meta-pct");
                         var metaCur = document.getElementById("opt-meta-current");
-                        var META_TARGET = 30.0;
+                        var META_TARGET = 50.0;
                         var pct = Math.min(100, Math.max(0, (bestAvgDay / META_TARGET) * 100));
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";
@@ -5436,6 +5474,58 @@
                         }).join("");
                     } else if (tbody && iters_all.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer calculando baseline...</td></tr>';
+                    }
+
+                    // ── Badge de Deploy Sincronizado no Modal ──
+                    var depBadge = document.getElementById("opt-deploy-badge");
+                    if (depBadge) {
+                        var champIt = (best && best.iteration) ? best.iteration : (highestValidIt ? highestValidIt.iteration : null);
+                        var depIt = d.deployed_iteration;
+                        if (champIt != null && depIt != null) {
+                            depBadge.style.display = "inline-flex";
+                            if (depIt === champIt) {
+                                depBadge.style.cssText = "background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3);padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;box-shadow:0 0 8px rgba(16,185,129,.2);animation:pulse 2s infinite";
+                                depBadge.innerHTML = "⚡ Campeão Ativo (it#" + depIt + ")";
+                            } else {
+                                depBadge.style.cssText = "background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3);padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:700;display:inline-flex;align-items:center;gap:4px";
+                                depBadge.innerHTML = "🔄 Sincronizando it#" + champIt + "...";
+                            }
+                        } else {
+                            depBadge.style.display = "none";
+                        }
+                    }
+
+                    // ── Ticker de Workers Ativos em Tempo Real ──
+                    var workersSection = document.getElementById("opt-workers-section");
+                    var workersContainer = document.getElementById("opt-workers-container");
+                    if (workersSection && workersContainer) {
+                        var candidates = d.evaluating_candidates || [];
+                        if (d.running && candidates.length > 0) {
+                            workersSection.style.display = "block";
+                            workersContainer.innerHTML = candidates.map(function(c, idx) {
+                                var stk = c.STAKE || "—";
+                                var score = c.CALM_ACCU_MIN_SCORE || "—";
+                                var pLoss = c.ENSEMBLE_MIN_PROB != null ? (c.ENSEMBLE_MIN_PROB * 100).toFixed(1) + "%" : "—";
+                                var tpBPlus = c.PCS_REGIME_B_PLUS_TP != null ? parseFloat(c.PCS_REGIME_B_PLUS_TP).toFixed(0) + "%" : "—";
+                                var tpBMinus = c.PCS_REGIME_B_MINUS_TP != null ? parseFloat(c.PCS_REGIME_B_MINUS_TP).toFixed(1) + "%" : "—";
+                                var hurst = c.ACCUMULATOR_MIN_HURST_EXPONENT || "—";
+                                var cusum = c.CALM_ACCU_MAX_ENTRY_CUSUM || "—";
+                                
+                                return '<div style="background:var(--bg2);border:1px solid rgba(96,165,250,.15);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;box-shadow:var(--shadow-premium-light)">'
+                                    + '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.05);padding-bottom:3px;margin-bottom:4px">'
+                                    + '<strong style="color:var(--cyan)">Worker #' + idx + '</strong>'
+                                    + '<span style="color:var(--green);font-size:.6rem">● Simulando...</span>'
+                                    + '</div>'
+                                    + '<div style="color:var(--muted)">'
+                                    + 'Stake: <span style="color:var(--text);font-weight:700">$' + stk + '</span> | CUSUM: <span style="color:var(--text)">' + cusum + '</span><br>'
+                                    + 'Hurst: <span style="color:var(--text)">' + hurst + '</span> | P(LOSS) IA: <span style="color:var(--yellow)">' + pLoss + '</span><br>'
+                                    + 'TP B+: <span style="color:var(--green)">' + tpBPlus + '</span> | TP B-: <span style="color:var(--green)">' + tpBMinus + '</span>'
+                                    + '</div>'
+                                    + '</div>';
+                            }).join("");
+                        } else {
+                            workersSection.style.display = "none";
+                        }
                     }
 
                 } catch(e) { console.warn("pollOptimizerStatus err:", e); }
