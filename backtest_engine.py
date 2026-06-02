@@ -234,12 +234,17 @@ def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
 def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> bool:
     """
     Garante que ticks do dia existem.
-    1. Checa se existem ticks no PostgreSQL (shadow_ticks / shadow_ticks_accumulator)
-    2. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
+    1. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
+    2. Checa se existem ticks no PostgreSQL (shadow_ticks / shadow_ticks_accumulator)
     3. Checa se max.csv cobre o dia (cache do range de epochs)
     4. Tenta baixar da Deriv se TOKEN disponível
     Retorna True se dados estão disponíveis.
     """
+    # BOOM1000 opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
+    daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
+    if daily.exists() and daily.stat().st_size > 5_000:
+        return True
+
     pg_dsn = os.getenv("PG_DSN")
     if pg_dsn:
         try:
@@ -260,11 +265,6 @@ def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> 
                 return True
         except Exception:
             pass
-
-    # BOOM1000 opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
-    daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
-    if daily.exists() and daily.stat().st_size > 5_000:
-        return True
 
     # Checa cobertura do max.csv (leitura única, depois usa cache de datas)
     csv_range = _get_max_csv_range(data_dir)
@@ -956,9 +956,9 @@ def _collect_day_outcomes(
         if day_indicators_df is not None:
             _indicators_df_cache[day] = day_indicators_df
 
-    # Convert to list of dicts for lightning fast O(1) retrieval
+    # Convert to dictionary of records for target indices only, to avoid slow to_dict('records')
     if day in _indicators_list_cache:
-        indicators_list = _indicators_list_cache[day]
+        indicators_map = _indicators_list_cache[day]
     else:
         # Pre-calcula a mediana rolante de 100 ticks da derivative_energy para evitar calcular no loop
         if "deriv_energy_median_100" not in day_indicators_df.columns:
@@ -966,15 +966,25 @@ def _collect_day_outcomes(
                 day_indicators_df["deriv_energy_median_100"] = day_indicators_df["derivative_energy"].rolling(100).median()
             else:
                 day_indicators_df["deriv_energy_median_100"] = 1.0
-        indicators_list = day_indicators_df.to_dict('records')
+                
+        # Target indices only (aligned with SAMPLE_EVERY)
+        target_indices = [
+            w for w in range(TICK_COUNT, len(day_indicators_df))
+            if (w - TICK_COUNT) % SAMPLE_EVERY == 0
+        ]
         
-        # Precompute score and hard blocks
-        for r in indicators_list:
+        # Slice DataFrame and convert only target rows to dict records
+        sub_df = day_indicators_df.iloc[target_indices].copy()
+        sub_records = sub_df.to_dict('records')
+        
+        indicators_map = {}
+        for idx, r in zip(target_indices, sub_records):
             sc, hb = _precalculate_metrics_for_row(r, accu_cfg)
             r["precalculated_score"] = sc
             r["hard_blocked"] = hb
+            indicators_map[idx] = r
             
-        _indicators_list_cache[day] = indicators_list
+        _indicators_list_cache[day] = indicators_map
 
     # Pre-calcula win_ticks para cada TP unico
     tp_to_wt: dict[float, int] = {}
@@ -1027,11 +1037,14 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
 
-        if i >= len(indicators_list):
+        if i >= len(day_indicators_df):
             i += SAMPLE_EVERY
             continue
             
-        row = indicators_list[i]
+        row = indicators_map.get(i)
+        if row is None:
+            i += SAMPLE_EVERY
+            continue
         
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
         if row.get("hard_blocked", False):
