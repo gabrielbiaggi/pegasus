@@ -353,44 +353,69 @@ def _load_day_df_from_pg(day: _date) -> pd.DataFrame | None:
 
 def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     """
-    Carrega ticks de um dia. Prefere carregar do PostgreSQL; senão cai em arquivo diário e max.csv.
-    Retorna None se não houver dados suficientes.
+    Carrega ticks de um dia. Prefere carregar de arquivo diário local ou max.csv;
+    senão cai no PostgreSQL e salva localmente como cache diário para evitar queries futuras.
     """
+    daily_path = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
+    
+    # 1. Primeiro verifica se existe o CSV diário local (é MUITO mais rápido que PG)
+    if daily_path.exists() and daily_path.stat().st_size > 1000:
+        try:
+            df = pd.read_csv(daily_path)
+            if not df.empty and len(df) >= TICK_COUNT + 10:
+                df["epoch"] = pd.to_numeric(df["epoch"], errors="coerce")
+                df["quote"] = pd.to_numeric(df["quote"], errors="coerce")
+                df = df.dropna(subset=["epoch", "quote"]).sort_values("epoch").reset_index(drop=True)
+                df["dt"] = pd.to_datetime(df["epoch"], unit="s", utc=True)
+                df["hour"] = df["dt"].dt.hour
+                q = df["quote"].values
+                rets = np.zeros(len(q))
+                rets[1:] = np.abs(np.diff(q) / q[:-1])
+                df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
+                return df
+        except Exception:
+            pass
+
+    # 2. Se não tem CSV local, tenta carregar do PostgreSQL
     df = _load_day_df_from_pg(day)
     if df is not None:
         print(f"  [PG] {len(df)} ticks carregados", end=" ", flush=True)
+        # ⚠️ CACHE INCRÍVEL: Salva o CSV localmente para que os próximos workers não batam no PG!
+        try:
+            df.to_csv(daily_path, index=False)
+            print(f"(cached localmente)", end=" ", flush=True)
+        except Exception as e:
+            print(f"(erro ao salvar cache: {e})", end=" ", flush=True)
         return df
 
-    daily_path = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
-    if daily_path.exists() and daily_path.stat().st_size > 1000:
-        df = pd.read_csv(daily_path)
-    else:
-        max_path = data_dir / "ticks_BOOM1000_max.csv"
-        if not max_path.exists():
-            return None
+    # 3. Se PG falhar, tenta ler do max.csv
+    max_path = data_dir / "ticks_BOOM1000_max.csv"
+    if not max_path.exists():
+        return None
+    try:
         full = pd.read_csv(max_path)
         full["_date"] = pd.to_datetime(full["epoch"], unit="s", utc=True).dt.date
         df = full[full["_date"] == day].drop(columns=["_date"])
+        if not df.empty and len(df) >= TICK_COUNT + 10:
+            df["epoch"] = pd.to_numeric(df["epoch"], errors="coerce")
+            df["quote"] = pd.to_numeric(df["quote"], errors="coerce")
+            df = df.dropna(subset=["epoch", "quote"]).sort_values("epoch").reset_index(drop=True)
+            df["dt"] = pd.to_datetime(df["epoch"], unit="s", utc=True)
+            df["hour"] = df["dt"].dt.hour
+            q = df["quote"].values
+            rets = np.zeros(len(q))
+            rets[1:] = np.abs(np.diff(q) / q[:-1])
+            df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
+            # Também salva cache do max.csv no diário para acelerar leituras futuras
+            try:
+                df.to_csv(daily_path, index=False)
+            except Exception:
+                pass
+            return df
+    except Exception:
+        pass
 
-    if df.empty or len(df) < TICK_COUNT + 10:
-        return None
-
-    df["epoch"] = pd.to_numeric(df["epoch"], errors="coerce")
-    df["quote"] = pd.to_numeric(df["quote"], errors="coerce")
-    df = (
-        df.dropna(subset=["epoch", "quote"]).sort_values("epoch").reset_index(drop=True)
-    )
-
-    # Colunas auxiliares
-    df["dt"] = pd.to_datetime(df["epoch"], unit="s", utc=True)
-    df["hour"] = df["dt"].dt.hour
-    q = df["quote"].values
-    rets = np.zeros(len(q))
-    rets[1:] = np.abs(np.diff(q) / q[:-1])
-    # avg_ret: usado pelo filtro calm (nao mais BOOM_THRESH por tick)
-    df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
-
-    return df
+    return None
 
 
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
@@ -414,6 +439,13 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 def _generate_strategy_configs() -> list[dict]:
+    # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
+    if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
+        return [
+            {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+            {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
+        ]
+
     configs = []
     
     # 1. Mantém os 9 Sniperes base como referência crucial
@@ -1064,8 +1096,9 @@ def main() -> None:
     total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
     balances = {s: start_balance for s in STRATEGY_NAMES}
 
-    for day in days_with_data:
+    for day_idx, day in enumerate(days_with_data):
         state["current_day"] = day.isoformat()
+        state["current_day_index"] = day_idx + 1
         state["elapsed_s"] = round(time.time() - t_global, 1)
         _write_state(out_path, state)
 

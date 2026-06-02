@@ -1258,6 +1258,30 @@ def optimizer_status(response: Response):
             data["last_update_ago_s"] = int(_t.time() - mtime)
             data["ultra_stress"] = _read_stress_config()
             data["deployed_iteration"] = deployed_iteration_val
+
+            # Enriquecimento com progresso de workers em tempo real
+            evaluating_candidates = data.get("evaluating_candidates", [])
+            for idx, candidate in enumerate(evaluating_candidates):
+                if candidate.get("status") == "Simulando...":
+                    worker_file = BASE / "logs" / f"backtest_worker_w{idx}.json"
+                    if worker_file.exists():
+                        try:
+                            if data["running"]:
+                                worker_data = json.loads(worker_file.read_text(encoding="utf-8"))
+                                curr_idx = worker_data.get("current_day_index", 0)
+                                total_d = worker_data.get("total_days", 0)
+                                elapsed = worker_data.get("elapsed_s", 0)
+                                if curr_idx > 0 and total_d > 0:
+                                    pct = (curr_idx / total_d) * 100
+                                    est_rem = (total_d - curr_idx) * (elapsed / curr_idx)
+                                    candidate["progress_pct"] = round(pct, 1)
+                                    candidate["est_remaining_s"] = round(est_rem, 1)
+                                    candidate["current_day_index"] = curr_idx
+                                    candidate["total_days"] = total_d
+                                    candidate["status"] = f"Simulando... (Dia {curr_idx}/{total_d})"
+                        except Exception:
+                            pass
+
             return data
         except Exception as exc:
             pass

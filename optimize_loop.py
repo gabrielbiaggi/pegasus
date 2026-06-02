@@ -406,6 +406,7 @@ def _run_one(args) -> dict | None:
     my_env = os.environ.copy()
     my_env.update(env_vars)
     my_env["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
+    my_env["PEGASUS_OPTIMIZER_RUN"] = "true"
 
     if tmp.exists():
         tmp.unlink()
@@ -492,9 +493,21 @@ def _run_one(args) -> dict | None:
 _state_lock = threading.Lock()
 
 def write_state(iteration: int, baseline: dict, best: dict | None,
-                history: list, running: bool = True) -> None:
+                history: list, running: bool = True,
+                evaluating_candidates: list | None = None) -> None:
     """Grava estado para o dashboard ler (thread-safe)."""
     try:
+        existing_candidates = None
+        if evaluating_candidates is None:
+            if STATE_PATH.exists():
+                try:
+                    old_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+                    existing_candidates = old_data.get("evaluating_candidates")
+                except Exception:
+                    pass
+        else:
+            existing_candidates = evaluating_candidates
+
         payload = {
             "running":           running,
             "current_iteration": iteration,
@@ -506,6 +519,9 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
             "end_date":          END_DATE,
             "n_workers":         N_WORKERS,
         }
+        if existing_candidates is not None:
+            payload["evaluating_candidates"] = existing_candidates
+
         tmp = STATE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
                        encoding="utf-8")
@@ -720,6 +736,15 @@ def main():
                   f"({N_WORKERS} em paralelo)...", flush=True)
 
             # Atualiza o arquivo de estado indicando que estamos ativamente avaliando estes candidatos
+            local_candidates = [
+                {
+                    **{k: c[0].get(k) for k in PARAM_SPACE if k in c[0]},
+                    "status": "Simulando...",
+                    "result_pnl": None,
+                    "result_days": None,
+                }
+                for c in candidates
+            ]
             try:
                 with _state_lock:
                     state_data = {}
@@ -730,10 +755,7 @@ def main():
                             pass
                     state_data["running"] = True
                     state_data["current_iteration"] = iteration
-                    state_data["evaluating_candidates"] = [
-                        {k: c[0].get(k) for k in PARAM_SPACE if k in c[0]}
-                        for c in candidates
-                    ]
+                    state_data["evaluating_candidates"] = local_candidates
                     tmp = STATE_PATH.with_suffix(".tmp")
                     tmp.write_text(json.dumps(state_data, indent=2, ensure_ascii=False), encoding="utf-8")
                     tmp.replace(STATE_PATH)
@@ -749,9 +771,13 @@ def main():
                 try:
                     m = fut.result()
                     if not m:
+                        local_candidates[idx]["status"] = "Falha"
+                        write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
                         continue
                 except Exception as e:
                     print(f"   [worker {idx}] erro: {e}", flush=True)
+                    local_candidates[idx]["status"] = "Erro"
+                    write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
                     continue
 
                 is_better = False
@@ -769,6 +795,15 @@ def main():
                     and avg_d <= 50.0      # teto de plausibilidade: max ~$50/dia com $50 banca
                     and active >= 20       # pelo menos 20 dias com operações
                 )
+
+                if pnl_ok:
+                    local_candidates[idx]["status"] = f"Finalizado: ${avg_d:.2f}/dia"
+                    local_candidates[idx]["result_pnl"] = round(avg_d, 2)
+                    local_candidates[idx]["result_days"] = f"{m['positive_days']}/{active}"
+                else:
+                    local_candidates[idx]["status"] = f"Inválido (${avg_d:.2f}/dia)"
+                    local_candidates[idx]["result_pnl"] = round(avg_d, 2)
+                    local_candidates[idx]["result_days"] = f"{m['positive_days']}/{active}"
 
                 if not pnl_ok:
                     pass  # resultado inválido ou implausível → descarta
@@ -843,7 +878,7 @@ def main():
                                     print(f"   [ERR] Falha ao inicializar o Bot em Modo Ultra-Estresse: {exc}", flush=True)
 
                 # Grava o estado de forma atômica e em tempo real para o dashboard ver
-                write_state(iteration + idx, baseline_metrics, best_data, history)
+                write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
 
             elapsed = time.time() - t0
             throughput = N_WORKERS / elapsed * 60  # iterações/min
