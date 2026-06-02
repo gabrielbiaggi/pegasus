@@ -86,7 +86,7 @@ def main():
     print("Launching live bot in screen 'pegasus'...")
     subprocess.run([
         "screen", "-dmS", "pegasus", "bash", "-c",
-        "cd /opt/pegasus && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"
+        "cd /opt/pegasus && PEGASUS_LIVE_BOT=true .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"
     ])
     time.sleep(4)
 

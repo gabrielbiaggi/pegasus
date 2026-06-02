@@ -553,7 +553,7 @@ def deploy_winner(env_vars: dict, msg: str, min_pnl: float = 5.0) -> bool:
             # 3. Cria UMA nova session screen
             subprocess.run(
                 ["screen", "-dmS", "pegasus", "bash", "-c",
-                 "cd /opt/pegasus && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"],
+                 "cd /opt/pegasus && PEGASUS_LIVE_BOT=true .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log"],
                 capture_output=True, timeout=15,
             )
             time.sleep(3)

@@ -123,7 +123,7 @@ PYEOF
 
         > logs/trades.csv
         > logs/signals.csv
-        screen -dmS pegasus bash -c 'cd $REMOTE_DIR && .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log'
+        screen -dmS pegasus bash -c 'cd $REMOTE_DIR && PEGASUS_LIVE_BOT=true .venv/bin/python bot.py 2>&1 | tee -a logs/trades.log'
         sleep 4
         if pgrep -f 'python.*bot.py' > /dev/null; then
             echo '  \u2705 Bot reiniciado OK'
