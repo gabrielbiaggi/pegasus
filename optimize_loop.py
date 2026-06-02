@@ -42,6 +42,150 @@ ENV_PATH      = Path(".env")
 STATE_PATH    = Path("logs/optimizer_state.json")
 LOG_PATH      = Path("logs/optimizer_v2.log")
 
+# ── Persistência de Otimização em Banco de Dados SQLite ───────────────────────
+import sqlite3
+
+def _init_opt_db():
+    db_path = Path("logs/results.db")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS optimizer_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            avg_daily REAL,
+            positive_days INTEGER,
+            negative_days INTEGER,
+            consistency_pct REAL,
+            score REAL,
+            pnl REAL,
+            roi REAL,
+            sharpe REAL,
+            sortino REAL,
+            drawdown REAL,
+            elapsed_s REAL,
+            is_best INTEGER,
+            params TEXT NOT NULL
+        )
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"[WARN] _init_opt_db error: {e}", flush=True)
+    finally:
+        conn.close()
+
+def _save_opt_iteration(entry: dict, params: dict) -> None:
+    db_path = Path("logs/results.db")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """INSERT INTO optimizer_history
+               (timestamp, iteration, avg_daily, positive_days, negative_days,
+                consistency_pct, score, pnl, roi, sharpe, sortino, drawdown, elapsed_s, is_best, params)
+               VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry["iteration"],
+                entry["avg_daily"],
+                entry["positive_days"],
+                entry["negative_days"],
+                entry["consistency_pct"],
+                entry["score"],
+                entry["pnl"],
+                entry["roi"],
+                entry["sharpe"],
+                entry["sortino"],
+                entry["drawdown"],
+                entry["elapsed_s"],
+                1 if entry["is_best"] else 0,
+                json.dumps(params)
+            )
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[WARN] _save_opt_iteration error: {e}", flush=True)
+    finally:
+        conn.close()
+
+def _load_opt_history() -> list[dict]:
+    db_path = Path("logs/results.db")
+    if not db_path.exists():
+        return []
+    history = []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            "SELECT * FROM optimizer_history ORDER BY id DESC LIMIT 200"
+        )
+        rows = cursor.fetchall()
+        for r in rows:
+            history.append({
+                "iteration": r["iteration"],
+                "roi": r["roi"],
+                "pnl": r["pnl"],
+                "busted": r["negative_days"],
+                "elapsed_s": r["elapsed_s"],
+                "is_best": bool(r["is_best"]),
+                "avg_daily": r["avg_daily"],
+                "positive_days": r["positive_days"],
+                "negative_days": r["negative_days"],
+                "consistency_pct": r["consistency_pct"],
+                "score": r["score"],
+                "sharpe": r["sharpe"],
+                "sortino": r["sortino"],
+                "drawdown": r["drawdown"],
+                "ts": time.time(),
+            })
+        history.reverse()
+    except Exception as e:
+        print(f"[WARN] _load_opt_history error: {e}", flush=True)
+    finally:
+        conn.close()
+    return history
+
+def _load_best_opt_run() -> tuple[dict, dict] | None:
+    db_path = Path("logs/results.db")
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            "SELECT * FROM optimizer_history WHERE is_best = 1 ORDER BY score DESC LIMIT 1"
+        )
+        r = cursor.fetchone()
+        if r:
+            best_data = {
+                "iteration": r["iteration"],
+                "roi_pct": r["roi"],
+                "total_pnl": r["pnl"],
+                "avg_daily_profit": r["avg_daily"],
+                "positive_days": r["positive_days"],
+                "negative_days": r["negative_days"],
+                "consistency_pct": r["consistency_pct"],
+                "score": r["score"],
+                "sharpe_ratio": r["sharpe"],
+                "sortino_ratio": r["sortino"],
+                "max_drawdown": r["drawdown"],
+                "elapsed_s": r["elapsed_s"],
+                "active_days": r["positive_days"] + r["negative_days"],
+                "reason": "Recuperado do Banco de Dados",
+            }
+            try:
+                params = json.loads(r["params"])
+            except Exception:
+                params = {}
+            return best_data, params
+    except Exception as e:
+        print(f"[WARN] _load_best_opt_run error: {e}", flush=True)
+    finally:
+        conn.close()
+    return None
+
 # ── Modo Ultra-Estresse ────────────────────────────────────────────────────────
 def _read_stress_config() -> bool:
     path = Path("logs/stress_config.json")
@@ -469,15 +613,31 @@ def main():
     print(f"      Dias positivos:  {baseline_metrics['positive_days']}/{baseline_metrics['active_days']} ativos ({baseline_metrics['consistency_pct']:.0f}%)", flush=True)
     print(f"      Melhor dia: ${baseline_metrics['best_day_pnl']:.2f} | Pior dia: ${baseline_metrics['worst_day_pnl']:.2f}", flush=True)
 
-    best_score = baseline_metrics["score"]
-    best_pos   = baseline_metrics["positive_days"]
-    best_avg   = baseline_metrics["avg_daily_profit"]
-    best_data  = {**baseline_metrics, "iteration": 0}
-
+    _init_opt_db()
+    history = _load_opt_history()
     iteration = 1
-    history: list[dict] = []
+    if history:
+        iteration = max(h["iteration"] for h in history) + 1
+        print(f"   📊 Carregado {len(history)} iterações do histórico do banco de dados (reiniciando no it#{iteration})", flush=True)
 
-    write_state(0, baseline_metrics, None, history)
+    db_best = _load_best_opt_run()
+    if db_best:
+        best_data, db_params = db_best
+        best_score = best_data["score"]
+        best_pos   = best_data["positive_days"]
+        best_avg   = best_data["avg_daily_profit"]
+        if db_params:
+            for k in PARAM_SPACE:
+                if k in db_params:
+                    best_env[k] = str(db_params[k])
+        print(f"   🏆 Recorde anterior recuperado do DB: score={best_score:.2f} avg_day=${best_avg:.2f}/dia (it#{best_data['iteration']})", flush=True)
+    else:
+        best_score = baseline_metrics["score"]
+        best_pos   = baseline_metrics["positive_days"]
+        best_avg   = baseline_metrics["avg_daily_profit"]
+        best_data  = {**baseline_metrics, "iteration": 0}
+
+    write_state(iteration - 1, baseline_metrics, best_data, history)
 
     # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse)
     is_stress = _read_stress_config()
@@ -590,6 +750,7 @@ def main():
                     "ts":             time.time(),
                 }
                 history.append(entry)
+                _save_opt_iteration(entry, m["_env"])
 
                 if is_better:
                     best_score = m["score"]
