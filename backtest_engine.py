@@ -763,7 +763,7 @@ def _collect_day_outcomes(
         except Exception:
             cache_dir = disk_dir
 
-    filename = f"indicators_BOOM1000_{day.isoformat()}.csv.gz"
+    filename = f"indicators_BOOM1000_{day.isoformat()}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
     
@@ -780,13 +780,13 @@ def _collect_day_outcomes(
     day_indicators_df = None
     if cache_path.exists():
         try:
-            day_indicators_df = pd.read_csv(cache_path, compression="gzip")
+            day_indicators_df = pd.read_feather(cache_path)
         except Exception as e:
             print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
             # Se deu erro e estamos no SHM, tenta no disco como backup
             if cache_path != disk_path and disk_path.exists():
                 try:
-                    day_indicators_df = pd.read_csv(disk_path, compression="gzip")
+                    day_indicators_df = pd.read_feather(disk_path)
                     # Tenta corrigir a cópia no SHM
                     import shutil
                     shutil.copy2(disk_path, cache_path)
@@ -823,7 +823,7 @@ def _collect_day_outcomes(
                 day_indicators_df["p_loss"] = None
                 
             # Salva no cache ativo (/dev/shm ou disco)
-            day_indicators_df.to_csv(cache_path, index=False, compression="gzip")
+            day_indicators_df.to_feather(cache_path)
             
             # Se salvou no RAM disk, persiste também no disco permanente
             if cache_dir != disk_dir:
