@@ -49,14 +49,22 @@ class RiskManagerTest(unittest.TestCase):
             self.assertTrue(risk.can_trade())
 
     def test_persists_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "risk.json"
-            risk = self.make_risk(path)
-            risk.update(profit=-1, buy_price=1)
+        import os
+        old_val = os.environ.get("PEGASUS_OPTIMIZER_RUN")
+        if "PEGASUS_OPTIMIZER_RUN" in os.environ:
+            del os.environ["PEGASUS_OPTIMIZER_RUN"]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "risk.json"
+                risk = self.make_risk(path)
+                risk.update(profit=-1, buy_price=1)
 
-            restored = self.make_risk(path)
-            self.assertEqual(restored.daily_loss, 1)
-            self.assertEqual(restored.trades_today, 1)
+                restored = self.make_risk(path)
+                self.assertEqual(restored.daily_loss, 1)
+                self.assertEqual(restored.trades_today, 1)
+        finally:
+            if old_val is not None:
+                os.environ["PEGASUS_OPTIMIZER_RUN"] = old_val
 
     def test_trailing_daily_profit_blocks_risking_locked_profit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -38,6 +38,16 @@ echo "════════════════════════�
 echo "  🚀 PEGASUS DEPLOY  →  genesys-ubuntu"
 echo "════════════════════════════════════════════"
 
+# ── 0. Sincronizar .env do servidor para o local ──────────────────────────────
+echo ""
+echo "▶ [0/4] Sincronizando .env remoto → local..."
+if $SSH "$SERVER" "[ -f ${REMOTE_DIR}/.env ]"; then
+    $SCP "${SERVER}:${REMOTE_DIR}/.env" .env
+    echo "  ✅ .env local atualizado com a versão do servidor"
+else
+    echo "  ⚠️  .env não encontrado no servidor, mantendo versão local"
+fi
+
 # ── 1. Git commit + push ──────────────────────────────────────────────────────
 echo ""
 echo "▶ [1/4] Git: commit + push..."
