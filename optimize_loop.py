@@ -258,6 +258,56 @@ def _read_stress_config() -> bool:
     except Exception:
         return False
 
+# ── Carrega Símbolo Ativo e Volatilidade Mediana no escopo global ──────────────
+_env_for_vol = {}
+if Path(".env").exists():
+    try:
+        for line in Path(".env").read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                _env_for_vol[k.strip()] = v.strip()
+    except Exception:
+        pass
+            
+ACTIVE_SYMBOL = _env_for_vol.get("SYMBOL", "BOOM1000")
+
+def get_median_volatility(symbol: str) -> float:
+    symbol_upper = symbol.upper()
+    defaults = {
+        "BOOM1000": 1.0e-6,
+        "1HZ100V": 1.4e-4,
+        "1HZ10V": 1.5e-5,
+    }
+    try:
+        data_dir = Path("data")
+        max_path = data_dir / f"ticks_{symbol_upper}_max.csv"
+        if not max_path.exists():
+            files = list(data_dir.glob(f"ticks_{symbol_upper}_*.csv"))
+            if files:
+                max_path = files[0]
+                
+        if max_path.exists():
+            import pandas as pd
+            import numpy as np
+            df = pd.read_csv(max_path, nrows=50000, usecols=["quote"])
+            df["quote"] = pd.to_numeric(df["quote"], errors="coerce")
+            df = df.dropna().reset_index(drop=True)
+            returns = df["quote"].pct_change().abs().dropna()
+            rolling_vol = returns.rolling(10).mean().dropna()
+            if not rolling_vol.empty:
+                val = float(rolling_vol.median())
+                print(f"[Optimizer] Volatilidade mediana calculada para {symbol_upper}: {val:.2e}", flush=True)
+                return val
+    except Exception as e:
+        print(f"[Optimizer] Erro ao calcular volatilidade mediana para {symbol}: {e}", flush=True)
+        
+    fallback = defaults.get(symbol_upper, 1.4e-4)
+    print(f"[Optimizer] Usando volatilidade mediana padrão para {symbol_upper}: {fallback:.2e}", flush=True)
+    return fallback
+
+MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
+
 # Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
 N_WORKERS = 8
 
@@ -273,8 +323,8 @@ PARAM_SPACE = {
     "CALM_ACCU_MAX_ENTRY_CUSUM":       {"type": "float",     "min": 4.5,  "max": 10.5, "step": 0.5},
     # Hurst mínimo: it#508=0.47 → busca 0.35–0.55 (ligeiramente maior p/ robustez multi-mês)
     "ACCUMULATOR_MIN_HURST_EXPONENT":  {"type": "float",     "min": 0.35, "max": 0.55, "step": 0.01},
-    # Limiar de volatilidade: it#508=1.91e-6 → busca 0.5e-6–5.0e-6
-    "CALM_ACCU_THRESHOLD":             {"type": "float_sci", "min": 0.5e-6, "max": 5.0e-6},
+    # Limiar de volatilidade: dinâmico com base na volatilidade mediana do símbolo ativo
+    "CALM_ACCU_THRESHOLD":             {"type": "float_sci", "min": 0.3 * MEDIAN_VOL, "max": 2.0 * MEDIAN_VOL},
     # XGB bypass: it#508=0.25 → busca 0.15–0.35
     "PCS_XGB_BYPASS_LIMIT":            {"type": "float",     "min": 0.15, "max": 0.35, "step": 0.01},
     # TP regime B+: it#508=18.0 → busca 12.0–28.0

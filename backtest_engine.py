@@ -39,6 +39,32 @@ TOKEN = os.getenv("DERIV_TOKEN", "")
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
+# ── Símbolo Ativo e Auxiliares de Volatilidade ──────────────────────────────────
+SYMBOL = os.getenv("SYMBOL", "BOOM1000")
+
+def get_symbol_median_volatility(sym: str) -> float:
+    sym_upper = sym.upper()
+    baselines = {
+        "BOOM1000": 1.0e-6,
+        "1HZ100V": 1.4e-4,
+        "1HZ10V": 1.5e-5,
+    }
+    return baselines.get(sym_upper, 1.4e-4)
+
+def get_max_calm_thresh(sym: str, avgs_arr: np.ndarray = None) -> float:
+    sym_upper = sym.upper()
+    if sym_upper == "BOOM1000":
+        return 2.5e-6
+    if sym_upper == "1HZ100V":
+        return 2.5e-4
+    if sym_upper == "1HZ10V":
+        return 3.0e-5
+    if avgs_arr is not None and len(avgs_arr) > 0:
+        valid_avgs = avgs_arr[~np.isnan(avgs_arr)]
+        if len(valid_avgs) > 0:
+            return float(np.median(valid_avgs)) * 2.0
+    return 3.0e-4
+
 # ── Parâmetros — lidos do .env para garantir fidel. ao bot real ─────────────────
 STAKE = float(os.getenv("STAKE", "5"))
 MAX_STAKE = float(os.getenv("MAX_STAKE", "10"))
@@ -173,7 +199,7 @@ async def _download_day_async(day: _date, out_path: Path) -> int:
                 await ws.send(
                     json.dumps(
                         {
-                            "ticks_history": "BOOM1000",
+                            "ticks_history": SYMBOL,
                             "start": start,
                             "end": chunk_end,
                             "style": "ticks",
@@ -216,7 +242,7 @@ def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
     global _max_csv_range
     if _max_csv_range is not None:
         return _max_csv_range
-    max_path = data_dir / "ticks_BOOM1000_max.csv"
+    max_path = data_dir / f"ticks_{SYMBOL}_max.csv"
     if not max_path.exists():
         return None
     try:
@@ -240,8 +266,8 @@ def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> 
     4. Tenta baixar da Deriv se TOKEN disponível
     Retorna True se dados estão disponíveis.
     """
-    # BOOM1000 opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
-    daily = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
+    # O ativo opera 24/7 incluindo fins de semana (BLOCK_WEEKENDS=false no bot real)
+    daily = data_dir / f"ticks_{SYMBOL}_{day.isoformat()}.csv"
     if daily.exists() and daily.stat().st_size > 5_000:
         return True
 
@@ -366,7 +392,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
     if day in _day_df_cache:
         return _day_df_cache[day]
 
-    daily_path = data_dir / f"ticks_BOOM1000_{day.isoformat()}.csv"
+    daily_path = data_dir / f"ticks_{SYMBOL}_{day.isoformat()}.csv"
     
     # 1. Primeiro verifica se existe o CSV diário local (é MUITO mais rápido que PG)
     if daily_path.exists() and daily_path.stat().st_size > 1000:
@@ -401,7 +427,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
         return df
 
     # 3. Se PG falhar, tenta ler do max.csv
-    max_path = data_dir / "ticks_BOOM1000_max.csv"
+    max_path = data_dir / f"ticks_{SYMBOL}_max.csv"
     if not max_path.exists():
         return None
     try:
@@ -608,8 +634,10 @@ def _replay_strategy(
                 
                 # Calmaria Extrema (Regime A) Check:
                 _pass_a_xgb = (p_loss < 0.22)
+                
+                median_vol = get_symbol_median_volatility(SYMBOL)
                 if (
-                    avg < 1.0e-6
+                    avg < 1.0 * median_vol
                     and cusum_v < 2.5
                     and hurst_v > 0.48
                     and shannon_v > 0.85
@@ -621,7 +649,7 @@ def _replay_strategy(
                 # Calmaria Moderada (Regime B+) Check:
                 _pass_b_plus_xgb = (p_loss < 0.26)
                 if (
-                    avg < 2.2e-6
+                    avg < 2.2 * median_vol
                     and cusum_v < 4.0
                     and hurst_v > 0.45
                     and _pass_b_plus_xgb
@@ -883,7 +911,7 @@ def _collect_day_outcomes(
         except Exception:
             cache_dir = disk_dir
 
-    filename = f"indicators_BOOM1000_{day.isoformat()}_sample{SAMPLE_EVERY}.feather"
+    filename = f"indicators_{SYMBOL}_{day.isoformat()}_sample{SAMPLE_EVERY}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
 
@@ -915,7 +943,7 @@ def _collect_day_outcomes(
 
         if day_indicators_df is None:
             # Determina quais índices serão avaliados (amostrados) no backtest
-            max_calm_thresh = 2.5e-6
+            max_calm_thresh = get_max_calm_thresh(SYMBOL, avgs)
             super_indices = []
             for w in range(TICK_COUNT, len(day_df)):
                 if hours[w] in BLOCKED_HOURS:

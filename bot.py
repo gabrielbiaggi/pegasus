@@ -40,6 +40,16 @@ class FatalBotError(RuntimeError):
     pass
 
 
+def get_symbol_median_volatility(symbol: str) -> float:
+    symbol_upper = symbol.upper()
+    baselines = {
+        "BOOM1000": 1.0e-6,
+        "1HZ100V": 1.4e-4,
+        "1HZ10V": 1.5e-5,
+    }
+    return baselines.get(symbol_upper, 1.4e-4)
+
+
 @dataclass
 class PendingOrder:
     stake: float
@@ -957,8 +967,10 @@ class DerivBot:
                 
                 # Calmaria Extrema (Regime A) Check:
                 _pass_a_xgb = (p_loss is None or p_loss < 0.22)
+                
+                median_vol = get_symbol_median_volatility(self.config.symbol)
                 if (
-                    avg_abs_ret < 1.0e-6
+                    avg_abs_ret < 1.0 * median_vol
                     and _cusum < 2.5
                     and _hurst > 0.48
                     and _shannon > 0.85
@@ -970,7 +982,7 @@ class DerivBot:
                 # Calmaria Moderada (Regime B+) Check:
                 _pass_b_plus_xgb = (p_loss is None or p_loss < 0.26)
                 if (
-                    avg_abs_ret < 2.2e-6
+                    avg_abs_ret < 2.2 * median_vol
                     and _cusum < 4.0
                     and _hurst > 0.45
                     and _pass_b_plus_xgb
