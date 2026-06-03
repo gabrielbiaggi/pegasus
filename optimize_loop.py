@@ -653,7 +653,7 @@ def main():
 
     print(f"   ✅ Baseline [{baseline_time:.0f}s]: {fmt(baseline_metrics)}", flush=True)
     print(f"\n   📌 Contexto real:", flush=True)
-    print(f"      ROI total maio: {baseline_metrics['roi_pct']:.1f}% = ${baseline_metrics['total_pnl']:.2f}", flush=True)
+    print(f"      ROI total período: {baseline_metrics['roi_pct']:.1f}% = ${baseline_metrics['total_pnl']:.2f}", flush=True)
     print(f"      Lucro médio/dia: ${baseline_metrics['avg_daily_profit']:.2f}  (META: $50/dia)", flush=True)
     print(f"      Dias positivos:  {baseline_metrics['positive_days']}/{baseline_metrics['active_days']} ativos ({baseline_metrics['consistency_pct']:.0f}%)", flush=True)
     print(f"      Melhor dia: ${baseline_metrics['best_day_pnl']:.2f} | Pior dia: ${baseline_metrics['worst_day_pnl']:.2f}", flush=True)
@@ -885,7 +885,7 @@ def main():
                     print(f"  🏆 NOVO RECORDE! — {reason}", flush=True)
                     print(f"     Lucro médio/dia: ${m['avg_daily_profit']:.2f}", flush=True)
                     print(f"     Dias positivos:  {m['positive_days']}/{m['active_days']} ({m['consistency_pct']:.0f}%)", flush=True)
-                    print(f"     PnL total maio:  ${m['total_pnl']:.2f}  (ROI {m['roi_pct']:.1f}%)", flush=True)
+                    print(f"     PnL total período:  ${m['total_pnl']:.2f}  (ROI {m['roi_pct']:.1f}%)", flush=True)
                     print(f"     Melhor dia: ${m['best_day_pnl']:.2f} | Pior dia: ${m['worst_day_pnl']:.2f}", flush=True)
                     print(f"     Sharpe: {m.get('sharpe_ratio', 0.0):.4f} | Sortino: {m.get('sortino_ratio', 0.0):.4f} | Max DD: ${m.get('max_drawdown', 0.0):.2f}", flush=True)
                     champ_params = {k: best_env.get(k) for k in PARAM_SPACE}
