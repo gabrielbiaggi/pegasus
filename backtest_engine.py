@@ -1364,7 +1364,7 @@ def main() -> None:
             else:
                 downside_dev = 0.0
 
-            sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (mean_pnl / 0.001 if mean_pnl > 0 else 0.0)
+            sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (20.0 if mean_pnl > 0 else 0.0)
 
             summary["strategies"][s] = {
                 "final_balance": round(final_bal, 2),
@@ -1461,11 +1461,48 @@ def apply_config(env_overrides: dict):
     STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
+def compute_monthly_breakdown(results: list, strategy: str) -> dict:
+    monthly = {}
+    for r in results:
+        date_str = r.get("date", "")
+        if len(date_str) < 7:
+            continue
+        month = date_str[:7]
+        if month not in monthly:
+            monthly[month] = []
+        s = r.get("strategies", {}).get(strategy, {})
+        monthly[month].append({
+            "pnl": s.get("pnl", 0.0),
+            "trades": s.get("trades", 0)
+        })
+    
+    breakdown = {}
+    for month, m_days in sorted(monthly.items()):
+        active = [d for d in m_days if d["trades"] > 0]
+        pos = [d for d in m_days if d["pnl"] > 0]
+        total_pnl = sum(d["pnl"] for d in m_days)
+        n_act = len(active)
+        n_pos = len(pos)
+        avg_day = (sum(d["pnl"] for d in active) / n_act) if n_act > 0 else 0.0
+        consist = (n_pos / n_act * 100) if n_act > 0 else 0.0
+        
+        breakdown[month] = {
+            "pnl": round(total_pnl, 2),
+            "active_days": n_act,
+            "positive_days": n_pos,
+            "total_days": len(m_days),
+            "avg_daily_profit": round(avg_day, 4),
+            "consistency_pct": round(consist, 1)
+        }
+    return breakdown
+
+
 def run_backtest_direct(
     start_date_str: str,
     end_date_str: str,
     start_balance: float,
     env_overrides: dict,
+    worker_id: str = None,
 ) -> dict | None:
     apply_config(env_overrides)
     
@@ -1491,7 +1528,9 @@ def run_backtest_direct(
     balances = {s: start_balance for s in STRATEGY_NAMES}
     results = []
     
-    for day in days_with_data:
+    t_start = time.time()
+    total_days = len(days_with_data)
+    for day_idx, day in enumerate(days_with_data):
         day_df = _load_day_df(day, data_dir)
         if day_df is None:
             continue
@@ -1499,6 +1538,22 @@ def run_backtest_direct(
         if not accumulate_balance:
             balances = {s: start_balance for s in STRATEGY_NAMES}
             
+        if worker_id:
+            progress_path = Path("logs") / f"backtest_worker_{worker_id}.json"
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                months_pt = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+                m_name = months_pt[day.month] if 1 <= day.month <= 12 else str(day.month)
+                progress_path.write_text(json.dumps({
+                    "current_day_index": day_idx + 1,
+                    "total_days": total_days,
+                    "elapsed_s": time.time() - t_start,
+                    "current_day": day.isoformat(),
+                    "current_month": m_name
+                }), encoding="utf-8")
+            except Exception:
+                pass
+
         result = _sim_day_multi(
             day,
             day_df,
@@ -1566,7 +1621,7 @@ def run_backtest_direct(
         else:
             downside_dev = 0.0
 
-        sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (mean_pnl / 0.001 if mean_pnl > 0 else 0.0)
+        sortino = (mean_pnl / downside_dev) if downside_dev > 0.001 else (20.0 if mean_pnl > 0 else 0.0)
 
         total_trades = sum(r["strategies"].get(s, {}).get("trades", 0) for r in results)
 
@@ -1628,6 +1683,10 @@ def run_backtest_direct(
 
     m["score"] = round(m["score"], 4)
     m["summary"] = summary
+    m["monthly_breakdown"] = {
+        "Super-Frankenstein": compute_monthly_breakdown(results, "Super-Frankenstein"),
+        "Pegasus Live Sniper (9% TP)": compute_monthly_breakdown(results, "Pegasus Live Sniper (9% TP)")
+    }
     return m
 
 

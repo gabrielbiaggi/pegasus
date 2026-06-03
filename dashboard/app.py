@@ -1288,7 +1288,10 @@ def optimizer_status(response: Response):
                                     candidate["est_remaining_s"] = round(est_rem, 1)
                                     candidate["current_day_index"] = curr_idx
                                     candidate["total_days"] = total_d
-                                    candidate["status"] = f"Simulando... (Dia {curr_idx}/{total_d})"
+                                    curr_month = worker_data.get("current_month", "")
+                                    candidate["current_month"] = curr_month
+                                    month_suffix = f" {curr_month}" if curr_month else ""
+                                    candidate["status"] = f"Simulando {month_suffix} ({curr_idx}/{total_d})"
                         except Exception:
                             pass
 

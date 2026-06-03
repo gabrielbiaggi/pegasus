@@ -2705,6 +2705,60 @@
                             <div id="opt-worst-day" style="font-size:1.5rem;font-weight:700;color:#ef4444">—</div>
                             <div style="font-size:.72rem;color:var(--muted)">prejuízo do pior dia</div>
                             <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Maior queda diária simulada</div>
+                    </div>
+
+                    <!-- ═══ SEÇÃO: ANÁLISE MULTI-MÊS & CAMPEÕES MENSAS ═══ -->
+                    <div id="opt-multimonth-section" style="margin-bottom:18px">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px">
+                            <!-- Coluna 1: Tabela Comparativa Mensal -->
+                            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-premium-light)">
+                                <div style="font-size:.72rem;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px">
+                                    <span>📊 Desempenho Mensal (Baseline vs Campeão Geral)</span>
+                                </div>
+                                <div style="overflow-x:auto">
+                                    <table style="width:100%;border-collapse:collapse;font-size:.75rem">
+                                        <thead>
+                                            <tr style="border-bottom:1px solid var(--border)">
+                                                <th style="padding:6px;text-align:left;color:var(--muted)">Mês</th>
+                                                <th style="padding:6px;text-align:right;color:var(--red)">Baseline SF</th>
+                                                <th style="padding:6px;text-align:right;color:var(--green)">Campeão SF</th>
+                                                <th style="padding:6px;text-align:right;color:#60a5fa">Live Bot (9%)</th>
+                                                <th style="padding:6px;text-align:right;color:var(--cyan)">Melhoria</th>
+                                                <th style="padding:6px;text-align:right;color:var(--yellow)">Consist.</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="opt-monthly-breakdown-tbody">
+                                            <tr><td colspan="6" style="padding:15px;text-align:center;color:var(--muted)">Aguardando dados...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <!-- Coluna 2: Matriz Cruzada de Campeões -->
+                            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-premium-light)">
+                                <div style="font-size:.72rem;color:var(--yellow);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+                                    <span>👑 Campeões por Mês & Validação Cruzada</span>
+                                    <span style="font-size:.62rem;color:var(--dim)">👑 = Origem</span>
+                                </div>
+                                <div style="overflow-x:auto">
+                                    <table style="width:100%;border-collapse:collapse;font-size:.75rem">
+                                        <thead>
+                                            <tr style="border-bottom:1px solid var(--border)">
+                                                <th style="padding:6px;text-align:left;color:var(--muted)">Estratégia Campeã</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Jan</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Fev</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Mar</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Abr</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Mai</th>
+                                                <th style="padding:6px;text-align:right;color:var(--cyan)">it#</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="opt-monthly-champions-tbody">
+                                            <tr><td colspan="7" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -5457,10 +5511,12 @@
                         // Atualiza os novos cards de métricas quant avançadas
                         if (brSharpe) {
                             var sh = activeBest.sharpe != null ? activeBest.sharpe : (activeBest.sharpe_ratio != null ? activeBest.sharpe_ratio : 0);
+                            if (sh > 20.0) sh = 20.0;
                             brSharpe.textContent = sh.toFixed(2);
                         }
                         if (brSortino) {
                             var so = activeBest.sortino != null ? activeBest.sortino : (activeBest.sortino_ratio != null ? activeBest.sortino_ratio : 0);
+                            if (so > 20.0) so = 20.0;
                             brSortino.textContent = so.toFixed(2);
                         }
                         if (brDrawdown) {
@@ -5503,6 +5559,134 @@
                             liveDaily.style.color = liveAvg > 0 ? "#60a5fa" : "#f87171";
                         }
                         if (livePos && livePosD != null) livePos.textContent = "dias positivos: " + livePosD;
+
+                        // ── Renderiza Breakdown Mensal (Tabela 1) ──
+                        var monthlyTbody = document.getElementById("opt-monthly-breakdown-tbody");
+                        if (monthlyTbody) {
+                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+                            var monthNamesShort = {
+                                "2026-01": "Jan/26",
+                                "2026-02": "Fev/26",
+                                "2026-03": "Mar/26",
+                                "2026-04": "Abr/26",
+                                "2026-05": "Mai/26"
+                            };
+                            var html = "";
+                            var hasData = false;
+                            
+                            var bl_sf = (d.baseline && d.baseline.monthly_breakdown) ? d.baseline.monthly_breakdown["Super-Frankenstein"] : null;
+                            var best_sf = (activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Super-Frankenstein"] : null;
+                            var best_live = (activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Pegasus Live Sniper (9% TP)"] : null;
+                            
+                            if (bl_sf || best_sf) {
+                                html = months.map(function(mCode) {
+                                    var monthLabel = monthNamesShort[mCode] || mCode;
+                                    
+                                    var blData = bl_sf ? bl_sf[mCode] : null;
+                                    var bestData = best_sf ? best_sf[mCode] : null;
+                                    var liveData = best_live ? best_live[mCode] : null;
+                                    
+                                    var blPnl = blData ? blData.pnl : 0.0;
+                                    var blCons = blData ? blData.consistency_pct : 0.0;
+                                    var blDays = blData ? blData.positive_days + "/" + blData.active_days : "—";
+                                    
+                                    var bestPnl = bestData ? bestData.pnl : 0.0;
+                                    var bestCons = bestData ? bestData.consistency_pct : 0.0;
+                                    var bestDays = bestData ? bestData.positive_days + "/" + bestData.active_days : "—";
+                                    
+                                    var livePnl = liveData ? liveData.pnl : 0.0;
+                                    var liveCons = liveData ? liveData.consistency_pct : 0.0;
+                                    var liveDays = liveData ? liveData.positive_days + "/" + liveData.active_days : "—";
+                                    
+                                    var impVal = bestPnl - blPnl;
+                                    var impColor = impVal >= 0 ? "var(--green)" : "var(--red)";
+                                    var impSign = impVal >= 0 ? "+" : "";
+                                    
+                                    var blColor = blPnl >= 0 ? "var(--green)" : "var(--red)";
+                                    var bestColor = bestPnl >= 0 ? "var(--green)" : "var(--red)";
+                                    var liveColor = livePnl >= 0 ? "#60a5fa" : "#f87171";
+                                    
+                                    return '<tr style="border-bottom:1px solid var(--border)">'
+                                        + '<td style="padding:6px;font-weight:700">' + monthLabel + '</td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + blColor + ';font-family:monospace">$' + blPnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + blCons.toFixed(0) + '%)</span></td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + bestColor + ';font-family:monospace;font-weight:700">$' + bestPnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + bestCons.toFixed(0) + '%)</span></td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + liveColor + ';font-family:monospace">$' + livePnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + liveCons.toFixed(0) + '%)</span></td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + impColor + ';font-family:monospace;font-weight:700">' + impSign + '$' + impVal.toFixed(2) + '</td>'
+                                        + '<td style="padding:6px;text-align:right;color:var(--muted)">' + bestDays + ' dias</td>'
+                                        + '</tr>';
+                                }).join("");
+                                hasData = true;
+                            }
+                            
+                            if (hasData) {
+                                monthlyTbody.innerHTML = html;
+                            } else {
+                                monthlyTbody.innerHTML = '<tr><td colspan="6" style="padding:15px;text-align:center;color:var(--muted)">Nenhum dado mensal disponível ainda.</td></tr>';
+                            }
+                        }
+
+                        // ── Renderiza Matriz de Campeões Mensais (Tabela 2) ──
+                        var champsTbody = document.getElementById("opt-monthly-champions-tbody");
+                        if (champsTbody) {
+                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+                            var monthNamesShort = {
+                                "2026-01": "Jan/26",
+                                "2026-02": "Fev/26",
+                                "2026-03": "Mar/26",
+                                "2026-04": "Abr/26",
+                                "2026-05": "Mai/26"
+                            };
+                            var html = "";
+                            var hasChamps = false;
+                            
+                            var champsData = d.monthly_champions || {};
+                            for (var m in champsData) {
+                                if (champsData[m]) {
+                                    hasChamps = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (hasChamps) {
+                                html = months.map(function(rowMonth) {
+                                    var rowLabel = monthNamesShort[rowMonth] || rowMonth;
+                                    var champ = champsData[rowMonth];
+                                    
+                                    if (!champ) {
+                                        return '<tr style="border-bottom:1px solid var(--border)">'
+                                            + '<td style="padding:6px;color:var(--dim)">🏆 ' + rowLabel + ' Champ</td>'
+                                            + '<td colspan="6" style="padding:6px;text-align:center;color:var(--dim);font-style:italic">Ainda não encontrado...</td>'
+                                            + '</tr>';
+                                    }
+                                    
+                                    var itNum = champ.iteration;
+                                    var monthlyPnls = champ.monthly_pnls || {};
+                                    
+                                    var cellsHtml = months.map(function(colMonth) {
+                                        var pnlVal = monthlyPnls[colMonth];
+                                        if (pnlVal === undefined) return '<td style="padding:6px;text-align:right;color:var(--dim)">—</td>';
+                                        
+                                        var cellColor = pnlVal >= 0 ? "var(--green)" : "var(--red)";
+                                        var cellText = "$" + pnlVal.toFixed(2);
+                                        
+                                        if (rowMonth === colMonth) {
+                                            return '<td style="padding:6px;text-align:right;color:' + cellColor + ';font-weight:700;font-family:monospace;background:rgba(245,158,11,0.06)">👑 ' + cellText + '</td>';
+                                        } else {
+                                            return '<td style="padding:6px;text-align:right;color:' + cellColor + ';font-family:monospace">' + cellText + '</td>';
+                                        }
+                                    }).join("");
+                                    
+                                    return '<tr style="border-bottom:1px solid var(--border)">'
+                                        + '<td style="padding:6px;font-weight:700;color:var(--cyan)">🏆 ' + rowLabel + ' Champ</td>'
+                                        + cellsHtml
+                                        + '<td style="padding:6px;text-align:right;color:var(--muted)">#' + itNum + '</td>'
+                                        + '</tr>';
+                                }).join("");
+                            } else {
+                                html = '<tr><td colspan="7" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda.</td></tr>';
+                            }
+                            champsTbody.innerHTML = html;
+                        }
                     }
 
                     // ── Última Iteração Completada (Tempo Real) ──
@@ -5571,8 +5755,8 @@
                                 var posD    = it.positive_days != null ? it.positive_days : "—";
                                 var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
                                 var scoreStr= it.score != null ? it.score.toFixed(1) : "—";
-                                var sharpeStr = it.sharpe != null ? it.sharpe.toFixed(2) : "—";
-                                var sortinoStr = it.sortino != null ? it.sortino.toFixed(2) : "—";
+                                var sharpeStr = (it.sharpe != null) ? (it.sharpe > 20.0 ? "20.00" : it.sharpe.toFixed(2)) : "—";
+                                var sortinoStr = (it.sortino != null) ? (it.sortino > 20.0 ? "20.00" : it.sortino.toFixed(2)) : "—";
                                 var ddStr = it.drawdown != null ? "$" + it.drawdown.toFixed(2) : "—";
                                 var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
                                 var rowBg   = it.is_best ? "background:rgba(16,185,129,0.1);border-left:3px solid var(--green);" : "";
@@ -5652,7 +5836,7 @@
                                 var statusColor = "var(--green)";
                                 var animation = "pulse 1.5s infinite";
                                 var statusIcon = '● ';
-                                if (statusText.indexOf("Simulando...") >= 0) {
+                                if (statusText.indexOf("Simulando") >= 0) {
                                     statusColor = "var(--green)";
                                     statusIcon = '<span class="spin" style="margin-right:2px;display:inline-block">⚙️</span> ';
                                     animation = "none";
@@ -5669,14 +5853,14 @@
 
                                 // Determina o HTML do timer e barra de progresso
                                 var progressHtml = "";
-                                if (statusText.indexOf("Simulando...") >= 0) {
+                                if (statusText.indexOf("Simulando") >= 0) {
                                     if (c.progress_pct != null) {
                                         var remS = c.est_remaining_s != null ? Math.round(c.est_remaining_s) : "--";
                                         progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
                                             + '<div style="background:linear-gradient(90deg,var(--green),var(--cyan));height:100%;width:' + c.progress_pct + '%"></div>'
                                             + '</div>'
                                             + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
-                                            + '<span>Dia ' + c.current_day_index + '/' + c.total_days + ' (' + Math.round(c.progress_pct) + '%)</span>'
+                                            + '<span>' + statusText + ' (' + Math.round(c.progress_pct) + '%)</span>'
                                             + '<span>Faltam ~' + remS + 's</span>'
                                             + '</div>';
                                     } else {
@@ -5710,7 +5894,7 @@
                                 }
 
                                 var cardStyle = 'background:var(--bg2);border:1px solid rgba(96,165,250,.15);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;box-shadow:var(--shadow-premium-light);display:flex;flex-direction:column;justify-content:space-between;transition:all 0.3s ease;';
-                                if (statusText.indexOf("Simulando...") >= 0) {
+                                if (statusText.indexOf("Simulando") >= 0) {
                                     cardStyle = 'background:rgba(16,185,129,0.02);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:8px 10px;font-size:.68rem;line-height:1.4;display:flex;flex-direction:column;justify-content:space-between;animation:workerPulse 2s infinite;transition:all 0.3s ease;';
                                 }
                                 

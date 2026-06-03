@@ -32,6 +32,7 @@ import threading
 import tempfile
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import backtest_engine
 
 # ── Configuração ──────────────────────────────────────────────────────────────
 START_DATE    = "2026-01-01"
@@ -461,6 +462,7 @@ def _run_one(args) -> dict | None:
             end_date_str=END_DATE,
             start_balance=float(START_BALANCE),
             env_overrides=env_vars,
+            worker_id=worker_id,
         )
     except Exception as e:
         print(f"   [worker {worker_id}] erro: {e}", flush=True)
@@ -473,19 +475,27 @@ _state_lock = threading.Lock()
 
 def write_state(iteration: int, baseline: dict, best: dict | None,
                 history: list, running: bool = True,
-                evaluating_candidates: list | None = None) -> None:
+                evaluating_candidates: list | None = None,
+                monthly_champions: dict | None = None) -> None:
     """Grava estado para o dashboard ler (thread-safe)."""
     try:
         existing_candidates = None
-        if evaluating_candidates is None:
-            if STATE_PATH.exists():
-                try:
-                    old_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        existing_champions = None
+        
+        if STATE_PATH.exists():
+            try:
+                old_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+                if evaluating_candidates is None:
                     existing_candidates = old_data.get("evaluating_candidates")
-                except Exception:
-                    pass
-        else:
+                if monthly_champions is None:
+                    existing_champions = old_data.get("monthly_champions")
+            except Exception:
+                pass
+                
+        if evaluating_candidates is not None:
             existing_candidates = evaluating_candidates
+        if monthly_champions is not None:
+            existing_champions = monthly_champions
 
         payload = {
             "running":           running,
@@ -500,6 +510,8 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
         }
         if existing_candidates is not None:
             payload["evaluating_candidates"] = existing_candidates
+        if existing_champions is not None:
+            payload["monthly_champions"] = existing_champions
 
         tmp = STATE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
@@ -507,6 +519,37 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
         tmp.replace(STATE_PATH)    # rename atômico
     except Exception as e:
         print(f"[WARN] write_state: {e}", flush=True)
+
+
+def update_monthly_champions(monthly_champions: dict, iteration: int, m: dict, params: dict) -> bool:
+    updated = False
+    sf_breakdown = m.get("monthly_breakdown", {}).get("Super-Frankenstein", {})
+    if not sf_breakdown:
+        return False
+        
+    all_months_pnls = {
+        month: data["pnl"]
+        for month, data in sf_breakdown.items()
+    }
+    
+    for month, data in sf_breakdown.items():
+        pnl = data["pnl"]
+        if pnl <= 0.0 or data["active_days"] == 0:
+            continue
+            
+        current_champ = monthly_champions.get(month)
+        if current_champ is None or pnl > current_champ["pnl"]:
+            monthly_champions[month] = {
+                "iteration": iteration,
+                "pnl": round(pnl, 2),
+                "params": params.copy(),
+                "monthly_pnls": all_months_pnls,
+                "avg_daily_profit": round(data["avg_daily_profit"], 2),
+                "consistency_pct": round(data["consistency_pct"], 1),
+                "active_days": data["active_days"]
+            }
+            updated = True
+    return updated
 
 
 # Estado global para debouncing de deploy
@@ -665,6 +708,16 @@ def main():
         iteration = max(h["iteration"] for h in history) + 1
         print(f"   📊 Carregado {len(history)} iterações do histórico do banco de dados (reiniciando no it#{iteration})", flush=True)
 
+    # Carrega campeões mensais persistidos
+    monthly_champions = {}
+    if STATE_PATH.exists():
+        try:
+            state_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            monthly_champions = state_data.get("monthly_champions", {})
+            print(f"   📂 Carregado {len(monthly_champions)} campeões mensais salvos no arquivo de estado.", flush=True)
+        except Exception:
+            pass
+
     bot_was_synced = False
     db_best = _load_best_opt_run()
     if db_best:
@@ -678,6 +731,20 @@ def main():
                     best_env[k] = str(db_params[k])
             best_env["OPTIMIZER_CHAMPION_ITERATION"] = str(best_data["iteration"])
         print(f"   🏆 Recorde anterior recuperado do DB: score={best_score:.2f} avg_day=${best_avg:.2f}/dia (it#{best_data['iteration']})", flush=True)
+        
+        # Calcula o breakdown do campeão carregado para exibir no frontend
+        print("   ⚙️ Calculando breakdown mensal do campeão recuperado do DB...", flush=True)
+        try:
+            champ_res = backtest_engine.run_backtest_direct(
+                start_date_str=START_DATE,
+                end_date_str=END_DATE,
+                start_balance=float(START_BALANCE),
+                env_overrides=best_env,
+            )
+            if champ_res and "monthly_breakdown" in champ_res:
+                best_data["monthly_breakdown"] = champ_res["monthly_breakdown"]
+        except Exception as e:
+            print(f"   [WARN] Erro ao carregar breakdown do campeão: {e}", flush=True)
 
         # Sincronização de startup se a iteração no .env for diferente da campeã do DB
         original_deployed_it = original_env.get("OPTIMIZER_CHAMPION_ITERATION")
@@ -697,7 +764,7 @@ def main():
         best_avg   = baseline_metrics["avg_daily_profit"]
         best_data  = {**baseline_metrics, "iteration": 0}
 
-    write_state(iteration - 1, baseline_metrics, best_data, history)
+    write_state(iteration - 1, baseline_metrics, best_data, history, monthly_champions=monthly_champions)
 
     # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse e não foi sincronizado agora)
     is_stress = _read_stress_config()
@@ -795,12 +862,12 @@ def main():
                     m = fut.result()
                     if not m:
                         local_candidates[idx]["status"] = "Falha"
-                        write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
+                        write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
                         continue
                 except Exception as e:
                     print(f"   [worker {idx}] erro: {e}", flush=True)
                     local_candidates[idx]["status"] = "Erro"
-                    write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
+                    write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
                     continue
 
                 is_better = False
@@ -823,6 +890,9 @@ def main():
                     local_candidates[idx]["status"] = f"Finalizado: ${avg_d:.2f}/dia"
                     local_candidates[idx]["result_pnl"] = round(avg_d, 2)
                     local_candidates[idx]["result_days"] = f"{m['positive_days']}/{active}"
+                    updated_champ = update_monthly_champions(monthly_champions, iteration + idx, m, candidates[idx][0])
+                    if updated_champ:
+                        print(f"   🏆 [Campeão Mensal] Nova melhor performance mensal detectada!", flush=True)
                 else:
                     local_candidates[idx]["status"] = f"Inválido (${avg_d:.2f}/dia)"
                     local_candidates[idx]["result_pnl"] = round(avg_d, 2)
@@ -909,7 +979,7 @@ def main():
                                     print(f"   [ERR] Falha ao inicializar o Bot em Modo Ultra-Estresse: {exc}", flush=True)
 
                 # Grava o estado de forma atômica e em tempo real para o dashboard ver
-                write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates)
+                write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
 
             elapsed = time.time() - t0
             throughput = N_WORKERS / elapsed * 60  # iterações/min
