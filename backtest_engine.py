@@ -37,6 +37,8 @@ load_dotenv()
 # ── Credenciais Deriv para download automático de ticks ───────────────────────
 TOKEN = os.getenv("DERIV_TOKEN", "")
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
+if not APP_ID.isdigit():
+    APP_ID = "1089"
 WS_URL = f"wss://api.derivws.com/trading/v1/options/ws/public?app_id={APP_ID}"
 
 # ── Símbolo Ativo e Auxiliares de Volatilidade ──────────────────────────────────
@@ -265,7 +267,7 @@ def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> 
         return True
 
     pg_dsn = os.getenv("PG_DSN")
-    if pg_dsn:
+    if pg_dsn and SYMBOL == "BOOM1000":
         try:
             import psycopg2
             dt = _datetime.combine(day, _datetime.min.time()).replace(tzinfo=timezone.utc)
@@ -326,6 +328,8 @@ def _write_state(out_path: Path, state: dict) -> None:
 
 
 def _load_day_df_from_pg(day: _date) -> pd.DataFrame | None:
+    if SYMBOL != "BOOM1000":
+        return None
     pg_dsn = os.getenv("PG_DSN")
     if not pg_dsn:
         return None
