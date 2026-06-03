@@ -36,8 +36,10 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         payload = ws.messages[0]
         self.assertEqual(payload["contract_type"], "ACCU")
         self.assertEqual(payload["growth_rate"], 0.03)
-        self.assertEqual(payload["symbol"], "1HZ100V")
+        self.assertEqual(payload["underlying_symbol"], "1HZ100V")
+        self.assertNotIn("symbol", payload)  # new API uses underlying_symbol, not symbol
         self.assertNotIn("duration", payload)
+
 
 
 if __name__ == "__main__":

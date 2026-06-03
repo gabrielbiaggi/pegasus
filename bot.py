@@ -236,7 +236,7 @@ class DerivBot:
             "basis": "stake",
             "contract_type": "ACCU",
             "currency": self.config.currency,
-            "symbol": self.config.symbol,
+            "underlying_symbol": self.config.symbol,
             "growth_rate": self.config.accumulator_growth_rate,
         }
 
@@ -299,7 +299,7 @@ class DerivBot:
             "currency": self.config.currency,
             "duration": self.config.rise_fall_duration_ticks,
             "duration_unit": "t",
-            "symbol": self.config.symbol,
+            "underlying_symbol": self.config.symbol,
         }
         await self.send(ws, payload)
 
@@ -1281,7 +1281,7 @@ class DerivBot:
             "basis": "stake",
             "contract_type": "ACCU",
             "currency": self.config.currency,
-            "symbol": self.config.symbol,
+            "underlying_symbol": self.config.symbol,
             "growth_rate": self.config.accumulator_growth_rate,
         }
         if self.config.accumulator_use_limit_order:
