@@ -12,6 +12,11 @@ import psycopg2
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+import sys
+
+# Adiciona o diretório pai (raiz do projeto) ao path para importar deriv_auth
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from deriv_auth import check_token_expiry
 
 app = FastAPI(title="Pegasus Dashboard")
 
@@ -437,6 +442,10 @@ def _compute_gale_effective_multiplier(risk_state: dict) -> float:
 @app.get("/api/status")
 def api_status(response: Response):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    try:
+        token_info = check_token_expiry()
+    except Exception as e:
+        token_info = {"status": "error", "message": str(e), "days_remaining": -1}
     df = _today_df()
     wins = int((df["result"] == "WIN").sum()) if not df.empty else 0
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
@@ -522,6 +531,7 @@ def api_status(response: Response):
         "ensemble_min_prob": float(_get_env("ENSEMBLE_MIN_PROB") or "0.30"),
         "accumulator_min_hurst_exponent": float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.45"),
         "calm_accu_max_entry_cusum": float(_get_env("CALM_ACCU_MAX_ENTRY_CUSUM") or "5.0"),
+        "token_info": token_info,
     }
 
 

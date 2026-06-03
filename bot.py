@@ -13,6 +13,7 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from config import BotConfig, load_config
+import deriv_auth
 from journal import TradeJournal
 from logger import logger
 from risk_manager import RiskManager
@@ -172,8 +173,9 @@ class DerivBot:
     ) -> None:
         await ws.send(json.dumps(payload))
 
-    async def authorize(self, ws: websockets.WebSocketClientProtocol) -> None:
-        await self.send(ws, {"authorize": self.config.token})
+    async def authorize(self, ws: websockets.WebSocketClientProtocol, token: str | None = None) -> None:
+        auth_token = token or self.config.token
+        await self.send(ws, {"authorize": auth_token})
 
     async def subscribe_balance(self, ws: websockets.WebSocketClientProtocol) -> None:
         """Subscribe to real-time balance stream so manual top-ups are reflected immediately."""
@@ -2123,15 +2125,18 @@ class DerivBot:
                     "rise_fall": "Rise/Fall",
                     "jump_rise_fall": "JumpRF Momentum",
                 }.get(self.config.contract_mode, self.config.contract_mode)
+                # Obter URL WebSocket e credenciais dinamicamente via deriv_auth (novo sistema ou legado)
+                auth = deriv_auth.get_auth(self.config.app_id, self.config.account_mode)
+
                 logger.info(
                     "Iniciando %s | %s | ativo=%s | endpoint=%s",
                     self.config.bot_name,
                     _mode_desc,
                     self.config.symbol,
-                    self.config.ws_url,
+                    auth.ws_url,
                 )
                 async with websockets.connect(
-                    self.config.ws_url,
+                    auth.ws_url,
                     ping_interval=20,
                     ping_timeout=20,
                     close_timeout=10,
@@ -2142,7 +2147,11 @@ class DerivBot:
                     self._gale_wait_log_ts = 0.0  # reset throttle log
                     self._gale_wait_ticks = 0
                     self.last_rf_entry_epoch = None  # reset RF cooldown on reconnect
-                    await self.authorize(ws)
+                    
+                    if not auth.is_new_api:
+                        await self.authorize(ws, auth.legacy_token)
+                    else:
+                        logger.info("Nova API: Conexão WebSocket estabelecida e pré-autenticada via OTP.")
                     # Start EDA consumer task and watchdog
                     consumer_task = asyncio.create_task(self._tick_consumer())
                     watchdog_task = asyncio.create_task(

@@ -969,6 +969,7 @@
                 <span class="symbol-badge" id="symbol-badge">&mdash;</span>
             </div>
             <div class="header-right">
+                <span id="token-badge" class="badge offline" style="display:none; font-size:0.7rem; padding: 3px 8px; border-radius: 12px; font-weight: 600;">🔑 PAT: --</span>
                 <span id="status-badge" class="badge offline">Offline</span>
                 <span
                     class="last-trade"
@@ -3865,6 +3866,38 @@
                         ub.style.display = d.risk_blocked
                             ? "inline-flex"
                             : "none";
+                    
+                    // Render token watchdog status badge
+                    if (d.token_info) {
+                        var tb = $("token-badge");
+                        if (tb) {
+                            var tStat = d.token_info.status;
+                            var tDays = d.token_info.days_remaining;
+                            if (tStat === "expired") {
+                                tb.textContent = "🔑 PAT: EXPIRADO";
+                                tb.style.display = "inline-flex";
+                                tb.style.background = "var(--red)";
+                                tb.style.color = "#fff";
+                                tb.style.border = "none";
+                            } else if (tStat === "warning") {
+                                tb.textContent = "🔑 PAT: " + tDays + " dias";
+                                tb.style.display = "inline-flex";
+                                tb.style.background = "var(--yellow)";
+                                tb.style.color = "#000";
+                                tb.style.border = "none";
+                            } else if (tStat === "ok") {
+                                tb.textContent = "🔑 PAT: " + tDays + " dias";
+                                tb.style.display = "inline-flex";
+                                tb.style.background = "rgba(40, 167, 69, 0.15)";
+                                tb.style.color = "var(--green)";
+                                tb.style.border = "1px solid var(--green)";
+                            } else {
+                                tb.style.display = "none";
+                            }
+                            tb.title = d.token_info.message || "";
+                        }
+                    }
+
                     var badge = $("status-badge");
                     if (d.running) {
                         var idle = d.last_trade_ts

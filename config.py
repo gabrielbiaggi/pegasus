@@ -227,10 +227,12 @@ def load_config() -> BotConfig:
     load_dotenv()
 
     token = os.getenv("DERIV_TOKEN", "").strip()
-    if not token:
+    pat = os.getenv("DERIV_PAT", "").strip()
+    if not token and not pat:
         raise ValueError(
-            "DERIV_TOKEN nao foi definido. Crie um .env a partir de .env.example."
+            "Defina DERIV_PAT ou DERIV_TOKEN no .env"
         )
+    token = token or pat
 
     app_id = os.getenv("DERIV_APP_ID", "1089").strip()
     if not app_id:
