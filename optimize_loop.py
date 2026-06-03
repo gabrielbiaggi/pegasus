@@ -74,7 +74,9 @@ def _init_opt_db():
             live_total_pnl REAL,
             live_sharpe REAL,
             live_sortino REAL,
-            live_drawdown REAL
+            live_drawdown REAL,
+            best_day_pnl REAL,
+            worst_day_pnl REAL
         )
         """)
         conn.commit()
@@ -92,8 +94,9 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
             """INSERT INTO optimizer_history
                (timestamp, iteration, avg_daily, positive_days, negative_days,
                 consistency_pct, score, pnl, roi, sharpe, sortino, drawdown, elapsed_s, is_best, params,
-                live_avg_daily, live_positive_days, live_total_pnl, live_sharpe, live_sortino, live_drawdown)
-               VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                live_avg_daily, live_positive_days, live_total_pnl, live_sharpe, live_sortino, live_drawdown,
+                best_day_pnl, worst_day_pnl)
+               VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry["iteration"],
                 entry["avg_daily"],
@@ -114,7 +117,9 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
                 entry.get("live_total_pnl"),
                 entry.get("live_sharpe"),
                 entry.get("live_sortino"),
-                entry.get("live_drawdown")
+                entry.get("live_drawdown"),
+                entry.get("best_day_pnl"),
+                entry.get("worst_day_pnl")
             )
         )
         conn.commit()
@@ -157,6 +162,8 @@ def _load_opt_history() -> list[dict]:
                 "live_sharpe": r["live_sharpe"] if "live_sharpe" in r.keys() else None,
                 "live_sortino": r["live_sortino"] if "live_sortino" in r.keys() else None,
                 "live_drawdown": r["live_drawdown"] if "live_drawdown" in r.keys() else None,
+                "best_day_pnl": r["best_day_pnl"] if "best_day_pnl" in r.keys() else None,
+                "worst_day_pnl": r["worst_day_pnl"] if "worst_day_pnl" in r.keys() else None,
                 "ts": time.time(),
             })
         history.reverse()
@@ -198,6 +205,8 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
                 "live_sharpe": r["live_sharpe"] if "live_sharpe" in r.keys() else None,
                 "live_sortino": r["live_sortino"] if "live_sortino" in r.keys() else None,
                 "live_drawdown": r["live_drawdown"] if "live_drawdown" in r.keys() else None,
+                "best_day_pnl": r["best_day_pnl"] if "best_day_pnl" in r.keys() else None,
+                "worst_day_pnl": r["worst_day_pnl"] if "worst_day_pnl" in r.keys() else None,
                 "reason": "Recuperado do Banco de Dados",
             }
             try:
@@ -857,6 +866,8 @@ def main():
                     "live_sharpe":    m.get("live_sharpe"),
                     "live_sortino":   m.get("live_sortino"),
                     "live_drawdown":  m.get("live_drawdown"),
+                    "best_day_pnl":   m.get("best_day_pnl"),
+                    "worst_day_pnl":  m.get("worst_day_pnl"),
                     "ts":             time.time(),
                 }
                 history.append(entry)
