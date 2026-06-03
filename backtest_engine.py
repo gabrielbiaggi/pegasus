@@ -37,7 +37,7 @@ load_dotenv()
 # ── Credenciais Deriv para download automático de ticks ───────────────────────
 TOKEN = os.getenv("DERIV_TOKEN", "")
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
-WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+WS_URL = f"wss://api.derivws.com/trading/v1/options/ws/public?app_id={APP_ID}"
 
 # ── Símbolo Ativo e Auxiliares de Volatilidade ──────────────────────────────────
 SYMBOL = os.getenv("SYMBOL", "BOOM1000")
@@ -185,13 +185,6 @@ async def _download_day_async(day: _date, out_path: Path) -> int:
 
     try:
         async with websockets.connect(WS_URL, ping_interval=30, open_timeout=15) as ws:
-            # Autoriza com o token do bot
-            await ws.send(json.dumps({"authorize": TOKEN}))
-            resp = json.loads(await ws.recv())
-            if "error" in resp:
-                print(f"Auth Deriv falhou: {resp['error']['message']}", flush=True)
-                return 0
-
             # Busca em blocos de 1 hora (máx 5000 ticks cada)
             start = start_epoch
             while start < end_epoch:
