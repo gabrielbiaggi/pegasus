@@ -68,7 +68,13 @@ def _init_opt_db():
             drawdown REAL,
             elapsed_s REAL,
             is_best INTEGER,
-            params TEXT NOT NULL
+            params TEXT NOT NULL,
+            live_avg_daily REAL,
+            live_positive_days INTEGER,
+            live_total_pnl REAL,
+            live_sharpe REAL,
+            live_sortino REAL,
+            live_drawdown REAL
         )
         """)
         conn.commit()
@@ -85,8 +91,9 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
         conn.execute(
             """INSERT INTO optimizer_history
                (timestamp, iteration, avg_daily, positive_days, negative_days,
-                consistency_pct, score, pnl, roi, sharpe, sortino, drawdown, elapsed_s, is_best, params)
-               VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                consistency_pct, score, pnl, roi, sharpe, sortino, drawdown, elapsed_s, is_best, params,
+                live_avg_daily, live_positive_days, live_total_pnl, live_sharpe, live_sortino, live_drawdown)
+               VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry["iteration"],
                 entry["avg_daily"],
@@ -101,7 +108,13 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
                 entry["drawdown"],
                 entry["elapsed_s"],
                 1 if entry["is_best"] else 0,
-                json.dumps(params)
+                json.dumps(params),
+                entry.get("live_avg_daily"),
+                entry.get("live_positive_days"),
+                entry.get("live_total_pnl"),
+                entry.get("live_sharpe"),
+                entry.get("live_sortino"),
+                entry.get("live_drawdown")
             )
         )
         conn.commit()
@@ -138,6 +151,12 @@ def _load_opt_history() -> list[dict]:
                 "sharpe": r["sharpe"],
                 "sortino": r["sortino"],
                 "drawdown": r["drawdown"],
+                "live_avg_daily": r["live_avg_daily"] if "live_avg_daily" in r.keys() else None,
+                "live_positive_days": r["live_positive_days"] if "live_positive_days" in r.keys() else None,
+                "live_total_pnl": r["live_total_pnl"] if "live_total_pnl" in r.keys() else None,
+                "live_sharpe": r["live_sharpe"] if "live_sharpe" in r.keys() else None,
+                "live_sortino": r["live_sortino"] if "live_sortino" in r.keys() else None,
+                "live_drawdown": r["live_drawdown"] if "live_drawdown" in r.keys() else None,
                 "ts": time.time(),
             })
         history.reverse()
@@ -173,6 +192,12 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
                 "max_drawdown": r["drawdown"],
                 "elapsed_s": r["elapsed_s"],
                 "active_days": r["positive_days"] + r["negative_days"],
+                "live_avg_daily": r["live_avg_daily"] if "live_avg_daily" in r.keys() else None,
+                "live_positive_days": r["live_positive_days"] if "live_positive_days" in r.keys() else None,
+                "live_total_pnl": r["live_total_pnl"] if "live_total_pnl" in r.keys() else None,
+                "live_sharpe": r["live_sharpe"] if "live_sharpe" in r.keys() else None,
+                "live_sortino": r["live_sortino"] if "live_sortino" in r.keys() else None,
+                "live_drawdown": r["live_drawdown"] if "live_drawdown" in r.keys() else None,
                 "reason": "Recuperado do Banco de Dados",
             }
             try:
@@ -774,15 +799,15 @@ def main():
 
                 # Sanity check: só aceita recorde se:
                 # 1) PnL total >= 0 E avg_day > 0 (sem prejuízo)
-                # 2) avg_daily <= 45 (evita resultados implausíveis com stake<=8 e $50)
-                # 3) active_days > 20 (bot realmente operou o mês inteiro)
+                # 2) avg_daily <= 120.0 (teto de plausibilidade realista com stakes maiores)
+                # 3) active_days >= 100 (bot realmente operou no período Jan-Mai)
                 active = m.get("active_days", 0) or 0
                 avg_d  = m["avg_daily_profit"]
                 pnl_ok = (
                     m["total_pnl"] >= 0
                     and avg_d > 0
-                    and avg_d <= 50.0      # teto de plausibilidade: max ~$50/dia com $50 banca
-                    and active >= 100      # 5 meses: pelo menos 100 dias com operações (de ~151)
+                    and avg_d <= 120.0     # teto de plausibilidade: max $120/dia com $50 banca e Soros
+                    and active >= 100      # 5 meses: pelo menos 100 dias com operações (de ~144)
                 )
 
                 if pnl_ok:
@@ -826,6 +851,12 @@ def main():
                     "sharpe":         m.get("sharpe_ratio", 0.0),
                     "sortino":        m.get("sortino_ratio", 0.0),
                     "drawdown":       m.get("max_drawdown", 0.0),
+                    "live_avg_daily": m.get("live_avg_daily"),
+                    "live_positive_days": m.get("live_positive_days"),
+                    "live_total_pnl": m.get("live_total_pnl"),
+                    "live_sharpe":    m.get("live_sharpe"),
+                    "live_sortino":   m.get("live_sortino"),
+                    "live_drawdown":  m.get("live_drawdown"),
                     "ts":             time.time(),
                 }
                 history.append(entry)

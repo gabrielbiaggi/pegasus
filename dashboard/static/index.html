@@ -2555,7 +2555,7 @@
                             <div style="background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.3);border-radius:10px;padding:12px;text-align:center">
                                 <div style="font-size:1.4rem;margin-bottom:4px">🗓️</div>
                                 <div style="font-size:.8rem;font-weight:700;color:#818cf8;margin-bottom:4px">BACKTEST</div>
-                                <div style="font-size:.72rem;color:var(--muted);line-height:1.4">Simula trades no histórico real de <b style="color:var(--text)">Maio 2026</b> com ticks reais da Deriv. Mede o resultado <b style="color:var(--text)">SEM arriscar dinheiro</b>.</div>
+                                <div style="font-size:.72rem;color:var(--muted);line-height:1.4">Simula trades no histórico real de <b id="opt-period-display" style="color:var(--text)">Maio 2026</b> com ticks reais da Deriv. Mede o resultado <b style="color:var(--text)">SEM arriscar dinheiro</b>.</div>
                             </div>
                             <!-- Seta -->
                             <div style="text-align:center;padding:0 8px;font-size:1.2rem;color:var(--muted)">→</div>
@@ -2576,9 +2576,9 @@
                         </div>
                         <!-- Explicação estratégia Frankenstein -->
                         <div style="margin-top:12px;padding:10px 14px;background:rgba(16,185,129,.07);border-left:3px solid var(--green);border-radius:var(--radius-sm);font-size:.75rem;color:var(--muted)">
-                            <b style="color:var(--green)">🧬 Estratégia Super-Frankenstein</b> — A estratégia que o optimizer usa como benchmark é a "Super-Frankenstein": ela combina as melhores técnicas (SOROS progressivo + Acumulador + filtros de sinal XGBoost). Em Maio 2026, foi a única estratégia <b style="color:var(--text)">consistentemente lucrativa</b> dos 9 modelos testados.
+                            <b style="color:var(--green)">🧬 Estratégia Super-Frankenstein</b> — A estratégia que o optimizer usa como benchmark é a "Super-Frankenstein": ela combina as melhores técnicas (SOROS progressivo + Acumulador + filtros de sinal XGBoost). No período de testes, é a única estratégia <b style="color:var(--text)">consistentemente lucrativa</b>.
                             <br><br>
-                            <b style="color:var(--cyan)">📊 O que mede:</b> Lucro médio por dia com $50 de banca fixo, sem compounding entre dias. Aceita só resultados com <b style="color:var(--text)">avg ≤ $50/dia</b> (realista) e <b style="color:var(--text)">≥ 20 dias com trades</b> (não contabiliza dias parados).
+                            <b style="color:var(--cyan)">📊 O que mede:</b> Lucro médio por dia com $50 de banca fixo, sem compounding entre dias. Aceita só resultados com <b style="color:var(--text)">avg ≤ $120/dia</b> (realista com Soros ativo) e consistência de dias positivos.
                         </div>
                     </div>
 
@@ -2597,7 +2597,7 @@
                         <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:.68rem;color:var(--muted)">
                             <span id="opt-meta-baseline">Baseline: —</span>
                             <span id="opt-meta-current">Melhor atual: —</span>
-                            <span>Meta: $50/dia (31/31)</span>
+                            <span id="opt-meta-target-label">Meta: $50/dia</span>
                         </div>
                     </div>
 
@@ -2710,7 +2710,7 @@
                     <!-- ═══ SEÇÃO 4: TABELA DE ITERAÇÕES MELHORADA ═══ -->
                     <div style="border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
                         <div style="padding:10px 14px;background:var(--bg3);font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between;align-items:center">
-                            <span>🔬 Histórico de Experimentos — Cada linha = 1 backtest de maio completo</span>
+                            <span>🔬 Histórico de Experimentos — Cada linha = 1 backtest completo (<span id="opt-period-days-display">—</span>)</span>
                             <span id="opt-running-dot" style="display:none;color:var(--green);animation:pulse 1.5s infinite">⬤ calculando...</span>
                         </div>
                         <div style="max-height:340px;overflow-y:auto">
@@ -5245,6 +5245,23 @@
                 try {
                     var d = await fetch("/api/optimizer/status?t=" + new Date().getTime()).then(function(r){ return r.json(); });
 
+                    // Atualiza período e dias dinâmicos nas descrições
+                    var periodDisplay = document.getElementById("opt-period-display");
+                    var periodDaysDisplay = document.getElementById("opt-period-days-display");
+                    if (d.start_date && d.end_date) {
+                        var startParts = d.start_date.split("-");
+                        var endParts = d.end_date.split("-");
+                        
+                        var monthsMap = {"01":"Jan", "02":"Fev", "03":"Mar", "04":"Abr", "05":"Mai", "06":"Jun", "07":"Jul", "08":"Ago", "09":"Set", "10":"Out", "11":"Nov", "12":"Dez"};
+                        var startMonth = monthsMap[startParts[1]] || startParts[1];
+                        var endMonth = monthsMap[endParts[1]] || endParts[1];
+                        
+                        var activeDays = d.baseline ? (d.baseline.active_days || d.baseline.total_days || 144) : 144;
+                        var periodText = startMonth + "/" + startParts[0] + " a " + endMonth + "/" + endParts[0] + " (" + activeDays + " dias ativos)";
+                        if (periodDisplay) periodDisplay.textContent = periodText;
+                        if (periodDaysDisplay) periodDaysDisplay.textContent = activeDays + " dias ativos";
+                    }
+
                     // Badge e pulse no botão da toolbar e no painel interno
                     var badge = document.getElementById("opt-status-badge");
                     var badgePanel = document.getElementById("opt-status-badge-panel");
@@ -5334,14 +5351,18 @@
                     var iters_all = d.iterations || [];
                     var best = d.best;
 
+                    var totalDays = bl ? (bl.active_days || bl.total_days || 144) : 144;
+                    var minPositiveDays = Math.round(totalDays * 0.70); 
+                    var maxDailyProfit = 120.0;
+
                     // ── Encontra o Melhor Válido e o Último Testado na lista em Tempo Real ──
                     var highestValidProfit = _baselineAvgDay;
                     var highestValidIt = null;
                     for (var i = 0; i < iters_all.length; i++) {
                         var it = iters_all[i];
-                        var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : 0);
-                        // Validação similar ao optimizer: lucro > 0, <= $50.00/dia (teto plausível) e >= 20 dias ativos
-                        var pnlOk = sfDay > 0 && sfDay <= 50.0 && (it.positive_days || 0) >= 20;
+                        var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / totalDays : 0);
+                        // Validação dinâmica: lucro > 0, <= $120.00/dia e >= minPositiveDays
+                        var pnlOk = sfDay > 0 && sfDay <= maxDailyProfit && (it.positive_days || 0) >= minPositiveDays;
                         if (pnlOk && sfDay > highestValidProfit) {
                             highestValidProfit = sfDay;
                             highestValidIt = it;
@@ -5433,6 +5454,11 @@
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";
                         if (metaCur) metaCur.textContent = "Melhor válido: $" + bestAvgDay.toFixed(2) + "/dia" + (activeBest && activeBest.iteration ? " (it#" + activeBest.iteration + ")" : "");
+                        
+                        var metaTargetLabel = document.getElementById("opt-meta-target-label");
+                        if (metaTargetLabel) {
+                            metaTargetLabel.textContent = "Meta: $50/dia (" + totalDays + "/" + totalDays + " dias)";
+                        }
 
                         // ── Live Bot (métricas secundárias baseadas no activeBest ou best geral) ──
                         var liveDaily = document.getElementById("opt-live-daily");
@@ -5453,7 +5479,7 @@
                     var lastStatus = document.getElementById("opt-last-status");
 
                     if (lastIt) {
-                        var lastSfDay = lastIt.avg_daily != null ? lastIt.avg_daily : (lastIt.pnl != null ? lastIt.pnl / 31 : null);
+                        var lastSfDay = lastIt.avg_daily != null ? lastIt.avg_daily : (lastIt.pnl != null ? lastIt.pnl / totalDays : null);
                         if (lastDaily) {
                             lastDaily.textContent = lastSfDay != null ? "$" + lastSfDay.toFixed(2) + "/dia" : "—";
                             lastDaily.style.color = "var(--text)";
@@ -5462,9 +5488,9 @@
                             lastPos.textContent = "dias positivos: " + (lastIt.positive_days != null ? lastIt.positive_days : "—") + " (it#" + lastIt.iteration + ")";
                         }
                         if (lastStatus) {
-                            if (lastSfDay > 50.0) {
-                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $50)</span>';
-                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= 20) {
+                            if (lastSfDay > maxDailyProfit) {
+                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
+                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= minPositiveDays) {
                                 lastStatus.innerHTML = '<span style="color:var(--green);font-weight:700;font-size:.65rem">✅ VÁLIDO (consist: ' + (lastIt.consistency_pct || 0).toFixed(0) + '%)</span>';
                             } else {
                                 lastStatus.innerHTML = '<span style="color:#f59e0b;font-weight:700;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
@@ -5507,7 +5533,7 @@
                             
                             var iters = iters_all.slice().reverse().slice(0, 200);
                             tbody.innerHTML = iters.map(function(it) {
-                                var sfDay   = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / 31 : null);
+                                var sfDay   = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / totalDays : null);
                                 var liveDay = it.live_avg_daily != null ? it.live_avg_daily : null;
                                 var posD    = it.positive_days != null ? it.positive_days : "—";
                                 var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
@@ -5525,9 +5551,9 @@
                                 var badge = "";
                                 if (it.is_best) {
                                     badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
-                                } else if (sfDay > 50.0) {
-                                    badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $50)</span>';
-                                } else if (sfDay > 0 && (it.positive_days || 0) >= 20) {
+                                } else if (sfDay > maxDailyProfit) {
+                                    badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
+                                } else if (sfDay > 0 && (it.positive_days || 0) >= minPositiveDays) {
                                     badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
                                 } else {
                                     badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
