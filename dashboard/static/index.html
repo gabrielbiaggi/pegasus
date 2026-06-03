@@ -2595,10 +2595,11 @@
                         <div style="background:var(--bg2);border-radius:100px;height:10px;overflow:hidden">
                             <div id="opt-meta-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#10b981);border-radius:100px;transition:width .6s ease"></div>
                         </div>
-                        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:.68rem;color:var(--muted)">
-                            <span id="opt-meta-baseline">Baseline: —</span>
-                            <span id="opt-meta-current">Melhor atual: —</span>
-                            <span id="opt-meta-target-label">Meta: $50/dia</span>
+                        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:.7rem;color:var(--muted);flex-wrap:wrap;gap:8px">
+                            <span id="opt-meta-baseline" style="background:rgba(255,255,255,0.03);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Baseline: —</span>
+                            <span id="opt-meta-current" style="background:rgba(16,185,129,0.05);color:var(--green);padding:2px 8px;border-radius:4px;border:1px solid rgba(16,185,129,0.15)">🏆 Campeão: —</span>
+                            <span id="opt-meta-live" style="background:rgba(96,165,250,0.05);color:#60a5fa;padding:2px 8px;border-radius:4px;border:1px solid rgba(96,165,250,0.15)">⚡ Live Bot: —</span>
+                            <span id="opt-meta-target-label" style="background:rgba(245,158,11,0.05);color:var(--yellow);padding:2px 8px;border-radius:4px;border:1px solid rgba(245,158,11,0.15)">🎯 Meta: $50/dia</span>
                         </div>
                     </div>
 
@@ -2692,19 +2693,6 @@
                             <div style="font-size:.72rem;color:var(--muted)">rebaixamento máximo</div>
                             <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Pior queda na banca simulada</div>
                         </div>
-                        <!-- Melhor Dia Campeão -->
-                        <div style="background:var(--bg3);border:1px solid rgba(16,185,129,.3);padding:14px;border-radius:var(--radius);position:relative">
-                            <div style="font-size:.65rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🌟 Melhor Dia Campeão</div>
-                            <div id="opt-best-day" style="font-size:1.5rem;font-weight:700;color:var(--green)">—</div>
-                            <div style="font-size:.72rem;color:var(--muted)">lucro do melhor dia</div>
-                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Maior pico positivo diário</div>
-                        </div>
-                        <!-- Pior Dia Campeão -->
-                        <div style="background:var(--bg3);border:1px solid rgba(239,68,68,.3);padding:14px;border-radius:var(--radius);position:relative">
-                            <div style="font-size:.65rem;color:#ef4444;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">💀 Pior Dia Campeão</div>
-                            <div id="opt-worst-day" style="font-size:1.5rem;font-weight:700;color:#ef4444">—</div>
-                            <div style="font-size:.72rem;color:var(--muted)">prejuízo do pior dia</div>
-                            <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Maior queda diária simulada</div>
                     </div>
 
                     <!-- ═══ SEÇÃO: ANÁLISE MULTI-MÊS & CAMPEÕES MENSAS ═══ -->
@@ -5538,17 +5526,22 @@
                         var metaBar = document.getElementById("opt-meta-bar");
                         var metaPct = document.getElementById("opt-meta-pct");
                         var metaCur = document.getElementById("opt-meta-current");
+                        var metaLive = document.getElementById("opt-meta-live");
+                        var metaBaseline = document.getElementById("opt-meta-baseline");
+                        
                         var META_TARGET = 50.0;
                         var pct = Math.min(100, Math.max(0, (bestAvgDay / META_TARGET) * 100));
                         if (metaBar) metaBar.style.width = pct.toFixed(1) + "%";
                         if (metaPct) metaPct.textContent = pct.toFixed(1) + "% do caminho";
-                        if (metaCur) metaCur.textContent = "Melhor válido: $" + bestAvgDay.toFixed(2) + "/dia" + (activeBest && activeBest.iteration ? " (it#" + activeBest.iteration + ")" : "");
                         
-                        var metaTargetLabel = document.getElementById("opt-meta-target-label");
-                        if (metaTargetLabel) {
-                            metaTargetLabel.textContent = "Meta: $50/dia (" + totalDays + "/" + totalDays + " dias)";
+                        if (metaBaseline) {
+                            metaBaseline.textContent = "Baseline: $" + (_baselineAvgDay != null ? _baselineAvgDay.toFixed(2) : "0.00") + "/dia";
                         }
-
+                        if (metaCur) {
+                            var champIt = activeBest && activeBest.iteration !== undefined ? activeBest.iteration : (best && best.iteration !== undefined ? best.iteration : 0);
+                            metaCur.textContent = "🏆 Campeão: it#" + champIt + " ($" + bestAvgDay.toFixed(2) + "/dia)";
+                        }
+                        
                         // ── Live Bot (métricas secundárias baseadas no activeBest ou best geral) ──
                         var liveDaily = document.getElementById("opt-live-daily");
                         var livePos   = document.getElementById("opt-live-pos");
@@ -5559,6 +5552,17 @@
                             liveDaily.style.color = liveAvg > 0 ? "#60a5fa" : "#f87171";
                         }
                         if (livePos && livePosD != null) livePos.textContent = "dias positivos: " + livePosD;
+
+                        if (metaLive) {
+                            var depIt = d.deployed_iteration != null ? d.deployed_iteration : "—";
+                            var livePnlText = liveAvg != null ? "$" + parseFloat(liveAvg).toFixed(2) + "/dia" : "—";
+                            metaLive.textContent = "⚡ Live Bot: it#" + depIt + " (" + livePnlText + ")";
+                        }
+                        
+                        var metaTargetLabel = document.getElementById("opt-meta-target-label");
+                        if (metaTargetLabel) {
+                            metaTargetLabel.textContent = "🎯 Meta: $50/dia";
+                        }
 
                         // ── Renderiza Breakdown Mensal (Tabela 1) ──
                         var monthlyTbody = document.getElementById("opt-monthly-breakdown-tbody");

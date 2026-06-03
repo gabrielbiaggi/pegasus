@@ -1297,14 +1297,14 @@ class DerivBot:
         )
         await self.send(ws, payload)
 
-    async def handle_authorize(
-        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    async def initialize_risk_and_subscriptions(
+        self,
+        ws: websockets.WebSocketClientProtocol,
+        balance: float,
+        loginid: str,
+        is_demo: bool,
     ) -> None:
-        auth = data["authorize"]
-        balance = float(auth["balance"])
-        loginid = str(auth.get("loginid", ""))
-        is_demo = loginid.upper().startswith("VRTC")
-
+        """Inicializa RiskManager, assina canais e reconcilia contratos abertos."""
         if self.config.account_mode == "demo" and not is_demo:
             raise FatalBotError(
                 f"ACCOUNT_MODE=demo, mas a API autorizou loginid={loginid}. Use token demo VRTC ou mude a config."
@@ -1330,7 +1330,7 @@ class DerivBot:
         else:
             max_loss_day = self.config.max_loss_per_day
         logger.info(
-            "Autorizado | loginid=%s | tipo=%s | saldo=%.2f | modo=%s | max_loss_dia=%.2f",
+            "Configurando sessão | loginid=%s | tipo=%s | saldo=%.2f | modo=%s | max_loss_dia=%.2f",
             loginid,
             account_type,
             balance,
@@ -1382,6 +1382,15 @@ class DerivBot:
         # Zombie-trade protection: reconcile open positions before subscribing ticks
         await self._reconcile_open_positions(ws)
         await self.subscribe_ticks(ws)
+
+    async def handle_authorize(
+        self, ws: websockets.WebSocketClientProtocol, data: dict[str, Any]
+    ) -> None:
+        auth = data["authorize"]
+        balance = float(auth["balance"])
+        loginid = str(auth.get("loginid", ""))
+        is_demo = loginid.upper().startswith("VRTC")
+        await self.initialize_risk_and_subscriptions(ws, balance, loginid, is_demo)
 
     async def handle_history(self, data: dict[str, Any]) -> None:
         history = data.get("history", {})
@@ -2152,6 +2161,13 @@ class DerivBot:
                         await self.authorize(ws, auth.legacy_token)
                     else:
                         logger.info("Nova API: Conexão WebSocket estabelecida e pré-autenticada via OTP.")
+                        is_demo = auth.account_id.upper().startswith("VRTC") or auth.account_type == "demo"
+                        await self.initialize_risk_and_subscriptions(
+                            ws,
+                            balance=auth.balance,
+                            loginid=auth.account_id,
+                            is_demo=is_demo,
+                        )
                     # Start EDA consumer task and watchdog
                     consumer_task = asyncio.create_task(self._tick_consumer())
                     watchdog_task = asyncio.create_task(
