@@ -339,8 +339,20 @@ def get_median_volatility(symbol: str) -> float:
 
 MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
 
-# Paralelismo: usa todos os 9 cores com prioridade baixa (nice -n 19)
-N_WORKERS = 9
+def parse_optimizer_workers(env: dict | None = None, default: int = 6) -> int:
+    """Return a bounded optimizer worker count for memory-safe parallelism."""
+    env = env or os.environ
+    raw = env.get("PEGASUS_OPTIMIZER_WORKERS", str(default))
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(12, value))
+
+
+# Each backtest worker holds tick data in memory. Keep this configurable so the
+# server can reserve RAM for cloudflared, dashboard, k3s, n8n, MinIO and cache.
+N_WORKERS = parse_optimizer_workers()
 
 PARAM_SPACE = {
     # Stake base para operar: busca expandida de 2.0 a 35.0

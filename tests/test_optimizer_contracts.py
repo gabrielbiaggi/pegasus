@@ -78,6 +78,13 @@ class OptimizerContractsTest(unittest.TestCase):
             )
         )
 
+    def test_parse_optimizer_workers_clamps_invalid_and_extreme_values(self) -> None:
+        self.assertEqual(optimize_loop.parse_optimizer_workers({}, default=6), 6)
+        self.assertEqual(optimize_loop.parse_optimizer_workers({"PEGASUS_OPTIMIZER_WORKERS": "2"}, default=6), 2)
+        self.assertEqual(optimize_loop.parse_optimizer_workers({"PEGASUS_OPTIMIZER_WORKERS": "99"}, default=6), 12)
+        self.assertEqual(optimize_loop.parse_optimizer_workers({"PEGASUS_OPTIMIZER_WORKERS": "bad"}, default=6), 6)
+        self.assertEqual(optimize_loop.parse_optimizer_workers({"PEGASUS_OPTIMIZER_WORKERS": "0"}, default=6), 1)
+
     def test_read_optimizer_workers_prefers_active_monthly_worker_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             logs = Path(tmp)
