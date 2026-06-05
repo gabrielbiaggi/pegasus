@@ -1189,8 +1189,11 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[di
     now = now if now is not None else _time.time()
     workers: list[dict] = []
 
-    paths = list(logs_dir.glob("backtest_worker_par_*.json"))
-    paths.extend(logs_dir.glob("backtest_worker_w*.json"))
+    paths = sorted(
+        logs_dir.glob("backtest_worker_*.json"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
 
     seen: set[str] = set()
     for path in paths:
@@ -1199,8 +1202,11 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[di
             continue
         seen.add(worker_id)
         try:
+            stat = path.stat()
+            if stat.st_size > 65536:
+                continue
             data = json.loads(path.read_text(encoding="utf-8"))
-            mtime = path.stat().st_mtime
+            mtime = stat.st_mtime
             curr_idx = int(data.get("current_day_index", 0) or 0)
             total_days = int(data.get("total_days", 0) or 0)
             elapsed = float(data.get("elapsed_s", 0.0) or 0.0)
@@ -1222,15 +1228,17 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[di
                 "total_days": total_days,
                 "current_day": data.get("current_day"),
                 "current_month": month,
+                "source_file": path.name,
                 "last_update_ago_s": int(now - mtime),
                 "stale": stale,
             })
         except Exception:
             continue
 
-    def sort_key(worker: dict) -> tuple[int, str]:
+    def sort_key(worker: dict) -> tuple[int, int, str]:
         worker_id = str(worker.get("worker_id", ""))
-        return (0 if worker_id.startswith("par_") else 1, worker_id)
+        is_active = not worker.get("stale") and worker.get("status") != "Finalizado"
+        return (0 if is_active else 1, 0 if worker_id.startswith("par_") else 1, worker_id)
 
     return sorted(workers, key=sort_key)
 
@@ -1350,7 +1358,11 @@ def optimizer_status(response: Response):
                     candidate.update(live_worker)
                     continue
                 if status.startswith("Simulando"):
-                    worker_file = BASE / "logs" / f"backtest_worker_w{idx}.json"
+                    worker_file = (
+                        BASE / "logs" / f"backtest_worker_{worker_id}.json"
+                        if worker_id
+                        else BASE / "logs" / f"backtest_worker_w{idx}.json"
+                    )
                     if worker_file.exists():
                         try:
                             if data["running"]:
@@ -1371,6 +1383,17 @@ def optimizer_status(response: Response):
                                     candidate["status"] = f"Simulando {month_suffix} ({curr_idx}/{total_d})"
                         except Exception:
                             pass
+            active_worker_ids = {
+                str(candidate.get("worker_id"))
+                for candidate in evaluating_candidates
+                if candidate.get("worker_id")
+            }
+            if active_worker_ids:
+                data["optimizer_workers"] = [
+                    worker
+                    for worker in workers
+                    if str(worker.get("worker_id")) in active_worker_ids
+                ]
 
             return data
         except Exception as exc:

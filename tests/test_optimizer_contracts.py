@@ -67,7 +67,7 @@ class OptimizerContractsTest(unittest.TestCase):
             old_ts = time.time() - 3600
             os.utime(stale, (old_ts, old_ts))
 
-            active = logs / "backtest_worker_par_1_Fev.json"
+            active = logs / "backtest_worker_Mar_r2_w0.json"
             active.write_text(json.dumps({
                 "current_day_index": 14,
                 "total_days": 28,
@@ -79,11 +79,31 @@ class OptimizerContractsTest(unittest.TestCase):
             workers = dashboard_app._read_optimizer_workers(logs, now=time.time())
 
         self.assertEqual(len(workers), 2)
-        self.assertEqual(workers[0]["worker_id"], "par_1_Fev")
+        self.assertEqual(workers[0]["worker_id"], "Mar_r2_w0")
         self.assertEqual(workers[0]["progress_pct"], 50.0)
         self.assertFalse(workers[0]["stale"])
         self.assertEqual(workers[1]["worker_id"], "w0")
         self.assertTrue(workers[1]["stale"])
+
+    def test_sanitize_metrics_for_state_removes_runtime_payloads(self) -> None:
+        metrics = {
+            "avg_daily_profit": 12.3,
+            "_env": {"DERIV_TOKEN": "secret"},
+            "summary": {
+                "results": [{"date": "2026-01-01", "pnl": 1.0}],
+                "strategies": {"Super-Frankenstein": {"total_pnl": 12.3}},
+            },
+            "monthly_breakdown": {"Super-Frankenstein": {"Jan/26": {"pnl": 12.3}}},
+        }
+
+        safe = optimize_loop.sanitize_metrics_for_state(metrics)
+        serialized = json.dumps(safe)
+
+        self.assertNotIn("_env", safe)
+        self.assertNotIn("results", safe["summary"])
+        self.assertNotIn("secret", serialized)
+        self.assertEqual(safe["avg_daily_profit"], 12.3)
+        self.assertIn("monthly_breakdown", safe)
 
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [

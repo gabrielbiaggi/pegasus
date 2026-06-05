@@ -3,10 +3,11 @@
 # deploy.sh — Deploy do Pegasus para o servidor genesys-ubuntu via Tailscale
 #
 # Fluxo:
-#   1. git add + commit + push  (código)
-#   2. scp .env  →  server      (.env nunca vai no git, tem tokens)
-#   3. git pull  no server
-#   4. restart do bot           (opcional: --restart)
+#   0. scp .env  server → local  (fonte atual antes de alterar)
+#   1. git add + commit + push   (código versionado)
+#   2. scp .env  local → server  (.env nunca vai no git, tem tokens)
+#   3. git pull  no server       (deploy do código via Git)
+#   4. restart do bot            (opcional: --restart)
 #
 # Uso:
 #   ./deploy.sh                          # commit automático "deploy: sync"
@@ -19,6 +20,8 @@ set -euo pipefail
 SERVER="root@100.98.249.29"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 REMOTE_DIR="/opt/pegasus"
+DEPLOY_REMOTE="${DEPLOY_REMOTE:-deploy}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
 SCP="scp -i $SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
 
@@ -62,42 +65,32 @@ else
     git commit -m "$COMMIT_MSG"
     echo "  Commit: $COMMIT_MSG"
 fi
-PUSH_FAILED=false
-git push || PUSH_FAILED=true
-if [ "$PUSH_FAILED" = true ]; then
-    echo "  ⚠️ Git push falhou. Arquivos serão sincronizados via SCP."
-else
-    echo "  ✅ Push concluído"
+if ! git remote get-url "$DEPLOY_REMOTE" >/dev/null 2>&1; then
+    echo "  ❌ Remote Git '$DEPLOY_REMOTE' não existe. Configure antes de deploy."
+    exit 1
 fi
+git push "$DEPLOY_REMOTE" "HEAD:${DEPLOY_BRANCH}"
+echo "  ✅ Push concluído em ${DEPLOY_REMOTE}/${DEPLOY_BRANCH}"
 
-# ── 2. Copiar .env e optimizer_state.json para o servidor ───────────────────
+# ── 2. Copiar .env para o servidor ───────────────────────────────────────────
 echo ""
 echo "▶ [2/4] Copiando .env → server..."
 $SCP .env "${SERVER}:${REMOTE_DIR}/.env"
 echo "  ✅ .env copiado"
-# Copia estado do optimizer (gitignored mas necessário para o dashboard)
-if [ -f "logs/optimizer_state.json" ]; then
-    $SCP logs/optimizer_state.json "${SERVER}:${REMOTE_DIR}/logs/optimizer_state.json" 2>/dev/null || true
-    echo "  ✅ optimizer_state.json copiado"
-fi
 
 # ── 3. Git pull no servidor ──────────────────────────────────────────────────
 echo ""
 echo "▶ [3/4] Git pull no servidor..."
-PULL_OK=true
-if [ "$PUSH_FAILED" = true ] || ! $SSH "$SERVER" "cd $REMOTE_DIR && git pull"; then
-    PULL_OK=false
-fi
-
-if [ "$PULL_OK" = false ]; then
-    echo "  ⚠️ Git desatualizado ou falhou no servidor. Copiando todos os arquivos modificados via SCP..."
-    $SCP backtest_engine.py risk_manager.py strategy.py journal.py bot.py config.py optimize_loop.py download_ticks_range.py "${SERVER}:${REMOTE_DIR}/"
-    $SCP dashboard/static/index.html dashboard/app.py "${SERVER}:${REMOTE_DIR}/dashboard/static/" || true
-    $SCP dashboard/app.py "${SERVER}:${REMOTE_DIR}/dashboard/"
-    echo "  ✅ Arquivos copiados com sucesso via SCP"
-else
-    echo "  ✅ Pull OK"
-fi
+$SSH "$SERVER" "
+    set -euo pipefail
+    cd '$REMOTE_DIR'
+    if ! git remote get-url '$DEPLOY_REMOTE' >/dev/null 2>&1; then
+        git remote add '$DEPLOY_REMOTE' /opt/pegasus-deploy.git
+    fi
+    git fetch '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
+    git pull --ff-only '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
+"
+echo "  ✅ Pull OK via ${DEPLOY_REMOTE}/${DEPLOY_BRANCH}"
 
 
 # ── 4. Restart do bot (opcional) ─────────────────────────────────────────────

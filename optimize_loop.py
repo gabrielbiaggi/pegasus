@@ -741,6 +741,30 @@ def _run_one(args) -> dict | None:
 
 _state_lock = threading.Lock()
 
+_STATE_DROP_KEYS = {
+    "_env",
+    "env",
+    "env_overrides",
+    "raw_results",
+    "results",
+    "daily_results",
+    "trades",
+    "signals",
+}
+
+def sanitize_metrics_for_state(value):
+    """Keep optimizer dashboard state small and free of runtime secrets."""
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            if str(key) in _STATE_DROP_KEYS:
+                continue
+            clean[key] = sanitize_metrics_for_state(item)
+        return clean
+    if isinstance(value, list):
+        return [sanitize_metrics_for_state(item) for item in value[:500]]
+    return value
+
 def write_state(iteration: int, baseline: dict, best: dict | None,
                 history: list, running: bool = True,
                 evaluating_candidates: list | None = None,
@@ -768,9 +792,9 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
         payload = {
             "running":           running,
             "current_iteration": iteration,
-            "baseline":          baseline,
-            "best":              best,
-            "iterations":        history[-200:],
+            "baseline":          sanitize_metrics_for_state(baseline),
+            "best":              sanitize_metrics_for_state(best),
+            "iterations":        sanitize_metrics_for_state(history[-200:]),
             "last_update":       time.time(),
             "start_date":        START_DATE,
             "end_date":          END_DATE,
@@ -778,9 +802,9 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
             "optimizer_context": optimizer_context(),
         }
         if existing_candidates is not None:
-            payload["evaluating_candidates"] = existing_candidates
+            payload["evaluating_candidates"] = sanitize_metrics_for_state(existing_candidates)
         if existing_champions is not None:
-            payload["monthly_champions"] = existing_champions
+            payload["monthly_champions"] = sanitize_metrics_for_state(existing_champions)
 
         tmp = STATE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),

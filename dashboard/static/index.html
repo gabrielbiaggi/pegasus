@@ -5871,20 +5871,24 @@
                                 if (statusText.indexOf("Simulando") >= 0) {
                                     if (c.progress_pct != null) {
                                         var remS = c.est_remaining_s != null ? Math.round(c.est_remaining_s) : "--";
+                                        var dayText = (c.current_day_index != null && c.total_days != null)
+                                            ? (c.current_day_index + "/" + c.total_days)
+                                            : "";
                                         progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
                                             + '<div style="background:linear-gradient(90deg,var(--green),var(--cyan));height:100%;width:' + c.progress_pct + '%"></div>'
                                             + '</div>'
                                             + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
-                                            + '<span>' + statusText + ' (' + Math.round(c.progress_pct) + '%)</span>'
+                                            + '<span>' + (dayText ? dayText + " · " : "") + Math.round(c.progress_pct) + '%</span>'
                                             + '<span>Faltam ~' + remS + 's</span>'
                                             + '</div>';
                                     } else {
+                                        var ageText = c.last_update_ago_s != null ? (c.last_update_ago_s + "s sem update") : "sem arquivo";
                                         progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
-                                            + '<div style="background:var(--green);height:100%;width:10%;animation:pulse 1s infinite"></div>'
+                                            + '<div style="background:var(--yellow);height:100%;width:100%"></div>'
                                             + '</div>'
                                             + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
-                                            + '<span>Inicializando...</span>'
-                                            + '<span>Faltam --s</span>'
+                                            + '<span>Aguardando telemetria</span>'
+                                            + '<span>' + ageText + '</span>'
                                             + '</div>';
                                     }
                                 } else if (statusText.indexOf("Finalizado") >= 0 || statusText.indexOf("Inválido") >= 0) {
