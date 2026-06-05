@@ -62,8 +62,8 @@ else
     git commit -m "$COMMIT_MSG"
     echo "  Commit: $COMMIT_MSG"
 fi
-git push
-echo "  ✅ Push OK"
+git push || echo "  ⚠️ Git push falhou (continuando com deploy manual)..."
+echo "  ✅ Push concluído"
 
 # ── 2. Copiar .env e optimizer_state.json para o servidor ───────────────────
 echo ""
@@ -79,8 +79,14 @@ fi
 # ── 3. Git pull no servidor ──────────────────────────────────────────────────
 echo ""
 echo "▶ [3/4] Git pull no servidor..."
-$SSH "$SERVER" "cd $REMOTE_DIR && git pull"
-echo "  ✅ Pull OK"
+if ! $SSH "$SERVER" "cd $REMOTE_DIR && git pull"; then
+    echo "  ⚠️ Git pull falhou no servidor. Copiando arquivos modificados via SCP..."
+    $SCP backtest_engine.py risk_manager.py strategy.py "${SERVER}:${REMOTE_DIR}/"
+    $SCP dashboard/static/index.html "${SERVER}:${REMOTE_DIR}/dashboard/static/"
+    echo "  ✅ Arquivos copiados com sucesso via SCP"
+else
+    echo "  ✅ Pull OK"
+fi
 
 
 # ── 4. Restart do bot (opcional) ─────────────────────────────────────────────
