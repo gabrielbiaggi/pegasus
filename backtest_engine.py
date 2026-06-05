@@ -603,14 +603,18 @@ def _simulate_multiplier_profit(
     returns_path: list[float],
 ) -> float:
     sign = 1.0 if direction == "MULTUP" else -1.0
-    last_profit = 0.0
+    # Commission is 0.02% of the exposure (stake * MULTIPLIER_VALUE)
+    commission = stake * MULTIPLIER_VALUE * 0.0002
+    
+    last_net_profit = -commission
     for ret in returns_path:
-        last_profit = round(stake * MULTIPLIER_VALUE * sign * ret, 2)
-        if last_profit >= MULTIPLIER_TAKE_PROFIT:
+        gross_profit = stake * MULTIPLIER_VALUE * sign * ret
+        last_net_profit = round(gross_profit - commission, 2)
+        if last_net_profit >= MULTIPLIER_TAKE_PROFIT:
             return round(MULTIPLIER_TAKE_PROFIT, 2)
-        if last_profit <= -MULTIPLIER_STOP_LOSS:
+        if last_net_profit <= -MULTIPLIER_STOP_LOSS:
             return round(-MULTIPLIER_STOP_LOSS, 2)
-    return last_profit
+    return last_net_profit
 
 
 def _multiplier_direction_from_signal(signal: str) -> str:

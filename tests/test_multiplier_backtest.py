@@ -39,7 +39,7 @@ class MultiplierBacktestTest(unittest.TestCase):
                 [0.0004, 0.0008],
             )
 
-        self.assertEqual(profit, 0.16)
+        self.assertEqual(profit, 0.12)
 
     def test_multiplier_direction_can_be_forced_up_or_down(self) -> None:
         with patch.object(backtest_engine, "MULTIPLIER_DIRECTION", "up"):
