@@ -1730,7 +1730,7 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
     total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
     for r in results:
         for s in STRATEGY_NAMES:
-            total_pnls[s] += r["strategies"][s]["pnl"]
+            total_pnls[s] += r.get("strategies", {}).get(s, {}).get("pnl", 0.0)
             
     summary = {"total_days": n, "strategies": {}}
     for s in STRATEGY_NAMES:

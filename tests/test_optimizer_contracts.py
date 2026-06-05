@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import dashboard.app as dashboard_app
+import backtest_engine
 import optimize_loop
 
 
@@ -83,6 +84,46 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertFalse(workers[0]["stale"])
         self.assertEqual(workers[1]["worker_id"], "w0")
         self.assertTrue(workers[1]["stale"])
+
+    def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
+        results = [
+            {
+                "date": "2026-01-01",
+                "strategies": {
+                    "Super-Frankenstein": {
+                        "pnl": 5.0,
+                        "trades": 1,
+                        "signal_wr": 100.0,
+                        "busted": False,
+                    }
+                },
+            },
+            {
+                "date": "2026-01-02",
+                "strategies": {
+                    "Super-Frankenstein": {
+                        "pnl": 3.0,
+                        "trades": 1,
+                        "signal_wr": 100.0,
+                        "busted": False,
+                    },
+                    "Pegasus Live Sniper (9% TP)": {
+                        "pnl": 1.0,
+                        "trades": 1,
+                        "signal_wr": 100.0,
+                        "busted": False,
+                    },
+                },
+            },
+        ]
+
+        metrics = backtest_engine.compile_summary_metrics(results, {}, 50.0)
+
+        self.assertIsNotNone(metrics)
+        self.assertEqual(
+            metrics["summary"]["strategies"]["Super-Frankenstein"]["total_pnl"],
+            8.0,
+        )
 
 
 if __name__ == "__main__":
