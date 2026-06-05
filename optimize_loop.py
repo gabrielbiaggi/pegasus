@@ -808,7 +808,9 @@ def sanitize_metrics_for_state(value):
 def write_state(iteration: int, baseline: dict, best: dict | None,
                 history: list, running: bool = True,
                 evaluating_candidates: list | None = None,
-                monthly_champions: dict | None = None) -> None:
+                monthly_champions: dict | None = None,
+                phase: str | None = None,
+                crossover_results: list | None = None) -> None:
     """Grava estado para o dashboard ler (thread-safe)."""
     try:
         existing_candidates = None
@@ -841,10 +843,14 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
             "n_workers":         N_WORKERS,
             "optimizer_context": optimizer_context(),
         }
+        if phase is not None:
+            payload["phase"] = phase
         if existing_candidates is not None:
             payload["evaluating_candidates"] = sanitize_metrics_for_state(existing_candidates)
         if existing_champions is not None:
             payload["monthly_champions"] = sanitize_metrics_for_state(existing_champions)
+        if crossover_results is not None:
+            payload["crossover_results"] = sanitize_metrics_for_state(crossover_results)
 
         tmp = STATE_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
@@ -912,6 +918,34 @@ def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
     if monthly_breakdown:
         entry["monthly_breakdown"] = sanitize_metrics_for_state(monthly_breakdown)
     return entry
+
+
+def build_dashboard_history_entry(
+    iteration_num: int,
+    metrics: dict,
+    phase: str,
+    is_best: bool = False,
+    elapsed_s: float = 0.0,
+) -> dict:
+    """Compact optimizer result row for the live dashboard tables."""
+    return {
+        "iteration": iteration_num,
+        "phase": phase,
+        "avg_daily_profit": round(float(metrics.get("avg_daily_profit", 0.0) or 0.0), 4),
+        "avg_daily": round(float(metrics.get("avg_daily_profit", 0.0) or 0.0), 4),
+        "pnl": round(float(metrics.get("total_pnl", 0.0) or 0.0), 2),
+        "total_pnl": round(float(metrics.get("total_pnl", 0.0) or 0.0), 2),
+        "score": round(float(metrics.get("score", 0.0) or 0.0), 4),
+        "positive_days": int(metrics.get("positive_days", 0) or 0),
+        "active_days": int(metrics.get("active_days", 0) or 0),
+        "consistency_pct": round(float(metrics.get("consistency_pct", 0.0) or 0.0), 1),
+        "drawdown": round(float(metrics.get("max_drawdown", metrics.get("drawdown", 0.0)) or 0.0), 2),
+        "max_drawdown": round(float(metrics.get("max_drawdown", metrics.get("drawdown", 0.0)) or 0.0), 2),
+        "sharpe": round(float(metrics.get("sharpe", metrics.get("sharpe_ratio", 0.0)) or 0.0), 4),
+        "sortino": round(float(metrics.get("sortino", metrics.get("sortino_ratio", 0.0)) or 0.0), 4),
+        "elapsed_s": round(float(elapsed_s or 0.0), 2),
+        "is_best": bool(is_best),
+    }
 
 
 def build_crossover_env(champ_info: dict) -> dict[str, str]:
@@ -1294,12 +1328,14 @@ def main():
     ]
 
     monthly_champions = {}
+    dashboard_result_seq = max(iteration, 1)
 
     # Executamos a busca para cada mês individualmente
     for m_info in months:
         m_name = m_info["name"]
         m_start = m_info["start"]
         m_end = m_info["end"]
+        m_key = m_start[:7]
         print(f"\n📅 Otimizando para o mês: {m_name} ({m_start} a {m_end})...", flush=True)
 
         month_best_score = -999999.0
@@ -1328,7 +1364,8 @@ def main():
                     })
                 write_state(iteration - 1, baseline_metrics, best_data, history,
                             evaluating_candidates=candidates_ui,
-                            monthly_champions=monthly_champions)
+                            monthly_champions=monthly_champions,
+                            phase=f"monthly:{m_name}:round:{r}")
 
                 futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
 
@@ -1338,6 +1375,7 @@ def main():
                         res = fut.result()
                         candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
                         if res:
+                            dashboard_result_seq += 1
                             candidates_ui[idx].update({
                                 "result_score": round(float(res.get("score", 0.0) or 0.0), 4),
                                 "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
@@ -1345,6 +1383,16 @@ def main():
                                 "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
                                 "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
                             })
+                            history.append(
+                                build_dashboard_history_entry(
+                                    dashboard_result_seq,
+                                    res,
+                                    f"monthly:{m_name}",
+                                    bool(res["score"] > month_best_score),
+                                )
+                            )
+                            if len(history) > 500:
+                                history = history[-500:]
                         if res and res["score"] > month_best_score:
                             month_best_score = res["score"]
                             month_best_env = res["_env"].copy()
@@ -1358,16 +1406,21 @@ def main():
                     finally:
                         write_state(iteration - 1, baseline_metrics, best_data, history,
                                     evaluating_candidates=candidates_ui,
-                                    monthly_champions=monthly_champions)
+                                    monthly_champions=monthly_champions,
+                                    phase=f"monthly:{m_name}:round:{r}")
 
         champ_params = month_best_env.copy()
         champ_params.pop("START_DATE", None)
         champ_params.pop("END_DATE", None)
         champ_params = sanitize_params_for_storage(champ_params)
 
-        monthly_champions[m_name] = build_monthly_champion_entry(champ_params, month_best_metrics)
-        write_state(iteration - 1, baseline_metrics, best_data, history,
-                    monthly_champions=monthly_champions)
+        monthly_champions[m_key] = build_monthly_champion_entry(champ_params, month_best_metrics)
+        monthly_champions[m_key]["month_name"] = m_name
+        monthly_champions[m_key]["month_key"] = m_key
+        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                    evaluating_candidates=[],
+                    monthly_champions=monthly_champions,
+                    phase=f"monthly:{m_name}:champion")
         print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
         print(f"   Parâmetros seguros: {champ_params}", flush=True)
 
@@ -1378,18 +1431,38 @@ def main():
 
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         jobs = []
+        candidates_ui = []
         for champ_name, champ_info in monthly_champions.items():
             env_test = build_crossover_env(champ_info)
             jobs.append((env_test, champ_name))
+            candidates_ui.append({
+                **sanitize_params_for_storage(env_test),
+                "worker_id": f"cross_{champ_name}",
+                "current_month": "Jan-Jun",
+                "status": "Simulando...",
+                "champ_name": champ_name,
+            })
 
-        futures = {pool.submit(_run_one, (job[0], f"cross_{job[1]}")): job[1] for job in jobs}
+        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                    evaluating_candidates=candidates_ui,
+                    monthly_champions=monthly_champions,
+                    phase="crossover",
+                    crossover_results=crossover_results)
+
+        futures = {
+            pool.submit(_run_one, (job[0], f"cross_{job[1]}")): idx
+            for idx, job in enumerate(jobs)
+        }
 
         for fut in as_completed(futures):
-            champ_name = futures[fut]
+            idx = futures[fut]
+            champ_name = jobs[idx][1]
             try:
                 res = fut.result()
+                candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
                 if res:
-                    crossover_results.append({
+                    dashboard_result_seq += 1
+                    row = {
                         "champ_name": champ_name,
                         "score": res["score"],
                         "avg_daily_profit": res["avg_daily_profit"],
@@ -1399,9 +1472,34 @@ def main():
                         "active_days": res["active_days"],
                         "params": sanitize_params_for_storage(res["_env"]),
                         "monthly_breakdown": res.get("monthly_breakdown", {})
+                    }
+                    crossover_results.append(row)
+                    candidates_ui[idx].update({
+                        "result_score": round(float(res.get("score", 0.0) or 0.0), 4),
+                        "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
+                        "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
+                        "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
+                        "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
                     })
+                    history.append(
+                        build_dashboard_history_entry(
+                            dashboard_result_seq,
+                            res,
+                            f"crossover:{champ_name}",
+                            False,
+                        )
+                    )
+                    if len(history) > 500:
+                        history = history[-500:]
             except Exception as e:
+                candidates_ui[idx]["status"] = "Erro"
                 print(f"   [Crossover] erro ao testar campeão de {champ_name}: {e}", flush=True)
+            finally:
+                write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                            evaluating_candidates=candidates_ui,
+                            monthly_champions=monthly_champions,
+                            phase="crossover",
+                            crossover_results=crossover_results)
 
     crossover_results = sorted(crossover_results, key=lambda x: x["score"], reverse=True)
 
@@ -1456,7 +1554,14 @@ def main():
         "positive_days": supreme_winner["positive_days"],
         "active_days": supreme_winner["active_days"],
         "iteration": 9999,
+        "monthly_breakdown": supreme_winner.get("monthly_breakdown", {}),
+        "phase": f"supreme:{supreme_winner['champ_name']}",
     }
+    write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                evaluating_candidates=[],
+                monthly_champions=monthly_champions,
+                phase=f"supreme:{supreme_winner['champ_name']}",
+                crossover_results=crossover_results)
 
     # Faz deploy do vencedor supremo no bot ao vivo
     if is_live_deployable(best_data):

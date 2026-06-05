@@ -1298,7 +1298,7 @@ def _optimizer_dashboard_cards(
         for worker in workers
         if worker.get("worker_id")
     }
-    if running and saved_ids and any(worker_id in live_by_id for worker_id in saved_ids):
+    if running and saved_ids:
         return [
             {**candidate, **live_by_id.get(str(candidate.get("worker_id") or ""), {})}
             for candidate in saved_candidates[:limit]
@@ -1400,6 +1400,7 @@ def optimizer_status(response: Response):
 
             # Enriquecimento com progresso de workers em tempo real
             evaluating_candidates = data.get("evaluating_candidates", [])
+            state_candidates = list(evaluating_candidates or [])
             workers_by_id = {
                 str(worker.get("worker_id")): worker
                 for worker in workers
@@ -1419,7 +1420,6 @@ def optimizer_status(response: Response):
                 ]
                 data["evaluating_candidates"] = evaluating_candidates
             elif evaluating_candidates:
-                evaluating_candidates = _merge_optimizer_candidates(evaluating_candidates, workers)
                 data["evaluating_candidates"] = evaluating_candidates
             for idx, candidate in enumerate(evaluating_candidates):
                 status = str(candidate.get("status", ""))
@@ -1456,7 +1456,7 @@ def optimizer_status(response: Response):
                             pass
             if evaluating_candidates:
                 evaluating_candidates = _optimizer_dashboard_cards(
-                    evaluating_candidates,
+                    state_candidates or evaluating_candidates,
                     workers,
                     n_workers=n_workers,
                     running=bool(data["running"]),

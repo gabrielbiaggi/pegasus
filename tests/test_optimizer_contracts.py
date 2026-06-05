@@ -240,7 +240,7 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual([item["worker_id"] for item in merged], ["Fev_r4_w0"])
 
-    def test_optimizer_dashboard_cards_prefer_current_live_workers_and_worker_limit(self) -> None:
+    def test_optimizer_dashboard_cards_keep_declared_round_before_progress_files_exist(self) -> None:
         saved = [
             {"worker_id": "Jan_r0_w0", "status": "Simulando...", "STAKE": "11"},
             {"worker_id": "Jan_r0_w1", "status": "Finalizado", "STAKE": "12"},
@@ -263,8 +263,8 @@ class OptimizerContractsTest(unittest.TestCase):
 
         cards = dashboard_app._optimizer_dashboard_cards(saved, workers, n_workers=6, running=True)
 
-        self.assertEqual([item["worker_id"] for item in cards], [f"Abr_r3_w{i}" for i in range(6)])
-        self.assertEqual(cards[0]["progress_pct"], 76.7)
+        self.assertEqual([item["worker_id"] for item in cards], [f"Jan_r0_w{i}" for i in range(6)])
+        self.assertNotIn("progress_pct", cards[0])
 
     def test_optimizer_dashboard_cards_keep_state_declared_current_round(self) -> None:
         saved = [{"worker_id": f"Fev_r4_w{i}", "status": "Simulando..."} for i in range(6)]
@@ -279,6 +279,39 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual([item["worker_id"] for item in cards], [f"Fev_r4_w{i}" for i in range(6)])
         self.assertEqual(cards[0]["progress_pct"], 96.4)
+
+    def test_optimizer_status_cards_do_not_mix_external_live_workers_into_active_round(self) -> None:
+        saved = [{"worker_id": f"Mar_r3_w{i}", "status": "Simulando..."} for i in range(6)]
+        workers = [
+            {"worker_id": "Mar_r3_w0", "status": "Simulando...", "progress_pct": 80.0},
+            {"worker_id": "Mar_r3_w1", "status": "Simulando...", "progress_pct": 70.0},
+            {"worker_id": "cross_Abril", "status": "Simulando...", "progress_pct": 10.0},
+        ]
+
+        merged_first = dashboard_app._merge_optimizer_candidates(saved, workers)
+        cards = dashboard_app._optimizer_dashboard_cards(saved, workers, n_workers=6, running=True)
+
+        self.assertIn("cross_Abril", [item["worker_id"] for item in merged_first])
+        self.assertEqual([item["worker_id"] for item in cards], [f"Mar_r3_w{i}" for i in range(6)])
+
+    def test_monthly_dashboard_history_entry_exposes_winner_metrics(self) -> None:
+        metrics = {
+            "score": 123.4,
+            "avg_daily_profit": 55.5,
+            "total_pnl": 1555.0,
+            "positive_days": 25,
+            "active_days": 31,
+            "consistency_pct": 80.6,
+            "max_drawdown": 12.3,
+        }
+
+        entry = optimize_loop.build_dashboard_history_entry(101, metrics, "monthly:Janeiro", True)
+
+        self.assertEqual(entry["iteration"], 101)
+        self.assertEqual(entry["phase"], "monthly:Janeiro")
+        self.assertEqual(entry["avg_daily_profit"], 55.5)
+        self.assertEqual(entry["avg_daily"], 55.5)
+        self.assertTrue(entry["is_best"])
 
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [

@@ -2740,11 +2740,12 @@
                                                 <th style="padding:6px;text-align:right;color:var(--muted)">Mar</th>
                                                 <th style="padding:6px;text-align:right;color:var(--muted)">Abr</th>
                                                 <th style="padding:6px;text-align:right;color:var(--muted)">Mai</th>
+                                                <th style="padding:6px;text-align:right;color:var(--muted)">Jun</th>
                                                 <th style="padding:6px;text-align:right;color:var(--cyan)">it#</th>
                                             </tr>
                                         </thead>
                                         <tbody id="opt-monthly-champions-tbody">
-                                            <tr><td colspan="7" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda...</td></tr>
+                                            <tr><td colspan="8" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda...</td></tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -5576,13 +5577,14 @@
                         // ── Renderiza Breakdown Mensal (Tabela 1) ──
                         var monthlyTbody = document.getElementById("opt-monthly-breakdown-tbody");
                         if (monthlyTbody) {
-                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
                             var monthNamesShort = {
                                 "2026-01": "Jan/26",
                                 "2026-02": "Fev/26",
                                 "2026-03": "Mar/26",
                                 "2026-04": "Abr/26",
-                                "2026-05": "Mai/26"
+                                "2026-05": "Mai/26",
+                                "2026-06": "Jun/26"
                             };
                             var html = "";
                             var hasData = false;
@@ -5641,18 +5643,27 @@
                         // ── Renderiza Matriz de Campeões Mensais (Tabela 2) ──
                         var champsTbody = document.getElementById("opt-monthly-champions-tbody");
                         if (champsTbody) {
-                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+                            var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
                             var monthNamesShort = {
                                 "2026-01": "Jan/26",
                                 "2026-02": "Fev/26",
                                 "2026-03": "Mar/26",
                                 "2026-04": "Abr/26",
-                                "2026-05": "Mai/26"
+                                "2026-05": "Mai/26",
+                                "2026-06": "Jun/26"
                             };
                             var html = "";
                             var hasChamps = false;
                             
                             var champsData = d.monthly_champions || {};
+                            var legacyMonthKeys = {
+                                "2026-01": "Janeiro",
+                                "2026-02": "Fevereiro",
+                                "2026-03": "Março",
+                                "2026-04": "Abril",
+                                "2026-05": "Maio",
+                                "2026-06": "Junho"
+                            };
                             for (var m in champsData) {
                                 if (champsData[m]) {
                                     hasChamps = true;
@@ -5663,12 +5674,12 @@
                             if (hasChamps) {
                                 html = months.map(function(rowMonth) {
                                     var rowLabel = monthNamesShort[rowMonth] || rowMonth;
-                                    var champ = champsData[rowMonth];
+                                    var champ = champsData[rowMonth] || champsData[legacyMonthKeys[rowMonth]];
                                     
                                     if (!champ) {
                                         return '<tr style="border-bottom:1px solid var(--border)">'
                                             + '<td style="padding:6px;color:var(--dim)">🏆 ' + rowLabel + ' Champ</td>'
-                                            + '<td colspan="6" style="padding:6px;text-align:center;color:var(--dim);font-style:italic">Ainda não encontrado...</td>'
+                                            + '<td colspan="7" style="padding:6px;text-align:center;color:var(--dim);font-style:italic">Ainda não encontrado...</td>'
                                             + '</tr>';
                                     }
                                     
@@ -5696,7 +5707,7 @@
                                         + '</tr>';
                                 }).join("");
                             } else {
-                                html = '<tr><td colspan="7" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda.</td></tr>';
+                                html = '<tr><td colspan="8" style="padding:15px;text-align:center;color:var(--muted)">Nenhum campeão registrado ainda.</td></tr>';
                             }
                             champsTbody.innerHTML = html;
                         }
@@ -5849,7 +5860,8 @@
                             workersSection.style.display = "block";
                             var workersLiveLabel = document.getElementById("opt-workers-live-label");
                             if (workersLiveLabel) {
-                                workersLiveLabel.textContent = "● " + candidates.length + "/" + (expectedWorkers || candidates.length) + " workers em tempo real";
+                                var phaseLabel = d.phase ? " · " + d.phase : "";
+                                workersLiveLabel.textContent = "● " + candidates.length + "/" + (expectedWorkers || candidates.length) + " workers em tempo real" + phaseLabel;
                             }
                             workersContainer.innerHTML = candidates.map(function(c, idx) {
                                 var workerLabel = c.worker_id || ("#" + idx);
