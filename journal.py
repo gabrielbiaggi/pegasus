@@ -263,7 +263,7 @@ class TradeJournal:
         soros_step: int = 0,
         gale_step: int = 0,
     ) -> None:
-        result = "WIN" if profit > 0 else "LOSS"
+        result = "WIN" if profit >= 0 else "LOSS"
         m = metrics
         row_values = [
             datetime.now(UTC).isoformat(),
