@@ -36,7 +36,7 @@ import backtest_engine
 
 # ── Configuração ──────────────────────────────────────────────────────────────
 START_DATE    = "2026-01-01"
-END_DATE      = "2026-05-31"
+END_DATE      = "2026-06-04"
 START_BALANCE = "50.0"       # NUNCA mude: banca base real do usuário
 
 ENV_PATH      = Path(".env")
@@ -311,10 +311,9 @@ MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
 # Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
 N_WORKERS = 8
 
-# ── Espaço de busca focado nos parâmetros da estratégia Rise/Fall no BOOM1000 ───
 PARAM_SPACE = {
-    # Stake base para operar: busca entre 2.0 e 15.0
-    "STAKE":                        {"type": "float", "min": 2.0, "max": 15.0, "step": 0.5},
+    # Stake base para operar: busca expandida de 2.0 a 35.0
+    "STAKE":                        {"type": "float", "min": 2.0, "max": 35.0, "step": 0.5},
     # Cooldown entre entradas de ticks: busca entre 1 e 10
     "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 10,   "step": 1},
     # Payout minimo de Rise/Fall: busca entre 0.0040 e 0.0080
@@ -325,6 +324,13 @@ PARAM_SPACE = {
     "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.0001, "max": 0.0030, "step": 0.0001},
     # Imbalance maximo do BOOM1000: busca entre 0.5 e 3.0
     "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.5, "max": 3.0, "step": 0.1},
+
+    # Parâmetros de gerenciamento de risco da estratégia Frankenstein
+    "FRANKENSTEIN_USE_SOROS":       {"type": "bool"},
+    "FRANKENSTEIN_SOROS_STEPS":     {"type": "int",   "min": 0,   "max": 3,   "step": 1},
+    "FRANKENSTEIN_USE_MARTINGALE":  {"type": "bool"},
+    "FRANKENSTEIN_MAX_GALES":       {"type": "int",   "min": 0,   "max": 2,   "step": 1},
+    "FRANKENSTEIN_MODE":            {"type": "choice", "choices": ["flat", "dynamic_10"]},
 }
 
 FROZEN_PARAMS = set()  # todos os params são livres
@@ -363,9 +369,65 @@ def save_env(env_vars: dict, path: Path = ENV_PATH) -> None:
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
-def rand_params(base: dict) -> dict:
-    """Perturba 1-4 parâmetros aleatoriamente do espaço de busca."""
+def rand_params(base: dict, metrics: dict | None = None) -> dict:
+    """Perturba parâmetros com heurística de direção baseada em métricas anteriores."""
     p = base.copy()
+    
+    # Heurística inteligente baseada em performance anterior:
+    if metrics:
+        avg_d = metrics.get("avg_daily_profit", 0.0) or metrics.get("avg_daily", 0.0) or 0.0
+        neg_days = metrics.get("negative_days", 0) or metrics.get("busted", 0) or 0
+        consist = metrics.get("consistency_pct", 0.0)
+        
+        # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
+        # Aperta os filtros de spikes e aumenta o cooldown ticks!
+        if neg_days > 0 or consist < 95.0:
+            action = random.choice(["cusum", "velocity", "imbalance", "cooldown"])
+            if action == "cusum" and "RISE_FALL_BOOM_MAX_CUSUM" in p:
+                val = float(p["RISE_FALL_BOOM_MAX_CUSUM"])
+                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_CUSUM"]["min"], val - 0.5), 4))
+            elif action == "velocity" and "RISE_FALL_BOOM_MAX_VELOCITY" in p:
+                val = float(p["RISE_FALL_BOOM_MAX_VELOCITY"])
+                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_VELOCITY"]["min"], val - 0.0002), 4))
+            elif action == "imbalance" and "RISE_FALL_BOOM_MAX_IMBALANCE" in p:
+                val = float(p["RISE_FALL_BOOM_MAX_IMBALANCE"])
+                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_IMBALANCE"]["min"], val - 0.2), 4))
+            elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
+                val = int(p["RISE_FALL_COOLDOWN_TICKS"])
+                p["RISE_FALL_COOLDOWN_TICKS"] = str(min(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["max"], val + 1))
+            
+            # Opcional: reduz o stake um pouco para proteger o capital
+            if "STAKE" in p and random.random() < 0.3:
+                val = float(p["STAKE"])
+                p["STAKE"] = str(round(max(PARAM_SPACE["STAKE"]["min"], val - 1.0), 1))
+            
+            return p
+
+        # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
+        # Aumentamos o STAKE ou diminuímos o cooldown (mais trades)!
+        if avg_d < 50.0:
+            action = random.choice(["stake", "cooldown"])
+            if action == "stake" and "STAKE" in p:
+                val = float(p["STAKE"])
+                factor = 50.0 / max(1.0, avg_d)
+                target = val * factor
+                target = target * random.choice([0.9, 1.0, 1.1])
+                target = round(max(val + 0.5, min(PARAM_SPACE["STAKE"]["max"], target)), 1)
+                p["STAKE"] = str(target)
+            elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
+                val = int(p["RISE_FALL_COOLDOWN_TICKS"])
+                p["RISE_FALL_COOLDOWN_TICKS"] = str(max(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["min"], val - 1))
+            
+            # Opcional: afrouxa de leve os filtros se o número de trades for muito baixo
+            if random.random() < 0.2:
+                for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
+                    if f_key in p:
+                        val = float(p[f_key])
+                        p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.1), 4))
+            
+            return p
+
+    # 3. Caso padrão (exploração puramente aleatória / perturbação de 1-4 parâmetros)
     eligible = [k for k in PARAM_SPACE if k not in FROZEN_PARAMS]
     num = random.randint(1, min(4, len(eligible)))
     keys = random.sample(eligible, num)
@@ -376,25 +438,32 @@ def rand_params(base: dict) -> dict:
 
         if space["type"] == "int":
             step = space.get("step", 1)
-            val  = int(curr) if curr else (space["min"] + space["max"]) // 2
-            # Às vezes pula 2-3 steps para exploração mais ampla
+            val  = int(curr) if curr is not None else (space["min"] + space["max"]) // 2
             delta = random.choice([-3,-2,-1,1,2,3]) * step
             val   = max(space["min"], min(space["max"], val + delta))
             p[key] = str(int(val))
 
         elif space["type"] == "float":
             step = space.get("step", 0.01)
-            val  = float(curr) if curr else (space["min"] + space["max"]) / 2
+            val  = float(curr) if curr is not None else (space["min"] + space["max"]) / 2
             delta = random.choice([-3,-2,-1,1,2,3]) * step
             val   = round(max(space["min"], min(space["max"], val + delta)), 4)
             p[key] = str(val)
 
         elif space["type"] == "float_sci":
-            val = float(curr) if curr else (space["min"] + space["max"]) / 2
-            # Multiplica por fator aleatório
+            val = float(curr) if curr is not None else (space["min"] + space["max"]) / 2
             factor = random.choice([0.6, 0.75, 0.85, 1.0, 1.15, 1.30, 1.50, 1.75])
             val    = max(space["min"], min(space["max"], val * factor))
             p[key] = f"{val:.2e}"
+
+        elif space["type"] == "bool":
+            curr_bool = (str(curr).lower() == "true") if curr is not None else False
+            val = not curr_bool
+            p[key] = "true" if val else "false"
+
+        elif space["type"] == "choice":
+            choices = space["choices"]
+            p[key] = str(random.choice(choices))
 
     return p
 
@@ -631,13 +700,46 @@ def _is_on_server() -> bool:
     return Path("/opt/pegasus").exists() and Path.cwd() == Path("/opt/pegasus")
 
 
+def translate_frankenstein_params(env_vars: dict) -> dict:
+    """Traduz as configurações de Frankenstein para as variáveis que o bot real carrega do .env."""
+    out = env_vars.copy()
+    
+    if "FRANKENSTEIN_USE_SOROS" in out:
+        out["USE_SOROS"] = out["FRANKENSTEIN_USE_SOROS"]
+    if "FRANKENSTEIN_SOROS_STEPS" in out:
+        out["SOROS_MAX_STEPS"] = out["FRANKENSTEIN_SOROS_STEPS"]
+    if "FRANKENSTEIN_USE_MARTINGALE" in out:
+        out["USE_MARTINGALE"] = out["FRANKENSTEIN_USE_MARTINGALE"]
+    if "FRANKENSTEIN_MAX_GALES" in out:
+        out["MARTINGALE_MAX_GALES"] = out["FRANKENSTEIN_MAX_GALES"]
+        
+    if "FRANKENSTEIN_MODE" in out:
+        mode = out["FRANKENSTEIN_MODE"]
+        if mode == "dynamic_10":
+            out["DYNAMIC_STAKE_BASE_PCT"] = "0.10"
+        else:
+            out["DYNAMIC_STAKE_BASE_PCT"] = "0.0"
+            
+    # Remove as chaves FRANKENSTEIN do .env final para mantê-lo limpo
+    for k in list(out.keys()):
+        if k.startswith("FRANKENSTEIN_"):
+            del out[k]
+            
+    # Garante que o bot real opera em modo Rise/Fall e BOOM1000
+    out["CONTRACT_MODE"] = "rise_fall"
+    out["SYMBOL"] = "BOOM1000"
+    
+    return out
+
+
 def deploy_winner(env_vars: dict, msg: str, min_pnl: float = 5.0) -> bool:
     """
     Salva .env e reinicia o bot ao vivo com os novos parâmetros.
     Garante que nunca haverá instâncias duplicadas do bot.
     """
-    save_env(env_vars)
-    print(f"   💾 .env salvo com novos parâmetros.", flush=True)
+    translated_env = translate_frankenstein_params(env_vars)
+    save_env(translated_env)
+    print(f"   💾 .env salvo com novos parâmetros traduzidos.", flush=True)
 
     if _is_on_server():
         try:
@@ -843,6 +945,7 @@ def main():
         {"name": "Março", "start": "2026-03-01", "end": "2026-03-31"},
         {"name": "Abril", "start": "2026-04-01", "end": "2026-04-30"},
         {"name": "Maio", "start": "2026-05-01", "end": "2026-05-31"},
+        {"name": "Junho", "start": "2026-06-01", "end": "2026-06-04"},
     ]
 
     monthly_champions = {}
@@ -858,6 +961,7 @@ def main():
         month_best_env = best_env.copy()
         month_best_env["START_DATE"] = m_start
         month_best_env["END_DATE"] = m_end
+        month_best_metrics = None
 
         # Rodar 48 iterações por mês (6 rodadas de 8 workers)
         ITERS_PER_MONTH = 48
@@ -865,7 +969,7 @@ def main():
             for r in range(ITERS_PER_MONTH // N_WORKERS):
                 candidates = []
                 for w in range(N_WORKERS):
-                    cand = rand_params(month_best_env)
+                    cand = rand_params(month_best_env, month_best_metrics)
                     cand["START_DATE"] = m_start
                     cand["END_DATE"] = m_end
                     candidates.append((cand, f"{m_name[:3]}_r{r}_w{w}"))
@@ -881,6 +985,7 @@ def main():
                             month_best_env = res["_env"].copy()
                             month_best_env["START_DATE"] = m_start
                             month_best_env["END_DATE"] = m_end
+                            month_best_metrics = res
                             print(f"   ✨ Mês {m_name} (rodada {r}): Novo melhor score = {month_best_score:.4f} | Lucro/Dia = ${res['avg_daily_profit']:.2f}/dia", flush=True)
                     except Exception as e:
                         print(f"   [Mês {m_name}] erro no worker {idx}: {e}", flush=True)
@@ -906,7 +1011,7 @@ def main():
         for champ_name, champ_info in monthly_champions.items():
             env_test = champ_info["params"].copy()
             env_test["START_DATE"] = "2026-01-01"
-            env_test["END_DATE"] = "2026-05-31"
+            env_test["END_DATE"] = "2026-06-04"
             jobs.append((env_test, champ_name))
 
         futures = {pool.submit(_run_one, (job[0], f"cross_{job[1]}")): job[1] for job in jobs}
@@ -932,7 +1037,7 @@ def main():
 
     crossover_results = sorted(crossover_results, key=lambda x: x["score"], reverse=True)
 
-    print(f"\n📋 Tabela Comparativa de Validação Cruzada (Período Jan-Mai Completo):", flush=True)
+    print(f"\n📋 Tabela Comparativa de Validação Cruzada (Período Jan-Jun Completo):", flush=True)
     print(f"{'-'*90}", flush=True)
     print(f"{'Campeão de':<12} | {'Score Global':<12} | {'Lucro/Dia':<10} | {'PnL Total':<10} | {'Consistência':<12} | {'Dias Pos':<8}", flush=True)
     print(f"{'-'*90}", flush=True)
@@ -941,9 +1046,9 @@ def main():
     print(f"{'-'*90}", flush=True)
 
     print(f"\n📊 Detalhamento Mensal de cada Campeão (PnL por Mês):", flush=True)
-    print(f"{'-'*75}", flush=True)
-    print(f"{'Campeão de':<12} | {'Jan':<9} | {'Fev':<9} | {'Mar':<9} | {'Abr':<9} | {'Mai':<9}", flush=True)
-    print(f"{'-'*75}", flush=True)
+    print(f"{'-'*85}", flush=True)
+    print(f"{'Campeão de':<12} | {'Jan':<9} | {'Fev':<9} | {'Mar':<9} | {'Abr':<9} | {'Mai':<9} | {'Jun':<9}", flush=True)
+    print(f"{'-'*85}", flush=True)
     for r in crossover_results:
         breakdown = r["monthly_breakdown"].get("Super-Frankenstein", {})
         pnls = []
@@ -953,7 +1058,7 @@ def main():
             pnls.append(f"${pnl_val:>6.2f}")
         pnls_str = " | ".join(pnls)
         print(f"{r['champ_name']:<12} | {pnls_str}", flush=True)
-    print(f"{'-'*75}", flush=True)
+    print(f"{'-'*85}", flush=True)
 
     supreme_winner = crossover_results[0]
     print(f"\n👑 Vencedor Supremo Selecionado: Campeão de {supreme_winner['champ_name']}", flush=True)
@@ -991,7 +1096,7 @@ def main():
     print(f"{'-'*70}\n", flush=True)
 
     iteration = 10000
-    champion_pool = [best_env]
+    champion_pool = [(best_env, best_data)]
 
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         while True:
@@ -1005,7 +1110,11 @@ def main():
                 except Exception:
                     pass
 
-            candidates = [(rand_params(random.choice(champion_pool)), f"ref_{i}") for i in range(N_WORKERS)]
+            candidates = []
+            for i in range(N_WORKERS):
+                base_env, base_metrics = random.choice(champion_pool)
+                cand = rand_params(base_env, base_metrics)
+                candidates.append((cand, f"ref_{i}"))
 
             print(f"🔄 Iteração de Refinamento {iteration}–{iteration + N_WORKERS - 1}...", flush=True)
 
@@ -1058,6 +1167,10 @@ def main():
                     best_env   = m["_env"].copy()
                     best_env["OPTIMIZER_CHAMPION_ITERATION"] = str(iteration + idx)
                     best_data  = {**m, "iteration": iteration + idx, "reason": reason}
+
+                    champion_pool.append((best_env, best_data))
+                    if len(champion_pool) > 10:
+                        champion_pool.pop(0)
 
                     print(f"\n{'★'*70}", flush=True)
                     print(f"  🏆 NOVO RECORDE GLOBAL! — {reason}", flush=True)

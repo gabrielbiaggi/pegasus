@@ -490,7 +490,17 @@ def _generate_strategy_configs() -> list[dict]:
     if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
         return [
             {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-            {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
+            {
+                "name": "Super-Frankenstein",
+                "tp": float(os.getenv("FRANKENSTEIN_TP", "0.30")),
+                "score": 25,
+                "mode": os.getenv("FRANKENSTEIN_MODE", "flat"),
+                "use_soros": os.getenv("FRANKENSTEIN_USE_SOROS", "true").lower() == "true",
+                "soros_steps": int(os.getenv("FRANKENSTEIN_SOROS_STEPS", "2")),
+                "use_martingale": os.getenv("FRANKENSTEIN_USE_MARTINGALE", "true").lower() == "true",
+                "max_gales": int(os.getenv("FRANKENSTEIN_MAX_GALES", "1")),
+                "is_super_frank": True
+            },
         ]
 
     configs = []
