@@ -204,6 +204,17 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(merged[0]["progress_pct"], 42.0)
         self.assertEqual(merged[1]["progress_pct"], 100.0)
 
+    def test_merge_optimizer_candidates_ignores_unsaved_finished_worker_files(self) -> None:
+        saved = [{"worker_id": "Fev_r4_w0", "status": "Simulando..."}]
+        workers = [
+            {"worker_id": "Fev_r4_w0", "status": "Simulando...", "progress_pct": 30.0},
+            {"worker_id": "Fev_r0_w0", "status": "Finalizado", "progress_pct": 100.0},
+        ]
+
+        merged = dashboard_app._merge_optimizer_candidates(saved, workers)
+
+        self.assertEqual([item["worker_id"] for item in merged], ["Fev_r4_w0"])
+
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [
             {

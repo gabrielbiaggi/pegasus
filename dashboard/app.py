@@ -1254,6 +1254,7 @@ def _merge_optimizer_candidates(saved_candidates: list[dict], workers: list[dict
         worker_id = str(worker.get("worker_id") or "")
         if not worker_id:
             continue
+        worker_status = str(worker.get("status") or "")
         saved = next(
             (
                 candidate
@@ -1262,6 +1263,8 @@ def _merge_optimizer_candidates(saved_candidates: list[dict], workers: list[dict
             ),
             {},
         )
+        if not saved and worker_status == "Finalizado":
+            continue
         merged.append({**saved, **worker})
         seen.add(worker_id)
 
