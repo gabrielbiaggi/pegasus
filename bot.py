@@ -1050,20 +1050,10 @@ class DerivBot:
                         _hurst,
                     )
                 else:
-                    # Regime B-: Defensive Harvester 3% TP com 1 Tick e Soros DESATIVADO
-                    regime_b_minus_tp = float(os.getenv("PCS_REGIME_B_MINUS_TP", "3.0"))
-                    regime_b_minus_hold = int(os.getenv("PCS_REGIME_B_MINUS_HOLD", "1"))
-                    object.__setattr__(self.config, 'accumulator_take_profit_percent', regime_b_minus_tp)
-                    object.__setattr__(self.config, 'accumulator_max_hold_ticks', regime_b_minus_hold)
-                    self.risk.use_soros = False
                     logger.info(
-                        "🛡️ PEGASUS CONGLOMERATE: REGIME B- (Defensive Harvester %.1f%% TP, %d Ticks) (vol=%.2e, CUSUM=%.2f, H=%.3f) — Soros DESATIVADO",
-                        self.config.accumulator_take_profit_percent,
-                        self.config.accumulator_max_hold_ticks,
-                        avg_abs_ret,
-                        _cusum,
-                        _hurst,
+                        "🛡️ PEGASUS CONGLOMERATE: REGIME B- (Defensive Harvester) DETECTADO — Ignorando entrada (evita prejuízos com InvalidtoSell / spread).",
                     )
+                    return
 
             stake = self.risk.get_stake()
 

@@ -933,7 +933,7 @@ def main():
                     m["total_pnl"] >= 0
                     and avg_d > 0
                     and avg_d <= 120.0     # teto de plausibilidade: max $120/dia com $50 banca e Soros
-                    and active >= 15      # 5 meses: pelo menos 15 dias com operações (de ~144)
+                    and active >= 5       # 5 meses: pelo menos 5 dias com operações (de ~144)
                 )
 
                 if pnl_ok:

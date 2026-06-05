@@ -686,12 +686,8 @@ def _replay_strategy(
                         current_wt = regime_b_plus_hold
                         risk.use_soros = False
                     else:
-                        # Regime B-: Defensive Harvester 3% TP com 1 Tick e Soros DESATIVADO
-                        regime_b_minus_tp = float(os.getenv("PCS_REGIME_B_MINUS_TP", "3.0"))
-                        regime_b_minus_hold = int(os.getenv("PCS_REGIME_B_MINUS_HOLD", "1"))
-                        current_tp_pct = regime_b_minus_tp / 100.0
-                        current_wt = regime_b_minus_hold
-                        risk.use_soros = False
+                        # Regime B- desativado para evitar prejuízos com InvalidtoSell e spread
+                        continue
                 
                 # Determina o resultado WIN/LOSS com base no win_ticks do regime ativo
                 is_win_trade = not (barrier_hit_at is not None and barrier_hit_at <= current_wt)
