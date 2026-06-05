@@ -366,9 +366,22 @@ PARAM_SPACE = {
     # Filtro XGBoost para Rise/Fall
     "RISE_FALL_USE_ENSEMBLE":       {"type": "bool"},
     "RISE_FALL_ENSEMBLE_MIN_PROB":  {"type": "float", "min": 0.10, "max": 0.45, "step": 0.01},
+    "MULTIPLIER_VALUE":             {"type": "int",   "min": 20,  "max": 200,  "step": 10},
+    "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.10, "max": 2.50, "step": 0.10},
+    "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.50, "max": 5.00, "step": 0.25},
+    "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 5,   "max": 80,   "step": 5},
 }
 
-FROZEN_PARAMS = set()  # todos os params são livres
+FROZEN_PARAMS = {
+    # Multipliers no BOOM1000 nao usam Soros/Martingale no bot real; manter
+    # esses knobs fora da exploracao evita iteracoes sem efeito operacional.
+    "FRANKENSTEIN_USE_SOROS",
+    "FRANKENSTEIN_SOROS_STEPS",
+    "FRANKENSTEIN_USE_MARTINGALE",
+    "FRANKENSTEIN_MAX_GALES",
+    "FRANKENSTEIN_MODE",
+    "RISE_FALL_MIN_PAYOUT_PCT",
+}
 
 SENSITIVE_PARAM_MARKERS = (
     "TOKEN",
@@ -411,6 +424,7 @@ SAFE_PARAM_PREFIXES = (
     "CALM_ACCU_",
     "ACCUMULATOR_",
     "ENSEMBLE_",
+    "MULTIPLIER_",
 )
 
 # ── Funções utilitárias ───────────────────────────────────────────────────────
@@ -427,8 +441,8 @@ def optimizer_context(env_vars: dict | None = None) -> dict:
     """Contexto real usado pelo optimizer para comparar campeões equivalentes."""
     env_vars = env_vars or {}
     symbol = _norm_symbol(env_vars.get("SYMBOL") or ACTIVE_SYMBOL)
-    # O optimizer atual força Rise/Fall no worker/deploy para BOOM/Crash.
-    return {"contract_mode": "rise_fall", "symbol": symbol}
+    # BOOM/Crash na API PAT/OTP atual oferece Multipliers, não RF/ACCU.
+    return {"contract_mode": "multiplier", "symbol": symbol}
 
 
 def params_match_context(params: dict, context: dict | None = None) -> bool:
@@ -531,7 +545,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
-            action = random.choice(["cusum", "velocity", "imbalance", "cooldown"])
+            action = random.choice(["cusum", "velocity", "imbalance", "cooldown", "mult_sl"])
             if action == "cusum" and "RISE_FALL_BOOM_MAX_CUSUM" in p:
                 val = float(p["RISE_FALL_BOOM_MAX_CUSUM"])
                 p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_CUSUM"]["min"], val - 0.5), 4))
@@ -544,6 +558,9 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(min(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["max"], val + 1))
+            elif action == "mult_sl" and "MULTIPLIER_STOP_LOSS" in p:
+                val = float(p["MULTIPLIER_STOP_LOSS"])
+                p["MULTIPLIER_STOP_LOSS"] = str(round(max(PARAM_SPACE["MULTIPLIER_STOP_LOSS"]["min"], val - 0.25), 2))
             
             # Opcional: reduz o stake um pouco para proteger o capital
             if "STAKE" in p and random.random() < 0.3:
@@ -555,7 +572,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
-            action = random.choice(["stake", "cooldown", "soros", "martingale", "filters"])
+            action = random.choice(["stake", "cooldown", "multiplier", "mult_tp", "filters"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
                 factor = 50.0 / max(1.0, avg_d)
@@ -565,14 +582,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(max(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["min"], val - 1))
-            elif action == "soros":
-                p["FRANKENSTEIN_USE_SOROS"] = "true"
-                steps = int(p.get("FRANKENSTEIN_SOROS_STEPS", "1"))
-                p["FRANKENSTEIN_SOROS_STEPS"] = str(min(3, steps + 1))
-            elif action == "martingale":
-                p["FRANKENSTEIN_USE_MARTINGALE"] = "true"
-                gales = int(p.get("FRANKENSTEIN_MAX_GALES", "0"))
-                p["FRANKENSTEIN_MAX_GALES"] = str(min(2, gales + 1))
+            elif action == "multiplier" and "MULTIPLIER_VALUE" in p:
+                val = int(p["MULTIPLIER_VALUE"])
+                p["MULTIPLIER_VALUE"] = str(min(PARAM_SPACE["MULTIPLIER_VALUE"]["max"], val + 10))
+            elif action == "mult_tp" and "MULTIPLIER_TAKE_PROFIT" in p:
+                val = float(p["MULTIPLIER_TAKE_PROFIT"])
+                p["MULTIPLIER_TAKE_PROFIT"] = str(round(min(PARAM_SPACE["MULTIPLIER_TAKE_PROFIT"]["max"], val + 0.10), 2))
             elif action == "filters":
                 # Afrouxa de leve os filtros se o número de trades for muito baixo
                 for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
@@ -726,14 +741,11 @@ def _run_one(args) -> dict | None:
     
     env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
-    env_vars["CONTRACT_MODE"] = "rise_fall"
+    env_vars["CONTRACT_MODE"] = "multiplier"
     symbol_upper = ACTIVE_SYMBOL.upper()
     env_vars["SYMBOL"] = symbol_upper
     is_boom_crash = "BOOM" in symbol_upper or "CRASH" in symbol_upper
-    if is_boom_crash:
-        env_vars["RISE_FALL_PAYOUT_RATE"] = "0.0055"
-    else:
-        env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
+    env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
 
     try:
         return backtest_engine.run_backtest_direct(
@@ -911,18 +923,17 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
         if k.startswith("FRANKENSTEIN_"):
             del out[k]
             
-    # Garante que o bot real opera em modo Rise/Fall e no símbolo correto
+    # Garante que o bot real opera no contrato suportado pela API PAT/OTP atual.
     symbol_upper = ACTIVE_SYMBOL.upper()
-    is_boom_crash = "BOOM" in symbol_upper or "CRASH" in symbol_upper
-    out["CONTRACT_MODE"] = "rise_fall"
+    out["CONTRACT_MODE"] = "multiplier"
     out["SYMBOL"] = symbol_upper
-    if is_boom_crash:
-        out["MARTINGALE_PAYOUT_RATE"] = "0.0055"
-        if "RISE_FALL_MIN_PAYOUT_PCT" not in out:
-            out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.0055"
-    else:
-        out["MARTINGALE_PAYOUT_RATE"] = "0.95"
-        out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.90"
+    out["USE_MARTINGALE"] = "false"
+    out["USE_SOROS"] = "false"
+    out["MARTINGALE_PAYOUT_RATE"] = "1.0"
+    out.setdefault("MULTIPLIER_VALUE", "100")
+    out.setdefault("MULTIPLIER_TAKE_PROFIT", "0.50")
+    out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
+    out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
     
     return out
 

@@ -65,6 +65,22 @@ class ConfigTest(unittest.TestCase):
             cfg = load_config()
             self.assertEqual(cfg.contract_mode, "rise_fall")
 
+    def test_accepts_multiplier_mode(self) -> None:
+        env = {
+            "DERIV_TOKEN": "token",
+            "DERIV_APP_ID": "1089",
+            "CONTRACT_MODE": "multiplier",
+            "MULTIPLIER_VALUE": "100",
+            "MULTIPLIER_TAKE_PROFIT": "0.50",
+            "MULTIPLIER_STOP_LOSS": "1.00",
+        }
+        with patch("config.load_dotenv"), patch.dict(os.environ, env, clear=True):
+            cfg = load_config()
+            self.assertEqual(cfg.contract_mode, "multiplier")
+            self.assertEqual(cfg.multiplier_value, 100)
+            self.assertEqual(cfg.multiplier_take_profit, 0.50)
+            self.assertEqual(cfg.multiplier_stop_loss, 1.00)
+
 
 if __name__ == "__main__":
     unittest.main()

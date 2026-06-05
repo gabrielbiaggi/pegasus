@@ -55,13 +55,17 @@ def is_unsupported_rf_contract_error(error_code: str) -> bool:
     return error_code in {"TradingDurationNotAllowed", "ContractCreationFailure"}
 
 
+def multiplier_contract_from_signal(signal: str) -> str:
+    return "MULTUP" if signal == "CALL" else "MULTDOWN"
+
+
 @dataclass
 class PendingOrder:
     stake: float
     score: int
     entry_epoch: int
     metrics: dict[str, Any] | None = None
-    direction: str = "ACCU"  # "ACCU", "CALL", or "PUT"
+    direction: str = "ACCU"  # "ACCU", "CALL", "PUT", "MULTUP", or "MULTDOWN"
 
 
 class DerivBot:
@@ -338,6 +342,65 @@ class DerivBot:
         }
         await self.send(ws, payload)
 
+    async def request_multiplier_proposal(
+        self,
+        ws: websockets.WebSocketClientProtocol,
+        stake: float,
+        contract_type: str,
+        score: int,
+        entry_epoch: int,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """Request a Deriv multiplier proposal for the current symbol."""
+        self.pending_order = PendingOrder(stake, score, entry_epoch, metrics, contract_type)
+        self.journal.log_signal(
+            symbol=self.config.symbol,
+            contract_mode=self.config.contract_mode,
+            entry_epoch=entry_epoch,
+            direction=contract_type,
+            score=score,
+            stake=stake,
+            dry_run=self.config.dry_run,
+            metrics=metrics,
+        )
+
+        if self.config.dry_run:
+            logger.info(
+                "DRY_RUN MULT %s score=%s stake=%.2f entry=%s. Nenhuma ordem enviada.",
+                contract_type,
+                score,
+                stake,
+                entry_epoch,
+            )
+            self.last_rf_entry_epoch = entry_epoch
+            self.pending_order = None
+            return
+
+        payload: dict[str, Any] = {
+            "proposal": 1,
+            "amount": stake,
+            "basis": "stake",
+            "contract_type": contract_type,
+            "currency": self.config.currency,
+            "underlying_symbol": self.config.symbol,
+            "multiplier": self.config.multiplier_value,
+            "limit_order": {
+                "take_profit": round(self.config.multiplier_take_profit, 2),
+                "stop_loss": round(self.config.multiplier_stop_loss, 2),
+            },
+        }
+        logger.info(
+            "Solicitando proposta MULT %s | stake=%.2f | ativo=%s | mult=%sx | TP=$%.2f SL=$%.2f | epoch=%s",
+            contract_type,
+            stake,
+            self.config.symbol,
+            self.config.multiplier_value,
+            self.config.multiplier_take_profit,
+            self.config.multiplier_stop_loss,
+            entry_epoch,
+        )
+        await self.send(ws, payload)
+
     async def buy_from_proposal(
         self, ws: websockets.WebSocketClientProtocol, proposal: dict[str, Any]
     ) -> None:
@@ -423,7 +486,7 @@ class DerivBot:
     async def evaluate_tick(
         self, ws: websockets.WebSocketClientProtocol, tick_epoch: int
     ) -> None:
-        _is_rf_like = self.config.contract_mode in {"rise_fall", "jump_rise_fall"}
+        _is_rf_like = self.config.contract_mode in {"rise_fall", "jump_rise_fall", "multiplier"}
 
         if self.waiting_for_result:
             stuck_sec = time.monotonic() - self._waiting_since
@@ -463,12 +526,24 @@ class DerivBot:
                 self.current_contract_id = None
                 self.accumulator_sell_requested = False
             else:
-                _mode_lbl = "RF" if _is_rf_like else "ACCU"
+                _mode_lbl = (
+                    "MULT"
+                    if self.config.contract_mode == "multiplier"
+                    else "RF"
+                    if _is_rf_like
+                    else "ACCU"
+                )
                 logger.info("Aguardando resultado da operacao %s anterior.", _mode_lbl)
                 return
 
         if self.pending_order:
-            _mode_lbl = "RF" if _is_rf_like else "ACCU"
+            _mode_lbl = (
+                "MULT"
+                if self.config.contract_mode == "multiplier"
+                else "RF"
+                if _is_rf_like
+                else "ACCU"
+            )
             logger.info("Aguardando proposta/compra %s pendente.", _mode_lbl)
             return
 
@@ -984,13 +1059,15 @@ class DerivBot:
             )
             return
 
-        # ---- Rise/Fall mode ----
-        if self.config.contract_mode == "rise_fall":
+        # ---- Rise/Fall / Multiplier directional mode ----
+        if self.config.contract_mode in {"rise_fall", "multiplier"}:
             if self.last_rf_entry_epoch is not None:
                 ticks_since_rf = tick_epoch - self.last_rf_entry_epoch
                 if ticks_since_rf <= self.config.rise_fall_cooldown_ticks:
+                    mode_name = "MULT" if self.config.contract_mode == "multiplier" else "RF"
                     logger.debug(
-                        "Cooldown RF ativo: %s tick(s) desde ultima entrada; minimo=%s.",
+                        "Cooldown %s ativo: %s tick(s) desde ultima entrada; minimo=%s.",
+                        mode_name,
                         ticks_since_rf,
                         self.config.rise_fall_cooldown_ticks + 1,
                     )
@@ -1036,17 +1113,31 @@ class DerivBot:
             )
             if self._rf_temporarily_disabled():
                 return
-            logger.info(
-                "Setup RF %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
-                signal,
-                score,
-                stake,
-                f"{p_dir:.4f}" if p_dir is not None else "N/A",
-                _mode,
-            )
-            await self.request_rise_fall_proposal(
-                ws, stake, signal, score, tick_epoch, metrics=metrics
-            )
+            if self.config.contract_mode == "multiplier":
+                contract_type = multiplier_contract_from_signal(signal)
+                logger.info(
+                    "Setup MULT %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
+                    contract_type,
+                    score,
+                    stake,
+                    f"{p_dir:.4f}" if p_dir is not None else "N/A",
+                    _mode,
+                )
+                await self.request_multiplier_proposal(
+                    ws, stake, contract_type, score, tick_epoch, metrics=metrics
+                )
+            else:
+                logger.info(
+                    "Setup RF %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
+                    signal,
+                    score,
+                    stake,
+                    f"{p_dir:.4f}" if p_dir is not None else "N/A",
+                    _mode,
+                )
+                await self.request_rise_fall_proposal(
+                    ws, stake, signal, score, tick_epoch, metrics=metrics
+                )
             return
 
         # ---- Calm ACCU mode (BOOM1000 calm-entry) ----
@@ -1620,15 +1711,15 @@ class DerivBot:
             # Clear pending_order so evaluate_tick does not stall on proposal check.
             # waiting_for_result stays True — next contract is dispatched on WIN settlement.
             self.pending_order = None
-        elif self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
-            # Rise/Fall (or JumpRF): single binary contract per gale step, auto-settles.
+        elif self.config.contract_mode in {"rise_fall", "jump_rise_fall", "multiplier"}:
+            # RF/Multiplier: single contract per entry, auto-settles by expiry or TP/SL.
             self.current_contract_id = contract_id
             if self.pending_order:
-                direction = getattr(self.pending_order, "direction", "RF")
+                direction = getattr(self.pending_order, "direction", "AUTO")
                 self.last_rf_entry_epoch = self.pending_order.entry_epoch
                 self.accumulator_open_epoch = self.pending_order.entry_epoch
             logger.info(
-                "Contrato RF %s aberto: id=%s buy_price=%s",
+                "Contrato %s aberto: id=%s buy_price=%s",
                 direction,
                 contract_id,
                 buy.get("buy_price"),
@@ -1669,7 +1760,7 @@ class DerivBot:
         )
         if not is_sold:
             # Rise/Fall contracts settle automatically — no monitoring needed.
-            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+            if self.config.contract_mode in {"rise_fall", "jump_rise_fall", "multiplier"}:
                 return
 
             # Multi-gale: per-contract open-position monitoring.
@@ -2169,6 +2260,8 @@ class DerivBot:
         )
         if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
             await self.send(ws, {"portfolio": 1, "contract_type": ["CALL", "PUT"]})
+        elif self.config.contract_mode == "multiplier":
+            await self.send(ws, {"portfolio": 1, "contract_type": ["MULTUP", "MULTDOWN"]})
         else:
             await self.send(ws, {"portfolio": 1, "contract_type": ["ACCU"]})
 
@@ -2180,11 +2273,12 @@ class DerivBot:
         open_contracts = [
             c for c in contracts if not c.get("is_sold") and not c.get("is_expired")
         ]
-        mode_label = (
-            "RF"
-            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}
-            else "ACCU"
-        )
+        if self.config.contract_mode == "multiplier":
+            mode_label = "MULT"
+        elif self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+            mode_label = "RF"
+        else:
+            mode_label = "ACCU"
         if not open_contracts:
             logger.info("Portfolio: nenhum contrato %s aberto encontrado.", mode_label)
             if self.waiting_for_result or self.pending_order:
@@ -2269,6 +2363,7 @@ class DerivBot:
                     "calm_accu": "Calm ACCU (BOOM1000)",
                     "rise_fall": "Rise/Fall",
                     "jump_rise_fall": "JumpRF Momentum",
+                    "multiplier": "Multipliers (BOOM1000)",
                 }.get(self.config.contract_mode, self.config.contract_mode)
                 # Obter URL WebSocket e credenciais dinamicamente via deriv_auth (novo sistema ou legado)
                 auth = deriv_auth.get_auth(self.config.app_id, self.config.account_mode)

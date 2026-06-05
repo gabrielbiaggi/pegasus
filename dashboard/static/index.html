@@ -1261,6 +1261,8 @@
                     >
                         <option value="accumulator">Accumulator</option>
                         <option value="calm_accu">Calm ACCU</option>
+                        <option value="multiplier">Multiplier BOOM1000</option>
+                        <option value="rise_fall">Rise/Fall</option>
                     </select>
                 </div>
                 <span class="sep">|</span>
@@ -3891,7 +3893,14 @@
                     applyButtonStates(_botRunning);
                     if (d.symbol) {
                         var cm = d.contract_mode || "accumulator";
-                        var modeLabel = cm === "calm_accu" ? "CALM" : "ACCU";
+                        var modeLabel =
+                            cm === "multiplier"
+                                ? "MULT"
+                                : cm === "rise_fall"
+                                ? "RF"
+                                : cm === "calm_accu"
+                                ? "CALM"
+                                : "ACCU";
                         $("symbol-badge").textContent =
                             d.symbol + " · " + modeLabel;
                     }

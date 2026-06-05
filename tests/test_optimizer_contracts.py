@@ -17,7 +17,7 @@ class OptimizerContractsTest(unittest.TestCase):
             "DERIV_PAT": "pat_secret",
             "PG_DSN": "postgresql://secret",
             "SYMBOL": "BOOM1000",
-            "CONTRACT_MODE": "rise_fall",
+            "CONTRACT_MODE": "multiplier",
             "STAKE": "13.0",
             "FRANKENSTEIN_USE_SOROS": "true",
         }
@@ -28,10 +28,10 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertNotIn("DERIV_PAT", safe)
         self.assertNotIn("PG_DSN", safe)
         self.assertEqual(safe["SYMBOL"], "BOOM1000")
-        self.assertEqual(safe["CONTRACT_MODE"], "rise_fall")
+        self.assertEqual(safe["CONTRACT_MODE"], "multiplier")
         self.assertEqual(safe["STAKE"], "13.0")
         self.assertEqual(safe["_optimizer_context"]["symbol"], "BOOM1000")
-        self.assertEqual(safe["_optimizer_context"]["contract_mode"], "rise_fall")
+        self.assertEqual(safe["_optimizer_context"]["contract_mode"], "multiplier")
 
     def test_optimizer_context_rejects_old_market_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})
@@ -42,12 +42,12 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertFalse(optimize_loop.params_match_context(old_champion, current))
 
-    def test_optimizer_context_accepts_current_boom_rise_fall_champion(self) -> None:
+    def test_optimizer_context_accepts_current_boom_multiplier_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})
         champion = {
             "_optimizer_context": {
                 "symbol": "BOOM1000",
-                "contract_mode": "rise_fall",
+                "contract_mode": "multiplier",
             },
             "STAKE": "13.0",
         }

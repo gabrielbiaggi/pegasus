@@ -92,6 +92,10 @@ RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "
 RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
 RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
+MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
+MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
+MULTIPLIER_STOP_LOSS = float(os.getenv("MULTIPLIER_STOP_LOSS", "1.00"))
+MULTIPLIER_MAX_HOLD_TICKS = int(os.getenv("MULTIPLIER_MAX_HOLD_TICKS", "30"))
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -562,6 +566,22 @@ STRATEGY_CONFIGS = _generate_strategy_configs()
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
+def _simulate_multiplier_profit(
+    stake: float,
+    direction: str,
+    returns_path: list[float],
+) -> float:
+    sign = 1.0 if direction == "MULTUP" else -1.0
+    last_profit = 0.0
+    for ret in returns_path:
+        last_profit = round(stake * MULTIPLIER_VALUE * sign * ret, 2)
+        if last_profit >= MULTIPLIER_TAKE_PROFIT:
+            return round(MULTIPLIER_TAKE_PROFIT, 2)
+        if last_profit <= -MULTIPLIER_STOP_LOSS:
+            return round(-MULTIPLIER_STOP_LOSS, 2)
+    return last_profit
+
+
 def _replay_strategy(
     outcomes: list[tuple],
     config: dict,
@@ -631,6 +651,8 @@ def _replay_strategy(
         stop_reason = None
         
         for item in outcomes:
+            mult_direction = None
+            mult_returns = None
             if len(item) == 11:
                 (
                     is_win,
@@ -645,6 +667,23 @@ def _replay_strategy(
                     velocity_v,
                     imbalance_v,
                 ) = item
+            elif len(item) == 13:
+                (
+                    _is_win,
+                    epoch,
+                    avg,
+                    cusum_v,
+                    hurst_v,
+                    barrier_hit_at,
+                    shannon_v,
+                    kalman_v,
+                    p_loss,
+                    velocity_v,
+                    imbalance_v,
+                    mult_direction,
+                    mult_returns,
+                ) = item
+                is_win = False
             elif len(item) == 9:
                 is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at, shannon_v, kalman_v, p_loss = item
                 velocity_v = 0.0
@@ -673,6 +712,11 @@ def _replay_strategy(
                 current_tp_pct = RISE_FALL_MIN_PAYOUT_PCT
                 is_win_trade = is_win
                 risk.martingale_payout_rate = RISE_FALL_MIN_PAYOUT_PCT
+            elif CONTRACT_MODE == "multiplier":
+                current_tp_pct = 0.0
+                is_win_trade = False
+                risk.use_martingale = False
+                risk.use_soros = False
             # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
             elif is_super_frank:
                 is_absolute_calm = False
@@ -753,22 +797,22 @@ def _replay_strategy(
                 if is_boom or is_crash:
                     _cusum_limit = (
                         RISE_FALL_BOOM_MAX_CUSUM
-                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else CUSUM_MAX
                     )
                     _velocity_limit = (
                         RISE_FALL_BOOM_MAX_VELOCITY
-                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else 0.0002
                     )
                     _imbalance_limit = (
                         RISE_FALL_BOOM_MAX_IMBALANCE
-                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else 1.0
                     )
                     _ensemble_threshold = (
                         RISE_FALL_ENSEMBLE_MIN_PROB
-                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else ENSEMBLE_MIN_PROB
                     )
                     if dynamic_cooldown_resume_ok(
@@ -818,7 +862,18 @@ def _replay_strategy(
             risk.balance = round(risk.balance - stake, 2)
             risk._pending_stake_deduction = stake
             
-            if is_win_trade:
+            if CONTRACT_MODE == "multiplier":
+                profit = _simulate_multiplier_profit(
+                    stake,
+                    str(mult_direction or "MULTDOWN"),
+                    list(mult_returns or []),
+                )
+                risk.update(profit=profit, buy_price=stake)
+                if profit > 0:
+                    wins += 1
+                else:
+                    losses += 1
+            elif is_win_trade:
                 profit = round(stake * current_tp_pct, 2)
                 risk.update(profit=profit, buy_price=stake)
                 wins += 1
@@ -1070,7 +1125,7 @@ def _collect_day_outcomes(
             _indicators_df_cache[day] = day_indicators_df
 
     # Convert to dictionary of records for target indices only, to avoid slow to_dict('records')
-    if CONTRACT_MODE == "rise_fall":
+    if CONTRACT_MODE in {"rise_fall", "multiplier"}:
         # Extract numpy arrays directly from the indicators dataframe for O(1) indexing
         cusum_arr = day_indicators_df["cusum_score"].values if "cusum_score" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         velocity_arr = day_indicators_df["price_velocity"].values if "price_velocity" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
@@ -1112,9 +1167,9 @@ def _collect_day_outcomes(
 
     # Pre-calcula win_ticks para cada TP unico ou define fixo para Rise/Fall
     tp_to_wt: dict[float, int] = {}
-    if CONTRACT_MODE == "rise_fall":
-        max_wt = RISE_FALL_DURATION_TICKS
-        tp_to_wt = {c["tp"]: RISE_FALL_DURATION_TICKS for c in STRATEGY_CONFIGS}
+    if CONTRACT_MODE in {"rise_fall", "multiplier"}:
+        max_wt = MULTIPLIER_MAX_HOLD_TICKS if CONTRACT_MODE == "multiplier" else RISE_FALL_DURATION_TICKS
+        tp_to_wt = {c["tp"]: max_wt for c in STRATEGY_CONFIGS}
     else:
         for c in STRATEGY_CONFIGS:
             tp = c["tp"]
@@ -1164,7 +1219,7 @@ def _collect_day_outcomes(
         if np.isnan(avg):
             i += SAMPLE_EVERY
             continue
-        if CONTRACT_MODE != "rise_fall" and avg >= CALM_THRESH:
+        if CONTRACT_MODE not in {"rise_fall", "multiplier"} and avg >= CALM_THRESH:
             i += SAMPLE_EVERY
             continue
 
@@ -1173,7 +1228,7 @@ def _collect_day_outcomes(
             continue
             
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
-        if CONTRACT_MODE == "rise_fall":
+        if CONTRACT_MODE in {"rise_fall", "multiplier"}:
             cusum_v = float(cusum_arr[i])
             velocity_v = float(velocity_arr[i])
             imbalance_v = float(imbalance_arr[i])
@@ -1240,7 +1295,7 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
 
-        if CONTRACT_MODE == "rise_fall":
+        if CONTRACT_MODE in {"rise_fall", "multiplier"}:
             barrier_hit_at = None
         else:
             # Verifica outcome para cada (TP, score) combo
@@ -1270,26 +1325,57 @@ def _collect_day_outcomes(
                     is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] > prices[entry_idx]
                 else:
                     is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] < prices[entry_idx]
+                mult_direction = None
+                mult_returns = None
+            elif CONTRACT_MODE == "multiplier":
+                is_crash = "CRASH" in SYMBOL.upper()
+                is_up = prices[entry_idx + 1] > prices[entry_idx] if entry_idx + 1 < len(prices) else False
+                signal = "CALL" if is_up else "PUT"
+                if "BOOM" in SYMBOL.upper():
+                    signal = "PUT"
+                if is_crash:
+                    signal = "CALL"
+                mult_direction = "MULTUP" if signal == "CALL" else "MULTDOWN"
+                base_price = prices[entry_idx]
+                mult_returns = [
+                    float((prices[entry_idx + j] / base_price) - 1.0)
+                    for j in range(1, min(MULTIPLIER_MAX_HOLD_TICKS, len(prices) - entry_idx - 1) + 1)
+                ]
+                is_win = False
             else:
                 is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
+                mult_direction = None
+                mult_returns = None
                 
-            outcomes[c["name"]].append((
-                is_win, 
-                float(epochs[entry_idx]), 
-                float(avg), 
-                float(cusum_v), 
-                float(hurst_v), 
+            base_outcome = (
+                is_win,
+                float(epochs[entry_idx]),
+                float(avg),
+                float(cusum_v),
+                float(hurst_v),
                 barrier_hit_at,
                 float(shannon_v),
                 float(kalman_v),
-                float(p_loss if p_loss is not None else 1.0)
-            ))
+                float(p_loss if p_loss is not None else 1.0),
+                float(velocity_v if CONTRACT_MODE in {"rise_fall", "multiplier"} else 0.0),
+                float(imbalance_v if CONTRACT_MODE in {"rise_fall", "multiplier"} else 0.0),
+            )
+            if CONTRACT_MODE == "multiplier":
+                outcomes[c["name"]].append(base_outcome + (mult_direction, mult_returns))
+            else:
+                outcomes[c["name"]].append(base_outcome)
 
             best_hold = max(best_hold, wt)
 
         if CONTRACT_MODE == "rise_fall":
             i += (
                 RISE_FALL_DURATION_TICKS
+                + SLIPPAGE
+                + RISE_FALL_COOLDOWN_TICKS
+            )
+        elif CONTRACT_MODE == "multiplier":
+            i += (
+                MULTIPLIER_MAX_HOLD_TICKS
                 + SLIPPAGE
                 + RISE_FALL_COOLDOWN_TICKS
             )
@@ -1589,6 +1675,7 @@ def apply_config(env_overrides: dict):
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
     global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
     global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
+    global MULTIPLIER_VALUE, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
     os.environ.update(env_overrides)
@@ -1625,6 +1712,10 @@ def apply_config(env_overrides: dict):
     RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
     RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
     RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
+    MULTIPLIER_VALUE = int(os.environ.get("MULTIPLIER_VALUE", "100"))
+    MULTIPLIER_TAKE_PROFIT = float(os.environ.get("MULTIPLIER_TAKE_PROFIT", "0.50"))
+    MULTIPLIER_STOP_LOSS = float(os.environ.get("MULTIPLIER_STOP_LOSS", "1.00"))
+    MULTIPLIER_MAX_HOLD_TICKS = int(os.environ.get("MULTIPLIER_MAX_HOLD_TICKS", "30"))
 
     CUSUM_MAX = float(os.environ.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
     HURST_MIN = float(os.environ.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -1633,7 +1724,7 @@ def apply_config(env_overrides: dict):
     CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
     ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
     SAMPLE_EVERY = int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60"))
-    if CONTRACT_MODE == "rise_fall":
+    if CONTRACT_MODE in {"rise_fall", "multiplier"}:
         SAMPLE_EVERY = 1
     
     _v = 1.0
