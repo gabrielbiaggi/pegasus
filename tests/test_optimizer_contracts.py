@@ -105,6 +105,21 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(safe["avg_daily_profit"], 12.3)
         self.assertIn("monthly_breakdown", safe)
 
+    def test_sanitize_env_for_worker_removes_dashboard_context_dict(self) -> None:
+        env = {
+            "STAKE": 13.0,
+            "START_DATE": "2026-01-01",
+            "_optimizer_context": {"symbol": "BOOM1000"},
+            "BAD_LIST": [1, 2],
+        }
+
+        safe = optimize_loop.sanitize_env_for_worker(env)
+
+        self.assertEqual(safe["STAKE"], "13.0")
+        self.assertEqual(safe["START_DATE"], "2026-01-01")
+        self.assertNotIn("_optimizer_context", safe)
+        self.assertNotIn("BAD_LIST", safe)
+
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [
             {

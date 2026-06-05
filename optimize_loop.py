@@ -475,6 +475,17 @@ def sanitize_params_for_storage(params: dict) -> dict:
     safe["_optimizer_context"] = ctx
     return safe
 
+def sanitize_env_for_worker(env_vars: dict) -> dict[str, str]:
+    """Return only string env overrides accepted by os.environ/backtest workers."""
+    safe: dict[str, str] = {}
+    for key, value in (env_vars or {}).items():
+        if not isinstance(key, str) or key.startswith("_"):
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            continue
+        safe[key] = str(value)
+    return safe
+
 def load_env(path: Path = ENV_PATH) -> dict:
     env = {}
     if path.exists():
@@ -707,7 +718,7 @@ def _run_one(args) -> dict | None:
     import backtest_engine
     
     # Garante flags de otimização no dicionário de overrides
-    env_vars = env_vars.copy()
+    env_vars = sanitize_env_for_worker(env_vars)
     
     # Extrai datas personalizadas se fornecidas
     s_date = env_vars.pop("START_DATE", START_DATE)

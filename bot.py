@@ -51,6 +51,10 @@ def get_symbol_median_volatility(symbol: str) -> float:
     return baselines.get(symbol_upper, 1.4e-4)
 
 
+def is_unsupported_rf_contract_error(error_code: str) -> bool:
+    return error_code in {"TradingDurationNotAllowed", "ContractCreationFailure"}
+
+
 @dataclass
 class PendingOrder:
     stake: float
@@ -106,6 +110,8 @@ class DerivBot:
             except Exception as exc:
                 logger.warning("EnsembleScorerRF nao carregado: %s", exc)
         self.last_rf_entry_epoch: Optional[int] = None  # cooldown for RF
+        self._rf_disabled_until: float = 0.0
+        self._rf_disabled_reason: str = ""
         # Multi-contract gale: split gale stake across N simultaneous contracts
         # when required stake exceeds Deriv API's per-contract limit ($1,000).
         self._gale_queue: list[float] = []  # remaining stakes to buy
@@ -271,6 +277,18 @@ class DerivBot:
         metrics: dict[str, Any] | None = None,
     ) -> None:
         """Request a CALL or PUT proposal for Rise/Fall binary contracts."""
+        now = time.monotonic()
+        if now < self._rf_disabled_until:
+            remaining = int(self._rf_disabled_until - now)
+            if not hasattr(self, "_rf_disabled_log_ts") or now - self._rf_disabled_log_ts >= 60:
+                self._rf_disabled_log_ts = now
+                logger.error(
+                    "RF temporariamente desativado por contrato/duração inválido: %s (%ss restantes)",
+                    self._rf_disabled_reason or "motivo desconhecido",
+                    remaining,
+                )
+            return
+
         self.pending_order = PendingOrder(stake, score, entry_epoch, metrics, direction)
         self.journal.log_signal(
             symbol=self.config.symbol,
@@ -2031,6 +2049,18 @@ class DerivBot:
                 raise ConnectionError(f"Auth transiente [{err_code}]: {err_msg}")
             if data.get("msg_type") in {"proposal", "buy"}:
                 err_code = error.get("code", "")
+                if data.get("msg_type") == "proposal" and is_unsupported_rf_contract_error(err_code):
+                    self._rf_disabled_until = time.monotonic() + 3600.0
+                    self._rf_disabled_reason = f"{err_code}: {error.get('message', '')}"
+                    self.pending_order = None
+                    self.waiting_for_result = False
+                    logger.error(
+                        "RF desativado por 1h: API recusou contrato/duração para %s em %dt (%s).",
+                        self.config.symbol,
+                        self.config.rise_fall_duration_ticks,
+                        self._rf_disabled_reason,
+                    )
+                    return
                 if (
                     data.get("msg_type") == "buy"
                     and err_code == "OpenPositionLimitExceeded"
