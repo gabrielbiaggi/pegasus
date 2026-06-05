@@ -50,7 +50,8 @@ def setup_logger() -> logging.Logger:
     stream_handler.setLevel(level)
 
     logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
+    # StreamHandler removido: evita duplicação quando stdout é redirecionado para trades.log
+    # O FileHandler (RotatingFileHandler) já captura tudo em logs/trades.log
     return logger
 
 
