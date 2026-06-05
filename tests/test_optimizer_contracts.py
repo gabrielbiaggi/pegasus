@@ -109,6 +109,31 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(workers[1]["worker_id"], "w0")
         self.assertTrue(workers[1]["stale"])
 
+    def test_read_optimizer_workers_can_filter_stale_files_for_live_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            stale = logs / "backtest_worker_old.json"
+            stale.write_text(json.dumps({
+                "current_day_index": 31,
+                "total_days": 31,
+                "elapsed_s": 10,
+                "current_month": "Janeiro",
+            }))
+            old_ts = time.time() - 3600
+            os.utime(stale, (old_ts, old_ts))
+
+            active = logs / "backtest_worker_Jan_r0_w0.json"
+            active.write_text(json.dumps({
+                "current_day_index": 5,
+                "total_days": 31,
+                "elapsed_s": 20,
+                "current_month": "Janeiro",
+            }))
+
+            workers = dashboard_app._read_optimizer_workers(logs, now=time.time(), include_stale=False)
+
+        self.assertEqual([worker["worker_id"] for worker in workers], ["Jan_r0_w0"])
+
     def test_sanitize_metrics_for_state_removes_runtime_payloads(self) -> None:
         metrics = {
             "avg_daily_profit": 12.3,

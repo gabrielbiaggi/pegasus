@@ -1184,7 +1184,7 @@ def _read_stress_config() -> bool:
         return False
 
 
-def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[dict]:
+def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_stale: bool = True) -> list[dict]:
     """Read live optimizer worker progress files, preferring current monthly workers."""
     now = now if now is not None else _time.time()
     workers: list[dict] = []
@@ -1215,6 +1215,8 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[di
             if curr_idx > 0 and total_days > curr_idx:
                 est_remaining = round((total_days - curr_idx) * (elapsed / curr_idx), 1)
             stale = (now - mtime) > 180
+            if stale and not include_stale:
+                continue
             month = data.get("current_month") or ""
             status = "Finalizado" if total_days and curr_idx >= total_days else "Simulando..."
             if stale and status != "Finalizado":
@@ -1363,7 +1365,7 @@ def optimizer_status(response: Response):
             data["last_update_ago_s"] = int(_t.time() - mtime)
             data["ultra_stress"] = _read_stress_config()
             data["deployed_iteration"] = deployed_iteration_val
-            workers = _read_optimizer_workers(BASE / "logs", now=_t.time())
+            workers = _read_optimizer_workers(BASE / "logs", now=_t.time(), include_stale=False)
             data["optimizer_workers"] = workers
 
             # Enriquecimento com progresso de workers em tempo real
