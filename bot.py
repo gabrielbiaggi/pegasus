@@ -2389,11 +2389,20 @@ class DerivBot:
                 self.current_contract_id is None
                 and cid not in self.settled_contract_ids
             ):
-                logger.warning(
-                    "Zombie trade detectado: contrato %s id=%s aberto sem rastreamento local. Subscrevendo.",
-                    mode_label,
-                    cid,
-                )
+                if self._stale_pending_order is not None:
+                    logger.info(
+                        "Recuperando ordem pendente pos-desconexao para o contrato %s id=%s.",
+                        mode_label,
+                        cid,
+                    )
+                    self.pending_order = self._stale_pending_order
+                    self._stale_pending_order = None
+                else:
+                    logger.warning(
+                        "Zombie trade detectado: contrato %s id=%s aberto sem rastreamento local. Subscrevendo.",
+                        mode_label,
+                        cid,
+                    )
                 self.current_contract_id = cid
                 self.waiting_for_result = True
                 await self.subscribe_contract(ws, cid)
