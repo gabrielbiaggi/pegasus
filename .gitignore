@@ -17,3 +17,5 @@ logs/*.pid
 logs/*.log.*
 !logs/.gitkeep
 !data/.gitkeep
+
+.env_backups/
