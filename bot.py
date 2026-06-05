@@ -59,6 +59,14 @@ def multiplier_contract_from_signal(signal: str) -> str:
     return "MULTUP" if signal == "CALL" else "MULTDOWN"
 
 
+def multiplier_contract_from_mode(signal: str, direction_mode: str) -> str:
+    if direction_mode == "up":
+        return "MULTUP"
+    if direction_mode == "down":
+        return "MULTDOWN"
+    return multiplier_contract_from_signal(signal)
+
+
 @dataclass
 class PendingOrder:
     stake: float
@@ -1125,13 +1133,17 @@ class DerivBot:
             if self._rf_temporarily_disabled():
                 return
             if self.config.contract_mode == "multiplier":
-                contract_type = multiplier_contract_from_signal(signal)
+                contract_type = multiplier_contract_from_mode(
+                    signal,
+                    self.config.multiplier_direction,
+                )
                 logger.info(
-                    "Setup MULT %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
+                    "Setup MULT %s detectado: score=%s stake=%.2f p_dir=%s dir_mode=%s modo=%s",
                     contract_type,
                     score,
                     stake,
                     f"{p_dir:.4f}" if p_dir is not None else "N/A",
+                    self.config.multiplier_direction,
                     _mode,
                 )
                 await self.request_multiplier_proposal(

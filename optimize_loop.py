@@ -367,6 +367,7 @@ PARAM_SPACE = {
     "RISE_FALL_USE_ENSEMBLE":       {"type": "bool"},
     "RISE_FALL_ENSEMBLE_MIN_PROB":  {"type": "float", "min": 0.10, "max": 0.45, "step": 0.01},
     "MULTIPLIER_VALUE":             {"type": "int",   "min": 20,  "max": 200,  "step": 10},
+    "MULTIPLIER_DIRECTION":         {"type": "choice", "choices": ["signal", "up", "down"]},
     "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.10, "max": 2.50, "step": 0.10},
     "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.50, "max": 5.00, "step": 0.25},
     "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 5,   "max": 80,   "step": 5},
@@ -572,7 +573,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
-            action = random.choice(["stake", "cooldown", "multiplier", "mult_tp", "filters"])
+            action = random.choice(["stake", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
                 factor = 50.0 / max(1.0, avg_d)
@@ -588,6 +589,10 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             elif action == "mult_tp" and "MULTIPLIER_TAKE_PROFIT" in p:
                 val = float(p["MULTIPLIER_TAKE_PROFIT"])
                 p["MULTIPLIER_TAKE_PROFIT"] = str(round(min(PARAM_SPACE["MULTIPLIER_TAKE_PROFIT"]["max"], val + 0.10), 2))
+            elif action == "mult_dir":
+                choices = PARAM_SPACE["MULTIPLIER_DIRECTION"]["choices"]
+                current = str(p.get("MULTIPLIER_DIRECTION", "signal"))
+                p["MULTIPLIER_DIRECTION"] = random.choice([c for c in choices if c != current])
             elif action == "filters":
                 # Afrouxa de leve os filtros se o número de trades for muito baixo
                 for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
@@ -875,6 +880,22 @@ _pending_deploy_msg = ""
 DEPLOY_COOLDOWN = 120.0  # 2 minutos de cooldown mínimo para o bot ao vivo respirar
 
 
+def is_live_deployable(metrics: dict | None) -> bool:
+    """Only deploy strategies that clear the live operating target."""
+    if not metrics:
+        return False
+    avg_day = float(metrics.get("avg_daily_profit", metrics.get("avg_daily", 0.0)) or 0.0)
+    consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
+    worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
+    active_days = int(metrics.get("active_days", 0) or 0)
+    return (
+        avg_day >= 50.0
+        and consistency >= 80.0
+        and worst_day >= -25.0
+        and active_days >= 20
+    )
+
+
 def try_deploy_winner(env_vars: dict, msg: str, force: bool = False) -> bool:
     global _last_deploy_time, _pending_deploy_env, _pending_deploy_msg
     now = time.time()
@@ -931,6 +952,7 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
     out["USE_SOROS"] = "false"
     out["MARTINGALE_PAYOUT_RATE"] = "1.0"
     out.setdefault("MULTIPLIER_VALUE", "100")
+    out.setdefault("MULTIPLIER_DIRECTION", "signal")
     out.setdefault("MULTIPLIER_TAKE_PROFIT", "0.50")
     out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
     out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
@@ -1168,12 +1190,18 @@ def main():
         if original_deployed_it != db_it_str:
             print(f"   🔄 [Startup Sync] Desalinhamento detectado: .env tem it#{original_deployed_it}, mas DB tem campeão it#{db_it_str}.", flush=True)
             print(f"      Iniciando deploy forçado do campeão it#{db_it_str}...", flush=True)
-            ok = try_deploy_winner(best_env, f"Startup Sync: deploy campeão it#{db_it_str} do banco de dados", force=True)
-            if ok:
-                bot_was_synced = True
-                print(f"      ✅ Deploy de startup concluído com sucesso!", flush=True)
+            if is_live_deployable(best_data):
+                ok = try_deploy_winner(best_env, f"Startup Sync: deploy campeão it#{db_it_str} do banco de dados", force=True)
+                if ok:
+                    bot_was_synced = True
+                    print(f"      ✅ Deploy de startup concluído com sucesso!", flush=True)
+                else:
+                    print(f"      ⚠️  Deploy de startup retornou falha, mas parâmetros foram salvos no .env", flush=True)
             else:
-                print(f"      ⚠️  Deploy de startup retornou falha, mas parâmetros foram salvos no .env", flush=True)
+                print(
+                    "      ⏸️  Campeão DB não passa gate live; mantendo bot offline e otimizando.",
+                    flush=True,
+                )
     else:
         best_score = baseline_metrics["score"]
         best_pos   = baseline_metrics["positive_days"]
@@ -1197,8 +1225,11 @@ def main():
             is_bot_running = True
 
         if not is_bot_running:
-            print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando...", flush=True)
-            try_deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now", force=True)
+            if is_live_deployable(best_data):
+                print("   ⚠️  Bot ao vivo está OFFLINE no startup. Inicializando campeão validado...", flush=True)
+                try_deploy_winner(best_env, "Optimizer Startup: Live bot was offline, starting now", force=True)
+            else:
+                print("   ⏸️  Bot ao vivo OFFLINE: sem campeão validado para live; optimizer continua buscando.", flush=True)
     else:
         print("   🤖 [Ultra-Estresse] Bot ao vivo permanece em espera (OFFLINE) para prioridade de CPU/RAM.", flush=True)
 
@@ -1369,10 +1400,13 @@ def main():
     }
 
     # Faz deploy do vencedor supremo no bot ao vivo
-    print(f"\n🚀 Fazendo deploy do Vencedor Supremo no bot ao vivo...", flush=True)
-    ok = try_deploy_winner(best_env, f"Supreme Winner from month {supreme_winner['champ_name']}: score={supreme_winner['score']:.4f} avg_day=${supreme_winner['avg_daily_profit']:.2f}/dia", force=True)
-    if ok:
-        print(f"✅ Vencedor Supremo ativo com sucesso no servidor!", flush=True)
+    if is_live_deployable(best_data):
+        print(f"\n🚀 Fazendo deploy do Vencedor Supremo no bot ao vivo...", flush=True)
+        ok = try_deploy_winner(best_env, f"Supreme Winner from month {supreme_winner['champ_name']}: score={supreme_winner['score']:.4f} avg_day=${supreme_winner['avg_daily_profit']:.2f}/dia", force=True)
+        if ok:
+            print(f"✅ Vencedor Supremo ativo com sucesso no servidor!", flush=True)
+    else:
+        print("\n⏸️ Vencedor Supremo ainda não passa gate live; sem deploy ao bot.", flush=True)
 
     # ── Loop infinito de refinamento contínuo ─────────────────────────────────
     print(f"\n{'-'*70}", flush=True)
@@ -1488,7 +1522,10 @@ def main():
                     print(f"     Parâmetros: {champ_params}", flush=True)
                     print(f"{'★'*70}\n", flush=True)
 
-                    try_deploy_winner(best_env, f"ref-opt it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
+                    if is_live_deployable(best_data):
+                        try_deploy_winner(best_env, f"ref-opt it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
+                    else:
+                        print("     ⏸️ Novo recorde não passa gate live; sem deploy.", flush=True)
 
                 write_state(iteration + idx, baseline_metrics, best_data, history,
                             evaluating_candidates=candidates_ui,

@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from bot import DerivBot, PendingOrder
+from bot import DerivBot, PendingOrder, multiplier_contract_from_mode
 from config import load_config
 
 
@@ -16,6 +16,11 @@ class FakeWebSocket:
 
 
 class BotTest(unittest.IsolatedAsyncioTestCase):
+    def test_multiplier_direction_mode_can_override_signal(self) -> None:
+        self.assertEqual(multiplier_contract_from_mode("PUT", "up"), "MULTUP")
+        self.assertEqual(multiplier_contract_from_mode("CALL", "down"), "MULTDOWN")
+        self.assertEqual(multiplier_contract_from_mode("CALL", "signal"), "MULTUP")
+
     async def test_accumulator_proposal_payload(self) -> None:
         env = {
             "DERIV_TOKEN": "token",

@@ -93,6 +93,7 @@ RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() =
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
 RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
+MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower()
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
 MULTIPLIER_STOP_LOSS = float(os.getenv("MULTIPLIER_STOP_LOSS", "1.00"))
 MULTIPLIER_MAX_HOLD_TICKS = int(os.getenv("MULTIPLIER_MAX_HOLD_TICKS", "30"))
@@ -580,6 +581,14 @@ def _simulate_multiplier_profit(
         if last_profit <= -MULTIPLIER_STOP_LOSS:
             return round(-MULTIPLIER_STOP_LOSS, 2)
     return last_profit
+
+
+def _multiplier_direction_from_signal(signal: str) -> str:
+    if MULTIPLIER_DIRECTION == "up":
+        return "MULTUP"
+    if MULTIPLIER_DIRECTION == "down":
+        return "MULTDOWN"
+    return "MULTUP" if signal == "CALL" else "MULTDOWN"
 
 
 def _replay_strategy(
@@ -1335,7 +1344,7 @@ def _collect_day_outcomes(
                     signal = "PUT"
                 if is_crash:
                     signal = "CALL"
-                mult_direction = "MULTUP" if signal == "CALL" else "MULTDOWN"
+                mult_direction = _multiplier_direction_from_signal(signal)
                 base_price = prices[entry_idx]
                 mult_returns = [
                     float((prices[entry_idx + j] / base_price) - 1.0)
@@ -1675,7 +1684,7 @@ def apply_config(env_overrides: dict):
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
     global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
     global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
-    global MULTIPLIER_VALUE, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
+    global MULTIPLIER_VALUE, MULTIPLIER_DIRECTION, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
     os.environ.update(env_overrides)
@@ -1713,6 +1722,7 @@ def apply_config(env_overrides: dict):
     RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
     RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
     MULTIPLIER_VALUE = int(os.environ.get("MULTIPLIER_VALUE", "100"))
+    MULTIPLIER_DIRECTION = os.environ.get("MULTIPLIER_DIRECTION", "signal").strip().lower()
     MULTIPLIER_TAKE_PROFIT = float(os.environ.get("MULTIPLIER_TAKE_PROFIT", "0.50"))
     MULTIPLIER_STOP_LOSS = float(os.environ.get("MULTIPLIER_STOP_LOSS", "1.00"))
     MULTIPLIER_MAX_HOLD_TICKS = int(os.environ.get("MULTIPLIER_MAX_HOLD_TICKS", "30"))

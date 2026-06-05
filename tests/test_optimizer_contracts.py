@@ -54,6 +54,30 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertTrue(optimize_loop.params_match_context(champion, current))
 
+    def test_live_deploy_gate_rejects_negative_multiplier_candidate(self) -> None:
+        self.assertFalse(
+            optimize_loop.is_live_deployable(
+                {
+                    "avg_daily_profit": -44.37,
+                    "consistency_pct": 0.0,
+                    "worst_day_pnl": -50.0,
+                    "active_days": 155,
+                }
+            )
+        )
+
+    def test_live_deploy_gate_accepts_consistent_daily_doubler(self) -> None:
+        self.assertTrue(
+            optimize_loop.is_live_deployable(
+                {
+                    "avg_daily_profit": 55.0,
+                    "consistency_pct": 85.0,
+                    "worst_day_pnl": -10.0,
+                    "active_days": 155,
+                }
+            )
+        )
+
     def test_read_optimizer_workers_prefers_active_monthly_worker_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             logs = Path(tmp)
