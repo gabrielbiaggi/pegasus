@@ -240,6 +240,32 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual([item["worker_id"] for item in merged], ["Fev_r4_w0"])
 
+    def test_optimizer_dashboard_cards_prefer_current_live_workers_and_worker_limit(self) -> None:
+        saved = [
+            {"worker_id": "Jan_r0_w0", "status": "Simulando...", "STAKE": "11"},
+            {"worker_id": "Jan_r0_w1", "status": "Finalizado", "STAKE": "12"},
+            {"worker_id": "Jan_r0_w2", "status": "Finalizado", "STAKE": "13"},
+            {"worker_id": "Jan_r0_w3", "status": "Finalizado", "STAKE": "14"},
+            {"worker_id": "Jan_r0_w4", "status": "Finalizado", "STAKE": "15"},
+            {"worker_id": "Jan_r0_w5", "status": "Finalizado", "STAKE": "16"},
+            {"worker_id": "Jan_r0_w6", "status": "Finalizado", "STAKE": "17"},
+            {"worker_id": "Jan_r0_w7", "status": "Finalizado", "STAKE": "18"},
+            {"worker_id": "Jan_r0_w8", "status": "Finalizado", "STAKE": "19"},
+        ]
+        workers = [
+            {"worker_id": "Abr_r3_w0", "status": "Simulando...", "progress_pct": 76.7},
+            {"worker_id": "Abr_r3_w1", "status": "Finalizado", "progress_pct": 100.0},
+            {"worker_id": "Abr_r3_w2", "status": "Finalizado", "progress_pct": 100.0},
+            {"worker_id": "Abr_r3_w3", "status": "Finalizado", "progress_pct": 100.0},
+            {"worker_id": "Abr_r3_w4", "status": "Finalizado", "progress_pct": 100.0},
+            {"worker_id": "Abr_r3_w5", "status": "Finalizado", "progress_pct": 100.0},
+        ]
+
+        cards = dashboard_app._optimizer_dashboard_cards(saved, workers, n_workers=6, running=True)
+
+        self.assertEqual([item["worker_id"] for item in cards], [f"Abr_r3_w{i}" for i in range(6)])
+        self.assertEqual(cards[0]["progress_pct"], 76.7)
+
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [
             {

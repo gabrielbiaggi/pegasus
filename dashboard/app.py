@@ -1283,6 +1283,19 @@ def _merge_optimizer_candidates(saved_candidates: list[dict], workers: list[dict
     return sorted(merged, key=sort_key)
 
 
+def _optimizer_dashboard_cards(
+    saved_candidates: list[dict],
+    workers: list[dict],
+    n_workers: int | None,
+    running: bool,
+) -> list[dict]:
+    """Return the worker cards that represent the current optimizer process."""
+    limit = max(1, int(n_workers or len(workers) or 1))
+    if running and workers:
+        return workers[:limit]
+    return _merge_optimizer_candidates(saved_candidates or [], workers)[:limit]
+
+
 
 def _write_stress_config(enabled: bool) -> None:
     path = BASE / "logs" / "stress_config.json"
@@ -1370,6 +1383,7 @@ def optimizer_status(response: Response):
             data["deployed_iteration"] = deployed_iteration_val
             workers = _read_optimizer_workers(BASE / "logs", now=_t.time(), include_stale=False)
             data["optimizer_workers"] = workers
+            n_workers = int(data.get("n_workers") or len(workers) or 1)
 
             # Enriquecimento com progresso de workers em tempo real
             evaluating_candidates = data.get("evaluating_candidates", [])
@@ -1428,11 +1442,15 @@ def optimizer_status(response: Response):
                         except Exception:
                             pass
             if evaluating_candidates:
-                data["optimizer_workers"] = [
-                    candidate
-                    for candidate in evaluating_candidates
-                    if candidate.get("worker_id")
-                ]
+                evaluating_candidates = _optimizer_dashboard_cards(
+                    evaluating_candidates,
+                    workers,
+                    n_workers=n_workers,
+                    running=bool(data["running"]),
+                )
+                data["evaluating_candidates"] = evaluating_candidates
+                data["optimizer_workers"] = evaluating_candidates
+                data["worker_cards_count"] = len(evaluating_candidates)
             return data
         except Exception as exc:
             pass

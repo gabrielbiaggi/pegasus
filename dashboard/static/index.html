@@ -5837,14 +5837,19 @@
                     var workersSection = document.getElementById("opt-workers-section");
                     var workersContainer = document.getElementById("opt-workers-container");
                     if (workersSection && workersContainer) {
-                        var candidates = (d.evaluating_candidates && d.evaluating_candidates.length)
-                            ? d.evaluating_candidates
-                            : (d.optimizer_workers || []);
+                        var liveWorkers = d.optimizer_workers || [];
+                        var candidates = liveWorkers.length
+                            ? liveWorkers
+                            : (d.evaluating_candidates || []);
+                        var expectedWorkers = parseInt(d.n_workers || candidates.length || 0, 10);
+                        if (expectedWorkers > 0 && candidates.length > expectedWorkers) {
+                            candidates = candidates.slice(0, expectedWorkers);
+                        }
                         if (d.running && candidates.length > 0) {
                             workersSection.style.display = "block";
                             var workersLiveLabel = document.getElementById("opt-workers-live-label");
                             if (workersLiveLabel) {
-                                workersLiveLabel.textContent = "● " + (d.n_workers || candidates.length) + " workers em tempo real";
+                                workersLiveLabel.textContent = "● " + candidates.length + "/" + (expectedWorkers || candidates.length) + " workers em tempo real";
                             }
                             workersContainer.innerHTML = candidates.map(function(c, idx) {
                                 var workerLabel = c.worker_id || ("#" + idx);
