@@ -1355,7 +1355,7 @@ class RiskManager:
             # adds 0; for multipliers sold before wipeout it adds stake + profit.
             # Unit tests (no handle_buy): deduct the stake here.
             if _stake_deducted == 0:
-                self.balance = round(self.balance - buy_price, 2)
+                self.balance = round(self.balance + profit, 2)
             else:
                 self.balance = round(
                     self.balance + max(0.0, _stake_deducted + profit),
