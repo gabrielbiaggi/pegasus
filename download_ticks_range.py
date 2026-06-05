@@ -25,6 +25,7 @@ async def download_day(date_str: str, output_path: Path) -> int:
     end_epoch = int((dt + timedelta(days=1)).timestamp()) - 1
 
     auth = get_auth(APP_ID, "demo")
+    print(f"DEBUG: is_new_api={auth.is_new_api}, url={auth.ws_url}")
     ticks = []
     async with websockets.connect(auth.ws_url, ping_interval=30) as ws:
         if not auth.is_new_api:
