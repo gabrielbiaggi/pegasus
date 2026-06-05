@@ -757,7 +757,16 @@ class RiskManager:
 
     @property
     def _daily_trailing_lock_abs(self) -> float:
-        return self.start_of_day_balance * self.daily_trailing_lock / 100.0
+        # Classical trailing stop: lock trails peak profit by a fixed distance
+        if self.daily_trailing_start <= 0 or self.daily_trailing_lock >= self.daily_trailing_start:
+            return self.start_of_day_balance * self.daily_trailing_lock / 100.0
+            
+        start_abs = self.start_of_day_balance * self.daily_trailing_start / 100.0
+        lock_base = self.start_of_day_balance * self.daily_trailing_lock / 100.0
+        distance = start_abs - lock_base
+        
+        # Lock level is the peak profit minus the distance, but at least the base lock level
+        return max(lock_base, self.daily_peak_profit - distance)
 
     def _effective_loss_limit(self) -> float:
         """Dynamic loss limit: uses % of start-of-day balance when stop_loss_pct > 0."""

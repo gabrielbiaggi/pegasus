@@ -513,22 +513,54 @@ class DerivBot:
                 _cusum = float(_last.get("cusum_score", 0.0) or 0.0)
                 _hurst = float(_last.get("hurst_exponent", 0.5) or 0.5)
                 
-                # Critério de Calmaria Extrema:
-                # 1. Volatilidade média abaixo do limiar de calmaria
-                # 2. CUSUM abaixo de 3.0 (sem tendência repentina de spike)
-                # 3. Hurst acima de 0.45 (sem ruído anti-trend agressivo)
-                if (
-                    avg_abs_ret < self.config.calm_accu_threshold
-                    and _cusum < 3.0
-                    and _hurst > 0.45
-                ):
-                    logger.warning(
-                        "⚡ DYNAMIC CALM RESUME: mercado calmo detectado (volatilidade=%.2e, CUSUM=%.2f, H=%.3f) — encerrando cooldown antecipadamente!",
-                        avg_abs_ret,
-                        _cusum,
-                        _hurst,
-                    )
-                    self.risk.reset_cooldown_early()
+                symbol_upper = self.config.symbol.upper()
+                is_boom = "BOOM" in symbol_upper
+                is_crash = "CRASH" in symbol_upper
+                
+                if is_boom or is_crash:
+                    # Boom/Crash specific dynamic calm check
+                    max_abs_ret = max(abs_returns)
+                    no_recent_spikes = max_abs_ret < 0.00015
+                    _velocity = float(_last.get("price_velocity", 0.0) or 0.0)
+                    _imbalance = float(_last.get("tick_imbalance", 0.0) or 0.0)
+                    
+                    if is_crash:
+                        indicators_calm = (_cusum > -2.5 and _velocity > -0.0002 and _imbalance > -1.0)
+                    else:
+                        indicators_calm = (_cusum < 2.5 and _velocity < 0.0002 and _imbalance < 1.0)
+                        
+                    xgboost_safe = True
+                    if self._ensemble_scorer is not None:
+                        try:
+                            p_loss = self._ensemble_scorer.predict_loss_probability(_last)
+                            xgboost_safe = p_loss < 0.15  # high guarantee safety threshold
+                        except Exception:
+                            p_loss = None
+                    else:
+                        p_loss = None
+                        
+                    if no_recent_spikes and indicators_calm and xgboost_safe and _hurst > 0.4:
+                        logger.warning(
+                            "⚡ DYNAMIC BOOM/CRASH CALM RESUME: mercado calmo detectado (max_ret=%.2e, CUSUM=%.2f, P(LOSS)=%s) — encerrando cooldown antecipadamente!",
+                            max_abs_ret,
+                            _cusum,
+                            f"{p_loss:.4f}" if p_loss is not None else "N/A",
+                        )
+                        self.risk.reset_cooldown_early()
+                else:
+                    # Critério de Calmaria Extrema padrão para outros ativos
+                    if (
+                        avg_abs_ret < self.config.calm_accu_threshold
+                        and _cusum < 3.0
+                        and _hurst > 0.45
+                    ):
+                        logger.warning(
+                            "⚡ DYNAMIC CALM RESUME: mercado calmo detectado (volatilidade=%.2e, CUSUM=%.2f, H=%.3f) — encerrando cooldown antecipadamente!",
+                            avg_abs_ret,
+                            _cusum,
+                            _hurst,
+                        )
+                        self.risk.reset_cooldown_early()
 
         if not self.risk.can_trade():
             now = time.monotonic()
@@ -895,11 +927,12 @@ class DerivBot:
                     )
                     return
 
+            scorer = self._ensemble_scorer if ("BOOM" in self.config.symbol.upper() or "CRASH" in self.config.symbol.upper()) else self._rf_ensemble_scorer
             signal, score, p_dir = await asyncio.to_thread(
                 generate_rise_fall_signal,
                 df,
                 config=self.config.rise_fall_strategy_config,
-                ensemble_scorer=self._rf_ensemble_scorer,
+                ensemble_scorer=scorer,
             )
 
             if signal not in {"CALL", "PUT"}:
@@ -1559,7 +1592,7 @@ class DerivBot:
 
         # "lost"/"cancelled" = barrier breach or knocked-out (accumulator loses its stake)
         is_sold = (
-            contract.get("status") in {"sold", "lost", "cancelled"}
+            contract.get("status") in {"sold", "lost", "cancelled", "won"}
             or bool(contract.get("is_sold"))
             or bool(contract.get("is_expired"))
         )

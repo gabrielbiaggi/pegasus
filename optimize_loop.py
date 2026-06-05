@@ -308,8 +308,8 @@ def get_median_volatility(symbol: str) -> float:
 
 MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
 
-# Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
-N_WORKERS = 8
+# Paralelismo: usa todos os 9 cores com prioridade baixa (nice -n 19)
+N_WORKERS = 9
 
 PARAM_SPACE = {
     # Stake base para operar: busca expandida de 2.0 a 35.0
@@ -331,6 +331,10 @@ PARAM_SPACE = {
     "FRANKENSTEIN_USE_MARTINGALE":  {"type": "bool"},
     "FRANKENSTEIN_MAX_GALES":       {"type": "int",   "min": 0,   "max": 2,   "step": 1},
     "FRANKENSTEIN_MODE":            {"type": "choice", "choices": ["flat", "dynamic_10"]},
+
+    # Filtro XGBoost para Rise/Fall
+    "RISE_FALL_USE_ENSEMBLE":       {"type": "bool"},
+    "RISE_FALL_ENSEMBLE_MIN_PROB":  {"type": "float", "min": 0.10, "max": 0.45, "step": 0.01},
 }
 
 FROZEN_PARAMS = set()  # todos os params são livres
@@ -578,8 +582,13 @@ def _run_one(args) -> dict | None:
     env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
     env_vars["CONTRACT_MODE"] = "rise_fall"
-    env_vars["SYMBOL"] = "1HZ100V"
-    env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
+    symbol_upper = ACTIVE_SYMBOL.upper()
+    env_vars["SYMBOL"] = symbol_upper
+    is_boom_crash = "BOOM" in symbol_upper or "CRASH" in symbol_upper
+    if is_boom_crash:
+        env_vars["RISE_FALL_PAYOUT_RATE"] = "0.0055"
+    else:
+        env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
 
     try:
         return backtest_engine.run_backtest_direct(
@@ -732,11 +741,18 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
         if k.startswith("FRANKENSTEIN_"):
             del out[k]
             
-    # Garante que o bot real opera em modo Rise/Fall e 1HZ100V
+    # Garante que o bot real opera em modo Rise/Fall e no símbolo correto
+    symbol_upper = ACTIVE_SYMBOL.upper()
+    is_boom_crash = "BOOM" in symbol_upper or "CRASH" in symbol_upper
     out["CONTRACT_MODE"] = "rise_fall"
-    out["SYMBOL"] = "1HZ100V"
-    out["MARTINGALE_PAYOUT_RATE"] = "0.95"
-    out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.90"
+    out["SYMBOL"] = symbol_upper
+    if is_boom_crash:
+        out["MARTINGALE_PAYOUT_RATE"] = "0.0055"
+        if "RISE_FALL_MIN_PAYOUT_PCT" not in out:
+            out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.0055"
+    else:
+        out["MARTINGALE_PAYOUT_RATE"] = "0.95"
+        out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.90"
     
     return out
 
@@ -821,6 +837,70 @@ def fmt(m: dict) -> str:
     )
 
 
+# ── Métodos de Paralelização por Sub-intervalo Mensal ──────────────────────────
+
+def split_range_into_months(start_date_str: str, end_date_str: str) -> list[dict]:
+    from datetime import date, timedelta
+    s_date = date.fromisoformat(start_date_str)
+    e_date = date.fromisoformat(end_date_str)
+    
+    ranges = []
+    months_pt = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+    
+    cur = s_date
+    while cur <= e_date:
+        if cur.month == 12:
+            next_month = date(cur.year + 1, 1, 1)
+        else:
+            next_month = date(cur.year, cur.month + 1, 1)
+        
+        last_day_of_month = next_month - timedelta(days=1)
+        segment_end = min(e_date, last_day_of_month)
+        
+        ranges.append({
+            "start": cur.isoformat(),
+            "end": segment_end.isoformat(),
+            "name": months_pt[cur.month]
+        })
+        
+        cur = segment_end + timedelta(days=1)
+    return ranges
+
+
+def run_backtest_parallel(env_vars: dict, start_date_str: str, end_date_str: str, max_workers: int = 9) -> dict | None:
+    monthly_ranges = split_range_into_months(start_date_str, end_date_str)
+    
+    jobs = []
+    for idx, r in enumerate(monthly_ranges):
+        job_env = env_vars.copy()
+        job_env["START_DATE"] = r["start"]
+        job_env["END_DATE"] = r["end"]
+        jobs.append((job_env, f"par_{idx}_{r['name'][:3]}"))
+        
+    if len(jobs) == 1:
+        return _run_one(jobs[0])
+        
+    combined_results = []
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    
+    with ProcessPoolExecutor(max_workers=min(max_workers, len(jobs))) as pool:
+        futures = {pool.submit(_run_one, job): job for job in jobs}
+        for fut in as_completed(futures):
+            try:
+                res = fut.result()
+                if res and "results" in res:
+                    combined_results.extend(res["results"])
+            except Exception as e:
+                print(f"   [run_backtest_parallel] erro no subprocesso: {e}", flush=True)
+                
+    if not combined_results:
+        return None
+        
+    combined_results.sort(key=lambda x: x.get("date", ""))
+    import backtest_engine
+    return backtest_engine.compile_summary_metrics(combined_results, env_vars, float(START_BALANCE))
+
+
 # ── Loop principal ────────────────────────────────────────────────────────────
 
 def main():
@@ -847,7 +927,7 @@ def main():
     # ── Baseline (parâmetros atuais) ─────────────────────────────────────────
     print(f"\n📊 Calculando baseline com parâmetros atuais...", flush=True)
     t0 = time.time()
-    baseline_metrics = _run_one((best_env, "baseline"))
+    baseline_metrics = run_backtest_parallel(best_env, START_DATE, END_DATE)
     baseline_time = time.time() - t0
 
     if not baseline_metrics:
@@ -895,12 +975,7 @@ def main():
         # Calcula o breakdown do campeão carregado para exibir no frontend
         print("   ⚙️ Calculando breakdown mensal do campeão recuperado do DB...", flush=True)
         try:
-            champ_res = backtest_engine.run_backtest_direct(
-                start_date_str=START_DATE,
-                end_date_str=END_DATE,
-                start_balance=float(START_BALANCE),
-                env_overrides=best_env,
-            )
+            champ_res = run_backtest_parallel(best_env, START_DATE, END_DATE)
             if champ_res and "monthly_breakdown" in champ_res:
                 best_data["monthly_breakdown"] = champ_res["monthly_breakdown"]
         except Exception as e:

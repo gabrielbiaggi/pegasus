@@ -89,6 +89,8 @@ RISE_FALL_BOOM_MAX_CUSUM = float(os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
 RISE_FALL_BOOM_MAX_VELOCITY = float(os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
 RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
 RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
+RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
+RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -723,12 +725,22 @@ def _replay_strategy(
             
             # Dynamic Cooldown Bypass (same as live bot)
             if getattr(risk, "cooldown_until", 0.0) > 0:
-                if (
-                    avg < CALM_THRESH
-                    and cusum_v < 3.0
-                    and hurst_v > 0.45
-                ):
-                    risk.reset_cooldown_early()
+                symbol_upper = SYMBOL.upper()
+                is_boom = "BOOM" in symbol_upper
+                is_crash = "CRASH" in symbol_upper
+                
+                if is_boom or is_crash:
+                    _pass_xgb = (p_loss < 0.15)
+                    _pass_cusum = (cusum_v > -2.5) if is_crash else (cusum_v < 2.5)
+                    if avg < 2e-5 and _pass_cusum and _pass_xgb and hurst_v > 0.4:
+                        risk.reset_cooldown_early()
+                else:
+                    if (
+                        avg < CALM_THRESH
+                        and cusum_v < 3.0
+                        and hurst_v > 0.45
+                    ):
+                        risk.reset_cooldown_early()
             
             if not risk.can_trade():
                 # If we are in session cooldown, skip this tick but do NOT break the daily loop
@@ -1007,34 +1019,45 @@ def _collect_day_outcomes(
             _indicators_df_cache[day] = day_indicators_df
 
     # Convert to dictionary of records for target indices only, to avoid slow to_dict('records')
-    if day in _indicators_list_cache:
-        indicators_map = _indicators_list_cache[day]
-    else:
-        # Pre-calcula a mediana rolante de 100 ticks da derivative_energy para evitar calcular no loop
-        if "deriv_energy_median_100" not in day_indicators_df.columns:
-            if "derivative_energy" in day_indicators_df.columns:
-                day_indicators_df["deriv_energy_median_100"] = day_indicators_df["derivative_energy"].rolling(100).median()
-            else:
-                day_indicators_df["deriv_energy_median_100"] = 1.0
-                
-        # Target indices only (aligned with SAMPLE_EVERY)
-        target_indices = [
-            w for w in range(TICK_COUNT, len(day_indicators_df))
-            if (w - TICK_COUNT) % SAMPLE_EVERY == 0
-        ]
-        
-        # Slice DataFrame and convert only target rows to dict records
-        sub_df = day_indicators_df.iloc[target_indices].copy()
-        sub_records = sub_df.to_dict('records')
-        
+    if CONTRACT_MODE == "rise_fall":
+        # Extract numpy arrays directly from the indicators dataframe for O(1) indexing
+        cusum_arr = day_indicators_df["cusum_score"].values if "cusum_score" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        velocity_arr = day_indicators_df["price_velocity"].values if "price_velocity" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        imbalance_arr = day_indicators_df["tick_imbalance"].values if "tick_imbalance" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        hurst_arr = day_indicators_df["hurst_exponent"].values if "hurst_exponent" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        shannon_arr = day_indicators_df["shannon_entropy"].values if "shannon_entropy" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        kalman_arr = day_indicators_df["kalman_residual_zscore"].values if "kalman_residual_zscore" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        p_loss_arr = day_indicators_df["p_loss"].values if "p_loss" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         indicators_map = {}
-        for idx, r in zip(target_indices, sub_records):
-            sc, hb = _precalculate_metrics_for_row(r, accu_cfg)
-            r["precalculated_score"] = sc
-            r["hard_blocked"] = hb
-            indicators_map[idx] = r
+    else:
+        if day in _indicators_list_cache:
+            indicators_map = _indicators_list_cache[day]
+        else:
+            # Pre-calcula a mediana rolante de 100 ticks da derivative_energy para evitar calcular no loop
+            if "deriv_energy_median_100" not in day_indicators_df.columns:
+                if "derivative_energy" in day_indicators_df.columns:
+                    day_indicators_df["deriv_energy_median_100"] = day_indicators_df["derivative_energy"].rolling(100).median()
+                else:
+                    day_indicators_df["deriv_energy_median_100"] = 1.0
+                    
+            # Target indices only (aligned with SAMPLE_EVERY)
+            target_indices = [
+                w for w in range(TICK_COUNT, len(day_indicators_df))
+                if (w - TICK_COUNT) % SAMPLE_EVERY == 0
+            ]
             
-        _indicators_list_cache[day] = indicators_map
+            # Slice DataFrame and convert only target rows to dict records
+            sub_df = day_indicators_df.iloc[target_indices].copy()
+            sub_records = sub_df.to_dict('records')
+            
+            indicators_map = {}
+            for idx, r in zip(target_indices, sub_records):
+                sc, hb = _precalculate_metrics_for_row(r, accu_cfg)
+                r["precalculated_score"] = sc
+                r["hard_blocked"] = hb
+                indicators_map[idx] = r
+                
+            _indicators_list_cache[day] = indicators_map
 
     # Pre-calcula win_ticks para cada TP unico ou define fixo para Rise/Fall
     tp_to_wt: dict[float, int] = {}
@@ -1098,27 +1121,38 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
             
-        row = indicators_map.get(i)
-        if row is None:
-            i += SAMPLE_EVERY
-            continue
-        
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
         if CONTRACT_MODE == "rise_fall":
-            cusum_v = float(row.get("cusum_score", 0) or 0)
-            velocity_v = float(row.get("price_velocity", 0) or 0)
-            imbalance_v = float(row.get("tick_imbalance", 0) or 0)
-            hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
-            shannon_v = float(row.get("shannon_entropy", 0) or 0)
-            kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
-            p_loss = 0.0
+            cusum_v = float(cusum_arr[i])
+            velocity_v = float(velocity_arr[i])
+            imbalance_v = float(imbalance_arr[i])
+            hurst_v = float(hurst_arr[i])
+            shannon_v = float(shannon_arr[i])
+            kalman_v = float(kalman_arr[i])
+            p_loss = float(p_loss_arr[i])
             
-            if cusum_v > RISE_FALL_BOOM_MAX_CUSUM or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE:
+            if RISE_FALL_USE_ENSEMBLE and p_loss >= RISE_FALL_ENSEMBLE_MIN_PROB:
                 i += SAMPLE_EVERY
                 continue
+
+            is_boom = "BOOM" in SYMBOL.upper()
+            is_crash = "CRASH" in SYMBOL.upper()
+            
+            if is_crash:
+                if cusum_v < -RISE_FALL_BOOM_MAX_CUSUM or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE:
+                    i += SAMPLE_EVERY
+                    continue
+            else:
+                if cusum_v > RISE_FALL_BOOM_MAX_CUSUM or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE:
+                    i += SAMPLE_EVERY
+                    continue
                 
             actual_score = 25 # bypass c["score"] check
         else:
+            row = indicators_map.get(i)
+            if row is None:
+                i += SAMPLE_EVERY
+                continue
             if row.get("hard_blocked", False):
                 i += SAMPLE_EVERY
                 continue
@@ -1180,7 +1214,11 @@ def _collect_day_outcomes(
                 continue  # score insuficiente para esta config
                 
             if CONTRACT_MODE == "rise_fall":
-                is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] < prices[entry_idx]
+                is_crash = "CRASH" in SYMBOL.upper()
+                if is_crash:
+                    is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] > prices[entry_idx]
+                else:
+                    is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] < prices[entry_idx]
             else:
                 is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
                 
@@ -1499,6 +1537,7 @@ def apply_config(env_overrides: dict):
     global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
     global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
+    global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
     os.environ.update(env_overrides)
@@ -1533,6 +1572,8 @@ def apply_config(env_overrides: dict):
     RISE_FALL_BOOM_MAX_VELOCITY = float(os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
     RISE_FALL_BOOM_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
     RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
+    RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
+    RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
 
     CUSUM_MAX = float(os.environ.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
     HURST_MIN = float(os.environ.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -1678,10 +1719,19 @@ def run_backtest_direct(
             
         results.append(result)
         
+    return compile_summary_metrics(results, env_overrides, start_balance)
+
+
+def compile_summary_metrics(results: list, env_overrides: dict, start_balance: float = 50.0) -> dict | None:
     n = len(results)
     if n == 0:
         return None
         
+    total_pnls = {s: 0.0 for s in STRATEGY_NAMES}
+    for r in results:
+        for s in STRATEGY_NAMES:
+            total_pnls[s] += r["strategies"][s]["pnl"]
+            
     summary = {"total_days": n, "strategies": {}}
     for s in STRATEGY_NAMES:
         total_pnl = round(total_pnls[s], 2)
@@ -1797,6 +1847,7 @@ def run_backtest_direct(
         "Super-Frankenstein": compute_monthly_breakdown(results, "Super-Frankenstein"),
         "Pegasus Live Sniper (9% TP)": compute_monthly_breakdown(results, "Pegasus Live Sniper (9% TP)")
     }
+    m["results"] = results
     return m
 
 

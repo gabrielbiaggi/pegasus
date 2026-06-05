@@ -1553,26 +1553,58 @@ def generate_rise_fall_signal(
             f = default
         return default if f != f else f  # NaN guard
 
-    # Adaptacao especifica para BOOM1000/1HZ100V Rise/Fall (forca modo PUT com filtros)
-    is_boom = True
-    if is_boom and getattr(config, "boom_only_put", True):
+    # Adaptacao especifica para BOOM1000/CRASH1000/1HZ100V Rise/Fall (forca modo PUT/CALL com filtros)
+    symbol_upper = getattr(config, "symbol", "BOOM1000").upper()
+    is_boom = "BOOM" in symbol_upper
+    is_crash = "CRASH" in symbol_upper
+
+    if (is_boom or is_crash) and getattr(config, "boom_only_put", True):
         cusum = _get("cusum_score", 0.0)
         velocity = _get("price_velocity", 0.0)
         imbalance = _get("tick_imbalance", 0.0)
 
-        # Block signal if CUSUM or velocity indicates spike risk
-        if cusum > getattr(config, "boom_max_cusum", 8.0):
-            logger.debug("RF PUT BLOCK: CUSUM %.2f > %.2f", cusum, config.boom_max_cusum)
-            return None, 0, None
-        if velocity > getattr(config, "boom_max_velocity", 0.001):
-            logger.debug("RF PUT BLOCK: Velocity %.5f > %.5f", velocity, config.boom_max_velocity)
-            return None, 0, None
-        if imbalance > getattr(config, "boom_max_imbalance", 1.5):
-            logger.debug("RF PUT BLOCK: Imbalance %.2f > %.2f", imbalance, config.boom_max_imbalance)
-            return None, 0, None
+        # Block signal if CUSUM or velocity indicates spike/crash risk
+        if is_crash:
+            if cusum < -getattr(config, "boom_max_cusum", 8.0):
+                logger.debug("RF CALL BLOCK: CUSUM %.2f < -%.2f", cusum, config.boom_max_cusum)
+                return None, 0, None
+            if velocity < -getattr(config, "boom_max_velocity", 0.001):
+                logger.debug("RF CALL BLOCK: Velocity %.5f < -%.5f", velocity, config.boom_max_velocity)
+                return None, 0, None
+            if imbalance < -getattr(config, "boom_max_imbalance", 1.5):
+                logger.debug("RF CALL BLOCK: Imbalance %.2f < -%.2f", imbalance, config.boom_max_imbalance)
+                return None, 0, None
+        else: # BOOM/PUT logic
+            if cusum > getattr(config, "boom_max_cusum", 8.0):
+                logger.debug("RF PUT BLOCK: CUSUM %.2f > %.2f", cusum, config.boom_max_cusum)
+                return None, 0, None
+            if velocity > getattr(config, "boom_max_velocity", 0.001):
+                logger.debug("RF PUT BLOCK: Velocity %.5f > %.5f", velocity, config.boom_max_velocity)
+                return None, 0, None
+            if imbalance > getattr(config, "boom_max_imbalance", 1.5):
+                logger.debug("RF PUT BLOCK: Imbalance %.2f > %.2f", imbalance, config.boom_max_imbalance)
+                return None, 0, None
 
-        # Propose PUT (FALL)
-        return "PUT", 25, None
+        # XGBoost P(LOSS) filter if enabled (for high guarantee)
+        if config.use_ensemble and ensemble_scorer is not None:
+            # Check if it has predict_loss_probability (meaning it is EnsembleScorer)
+            if hasattr(ensemble_scorer, "predict_loss_probability"):
+                p_loss = ensemble_scorer.predict_loss_probability(last)
+                if p_loss >= getattr(config, "ensemble_min_prob", 0.52):
+                    logger.debug("RF BLOCK: XGBoost P(LOSS) %.4f >= %.4f", p_loss, config.ensemble_min_prob)
+                    return None, 0, None
+            elif hasattr(ensemble_scorer, "predict_up_probability"):
+                p_up = ensemble_scorer.predict_up_probability(last)
+                # For BOOM/PUT: loss is when price goes up, so P(LOSS) = P(UP)
+                # For CRASH/CALL: loss is when price goes down, so P(LOSS) = 1 - P(UP)
+                p_loss = p_up if not is_crash else (1.0 - p_up)
+                if p_loss >= getattr(config, "ensemble_min_prob", 0.52):
+                    logger.debug("RF BLOCK: XGBoost P(LOSS) (via dir) %.4f >= %.4f", p_loss, config.ensemble_min_prob)
+                    return None, 0, None
+
+        # Propose signal: PUT (FALL) for BOOM, CALL (RISE) for CRASH
+        proposed = "CALL" if is_crash else "PUT"
+        return proposed, 25, None
 
     # Ensemble gate (optional): use trained direction model
     if config.use_ensemble and ensemble_scorer is not None:
