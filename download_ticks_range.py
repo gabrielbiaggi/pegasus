@@ -9,12 +9,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import websockets
-from dotenv import load_dotenv
+from deriv_auth import get_auth
 
-load_dotenv()
 TOKEN = os.getenv("DERIV_PAT") or os.getenv("DERIV_TOKEN") or ""
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
-WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
 
 async def download_day(date_str: str, output_path: Path) -> int:
@@ -23,13 +21,15 @@ async def download_day(date_str: str, output_path: Path) -> int:
     start_epoch = int(dt.timestamp())
     end_epoch = int((dt + timedelta(days=1)).timestamp()) - 1
 
+    auth = get_auth(APP_ID, "demo")
     ticks = []
-    async with websockets.connect(WS_URL, ping_interval=30) as ws:
-        # Authorize
-        await ws.send(json.dumps({"authorize": TOKEN}))
-        resp = json.loads(await ws.recv())
-        if "error" in resp:
-            raise ValueError(f"Auth failed: {resp['error']['message']}")
+    async with websockets.connect(auth.ws_url, ping_interval=30) as ws:
+        if not auth.is_new_api:
+            # Authorize
+            await ws.send(json.dumps({"authorize": auth.legacy_token}))
+            resp = json.loads(await ws.recv())
+            if "error" in resp:
+                raise ValueError(f"Auth failed: {resp['error']['message']}")
 
         # Fetch ticks in chunks (Deriv max ~5000 per request)
         start = start_epoch
