@@ -249,6 +249,36 @@ _day_df_cache: dict[_date, pd.DataFrame] = {}
 _indicators_df_cache: dict[_date, pd.DataFrame] = {}
 _indicators_list_cache: dict[_date, list[dict]] = {}
 
+def _add_to_day_df_cache(day: _date, df: pd.DataFrame) -> None:
+    global _day_df_cache
+    _day_df_cache[day] = df
+    if len(_day_df_cache) > 32:
+        try:
+            oldest = next(iter(_day_df_cache))
+            _day_df_cache.pop(oldest, None)
+        except Exception:
+            pass
+
+def _add_to_indicators_df_cache(day: _date, df: pd.DataFrame) -> None:
+    global _indicators_df_cache
+    _indicators_df_cache[day] = df
+    if len(_indicators_df_cache) > 32:
+        try:
+            oldest = next(iter(_indicators_df_cache))
+            _indicators_df_cache.pop(oldest, None)
+        except Exception:
+            pass
+
+def _add_to_indicators_list_cache(day: _date, indicators_map: dict) -> None:
+    global _indicators_list_cache
+    _indicators_list_cache[day] = indicators_map
+    if len(_indicators_list_cache) > 32:
+        try:
+            oldest = next(iter(_indicators_list_cache))
+            _indicators_list_cache.pop(oldest, None)
+        except Exception:
+            pass
+
 
 
 def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
@@ -424,7 +454,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
                 rets = np.zeros(len(q))
                 rets[1:] = np.abs(np.diff(q) / q[:-1])
                 df["avg_ret"] = pd.Series(rets).rolling(10).mean().values
-                _day_df_cache[day] = df
+                _add_to_day_df_cache(day, df)
                 return df
         except Exception:
             pass
@@ -439,7 +469,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
             print(f"(cached localmente)", end=" ", flush=True)
         except Exception as e:
             print(f"(erro ao salvar cache: {e})", end=" ", flush=True)
-        _day_df_cache[day] = df
+        _add_to_day_df_cache(day, df)
         return df
 
     # 3. Se PG falhar, tenta ler do max.csv
@@ -465,7 +495,7 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
                 df.to_csv(daily_path, index=False)
             except Exception:
                 pass
-            _day_df_cache[day] = df
+            _add_to_day_df_cache(day, df)
             return df
     except Exception:
         pass
@@ -1131,7 +1161,7 @@ def _collect_day_outcomes(
                 return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
 
         if day_indicators_df is not None:
-            _indicators_df_cache[day] = day_indicators_df
+            _add_to_indicators_df_cache(day, day_indicators_df)
 
     # Convert to dictionary of records for target indices only, to avoid slow to_dict('records')
     if CONTRACT_MODE in {"rise_fall", "multiplier"}:
@@ -1172,7 +1202,7 @@ def _collect_day_outcomes(
                 r["hard_blocked"] = hb
                 indicators_map[idx] = r
                 
-            _indicators_list_cache[day] = indicators_map
+            _add_to_indicators_list_cache(day, indicators_map)
 
     # Pre-calcula win_ticks para cada TP unico ou define fixo para Rise/Fall
     tp_to_wt: dict[float, int] = {}
