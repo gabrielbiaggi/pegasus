@@ -41,12 +41,14 @@ echo "════════════════════════�
 echo "  🚀 PEGASUS DEPLOY  →  genesys-ubuntu"
 echo "════════════════════════════════════════════"
 
-# ── 0. Sincronizar .env do servidor para o local ──────────────────────────────
+# ── 0. Capturar .env remoto sem sobrescrever ajustes locais ───────────────────
 echo ""
-echo "▶ [0/4] Sincronizando .env remoto → local..."
+echo "▶ [0/4] Capturando .env remoto para backup local..."
 if $SSH "$SERVER" "[ -f ${REMOTE_DIR}/.env ]"; then
-    $SCP "${SERVER}:${REMOTE_DIR}/.env" .env
-    echo "  ✅ .env local atualizado com a versão do servidor"
+    mkdir -p .env_backups
+    BACKUP_ENV=".env_backups/server-$(date +%Y%m%d_%H%M%S).env"
+    $SCP "${SERVER}:${REMOTE_DIR}/.env" "$BACKUP_ENV"
+    echo "  ✅ .env remoto salvo em $BACKUP_ENV"
 else
     echo "  ⚠️  .env não encontrado no servidor, mantendo versão local"
 fi
@@ -88,6 +90,11 @@ $SSH "$SERVER" "
         git remote add '$DEPLOY_REMOTE' /opt/pegasus-deploy.git
     fi
     git fetch '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
+    if ! git diff --quiet -- logs/results.db 2>/dev/null; then
+        mkdir -p logs/.deploy-backups
+        cp logs/results.db logs/.deploy-backups/results-$(date +%Y%m%d_%H%M%S).db
+        git checkout -- logs/results.db
+    fi
     git pull --ff-only '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
 "
 echo "  ✅ Pull OK via ${DEPLOY_REMOTE}/${DEPLOY_BRANCH}"
