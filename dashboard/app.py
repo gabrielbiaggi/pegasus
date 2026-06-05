@@ -1380,7 +1380,10 @@ def optimizer_status(response: Response):
 
     # We can read the current deployed iteration from the environment!
     deployed_it = _get_env("OPTIMIZER_CHAMPION_ITERATION")
-    deployed_iteration_val = int(deployed_it) if deployed_it else None
+    try:
+        deployed_iteration_val = int(deployed_it) if deployed_it else None
+    except ValueError:
+        deployed_iteration_val = deployed_it
 
     # Tenta ler o arquivo de estado direto (gerado pelo optimizer)
     state_file = BASE / "logs" / "optimizer_state.json"
