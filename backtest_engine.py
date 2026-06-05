@@ -142,7 +142,7 @@ accu_cfg = AccumulatorStrategyConfig(
     kalman_q=1e-5,
     kalman_r=1e-2,
     max_kalman_residual_zscore=2.0,
-    use_ensemble=True,
+    use_ensemble=os.getenv("USE_ENSEMBLE", "true").lower() == "true",
     ensemble_min_prob=0.294,
     calm_min_score=CALM_MIN_SCORE,
 )
@@ -630,7 +630,8 @@ def _replay_strategy(
                 is_medium_calm = False
                 
                 # Calmaria Extrema (Regime A) Check:
-                _pass_a_xgb = (p_loss < 0.22)
+                use_ensemble = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
+                _pass_a_xgb = (not use_ensemble) or (p_loss < 0.22)
                 
                 median_vol = get_symbol_median_volatility(SYMBOL)
                 if (
@@ -644,7 +645,7 @@ def _replay_strategy(
                     is_absolute_calm = True
                 
                 # Calmaria Moderada (Regime B+) Check:
-                _pass_b_plus_xgb = (p_loss < 0.26)
+                _pass_b_plus_xgb = (not use_ensemble) or (p_loss < 0.26)
                 if (
                     avg < 2.2 * median_vol
                     and cusum_v < 4.0
@@ -657,7 +658,7 @@ def _replay_strategy(
                 
                 if _in_gale:
                     # GALE STANDBY & BYPASS
-                    _xgb_bypass = (p_loss < float(os.getenv("PCS_XGB_BYPASS_LIMIT", "0.15")))
+                    _xgb_bypass = (not use_ensemble) or (p_loss < float(os.getenv("PCS_XGB_BYPASS_LIMIT", "0.15")))
                     if not is_absolute_calm and not _xgb_bypass:
                         continue  # Standby, aguarda calmaria extrema ou IA Bypass no próximo tick
                     
@@ -1084,7 +1085,8 @@ def _collect_day_outcomes(
         p_loss = row.get("p_loss")
         
         # XGBoost P(LOSS) filter
-        if p_loss is not None:
+        use_ensemble = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
+        if use_ensemble and p_loss is not None:
             if p_loss > ENSEMBLE_MIN_PROB:
                 i += SAMPLE_EVERY
                 continue  # sinal fraco, pula

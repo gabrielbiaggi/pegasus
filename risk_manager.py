@@ -761,13 +761,13 @@ class RiskManager:
 
     def _effective_loss_limit(self) -> float:
         """Dynamic loss limit: uses % of start-of-day balance when stop_loss_pct > 0."""
-        if self.stop_loss_pct > 0:
+        if self.stop_loss_pct > 0 and self._start_of_day_balance > 0.0:
             return self._start_of_day_balance * self.stop_loss_pct / 100.0
         return self.max_loss_day
 
     def _effective_profit_limit(self) -> float:
         """Dynamic profit target: uses % of start-of-day balance when stop_gain_pct > 0."""
-        if self.stop_gain_pct > 0:
+        if self.stop_gain_pct > 0 and self._start_of_day_balance > 0.0:
             return self._start_of_day_balance * self.stop_gain_pct / 100.0
         return self.max_profit_day
 
@@ -1193,7 +1193,7 @@ class RiskManager:
         ):
             self.daily_trailing_active = True
 
-        if profit > 0:
+        if profit >= 0:
             self.wins += 1
             self.consecutive_losses = 0
             _was_gale_win = self.use_martingale and self.martingale_step > 0

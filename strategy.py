@@ -141,6 +141,9 @@ def calculate_tick_indicators(
     if missing:
         raise ValueError(f"Ticks sem campos obrigatorios: {sorted(missing)}")
 
+    # Track original index to correctly map sample_indices after deduplication & dropna
+    df["_orig_idx"] = df.index
+
     df = (
         df.drop_duplicates(subset=["epoch"], keep="last")
         .sort_values("epoch")
@@ -150,7 +153,17 @@ def calculate_tick_indicators(
     df["close"] = pd.to_numeric(df["quote"], errors="coerce")
     df = df.dropna(subset=["close"]).reset_index(drop=True)
 
+    if sample_indices is not None:
+        orig_to_clean = {orig: clean_idx for clean_idx, orig in enumerate(df["_orig_idx"])}
+        mapped_indices = []
+        for orig in sample_indices:
+            if orig in orig_to_clean:
+                mapped_indices.append(orig_to_clean[orig])
+        sample_indices = mapped_indices
+
     if len(df) < config.minimum_ticks:
+        if "_orig_idx" in df.columns:
+            df = df.drop(columns=["_orig_idx"])
         return df
 
     bb = ta.volatility.BollingerBands(
@@ -260,6 +273,8 @@ def calculate_tick_indicators(
     # Pre-calcula a mediana do derivative energy de forma vetorizada rápida
     df["de_median"] = df["derivative_energy"].rolling(100).median().fillna(1.0)
 
+    if "_orig_idx" in df.columns:
+        df = df.drop(columns=["_orig_idx"])
     return df
 
 

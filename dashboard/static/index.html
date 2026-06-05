@@ -5713,8 +5713,10 @@
                                 lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
                             } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= minPositiveDays) {
                                 lastStatus.innerHTML = '<span style="color:var(--green);font-weight:700;font-size:.65rem">✅ VÁLIDO (consist: ' + (lastIt.consistency_pct || 0).toFixed(0) + '%)</span>';
+                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) < minPositiveDays) {
+                                lastStatus.innerHTML = '<span style="color:#f59e0b;font-weight:700;font-size:.65rem">⚠️ DIAS INSUFICIENTES (' + (lastIt.positive_days || 0) + '/' + minPositiveDays + ')</span>';
                             } else {
-                                lastStatus.innerHTML = '<span style="color:#f59e0b;font-weight:700;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
+                                lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">❌ NEGATIVO / INVÁLIDO</span>';
                             }
                         }
                     } else {
@@ -5776,8 +5778,10 @@
                                     badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
                                 } else if (sfDay > 0 && (it.positive_days || 0) >= minPositiveDays) {
                                     badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
+                                } else if (sfDay > 0 && (it.positive_days || 0) < minPositiveDays) {
+                                    badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">⚠️ DIAS INSUFICIENTES (' + (it.positive_days || 0) + '/' + minPositiveDays + ')</span>';
                                 } else {
-                                    badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ INVÁLIDO / NEGATIVO</span>';
+                                    badge = '<span style="background:rgba(239,68,68,.07);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ NEGATIVO</span>';
                                 }
 
                                 return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
