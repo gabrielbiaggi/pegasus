@@ -164,6 +164,12 @@ class BotConfig:
     rise_fall_use_ensemble: bool
     rise_fall_ensemble_min_prob: float
     rise_fall_cooldown_ticks: int
+    rise_fall_min_payout_pct: float
+    # Boom specific parameters
+    rise_fall_boom_max_cusum: float
+    rise_fall_boom_max_velocity: float
+    rise_fall_boom_max_imbalance: float
+    rise_fall_boom_only_put: bool
     # Quality gate filters (post-vote rejection for jump_rise_fall)
     rise_fall_quality_gate: bool
     rise_fall_qg_min_abs_imbalance: float
@@ -220,6 +226,11 @@ class BotConfig:
             min_imbalance=self.rise_fall_min_imbalance,
             use_ensemble=self.rise_fall_use_ensemble,
             ensemble_min_prob=self.rise_fall_ensemble_min_prob,
+            symbol=self.symbol,
+            boom_max_cusum=self.rise_fall_boom_max_cusum,
+            boom_max_velocity=self.rise_fall_boom_max_velocity,
+            boom_max_imbalance=self.rise_fall_boom_max_imbalance,
+            boom_only_put=self.rise_fall_boom_only_put,
         )
 
 
@@ -389,6 +400,12 @@ def load_config() -> BotConfig:
         rise_fall_use_ensemble=_bool_env("RISE_FALL_USE_ENSEMBLE", False),
         rise_fall_ensemble_min_prob=_float_env("RISE_FALL_ENSEMBLE_MIN_PROB", 0.52),
         rise_fall_cooldown_ticks=_int_env("RISE_FALL_COOLDOWN_TICKS", 3),
+        rise_fall_min_payout_pct=_float_env("RISE_FALL_MIN_PAYOUT_PCT", 0.0055),
+        # Boom specific
+        rise_fall_boom_max_cusum=_float_env("RISE_FALL_BOOM_MAX_CUSUM", 8.0),
+        rise_fall_boom_max_velocity=_float_env("RISE_FALL_BOOM_MAX_VELOCITY", 0.001),
+        rise_fall_boom_max_imbalance=_float_env("RISE_FALL_BOOM_MAX_IMBALANCE", 1.5),
+        rise_fall_boom_only_put=_bool_env("RISE_FALL_BOOM_ONLY_PUT", True),
         # Quality gate
         rise_fall_quality_gate=_bool_env("RISE_FALL_QUALITY_GATE", True),
         rise_fall_qg_min_abs_imbalance=_float_env(

@@ -30,12 +30,14 @@ from strategy import (
     EnsembleScorer,
     calculate_tick_indicators,
     generate_calm_accu_signal,
+    RiseFallStrategyConfig,
+    generate_rise_fall_signal,
 )
 
 load_dotenv()
 
 # ── Credenciais Deriv para download automático de ticks ───────────────────────
-TOKEN = os.getenv("DERIV_TOKEN", "")
+TOKEN = os.getenv("DERIV_PAT") or os.getenv("DERIV_TOKEN") or ""
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
 if not APP_ID.isdigit():
     APP_ID = "1089"
@@ -78,6 +80,15 @@ SOROS_COOLDOWN = int(os.getenv("ACCUMULATOR_COOLDOWN_TICKS", "5"))
 STOP_GAIN = float(os.getenv("STOP_GAIN_PCT", "100.0")) / 100.0
 TRAILING_S = float(os.getenv("DAILY_TRAILING_START", "30.0")) / 100.0
 TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+
+CONTRACT_MODE = os.getenv("CONTRACT_MODE", "calm_accu").strip().lower()
+RISE_FALL_DURATION_TICKS = int(os.getenv("RISE_FALL_DURATION_TICKS", "5"))
+RISE_FALL_MIN_PAYOUT_PCT = float(os.getenv("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
+RISE_FALL_COOLDOWN_TICKS = int(os.getenv("RISE_FALL_COOLDOWN_TICKS", "3"))
+RISE_FALL_BOOM_MAX_CUSUM = float(os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
+RISE_FALL_BOOM_MAX_VELOCITY = float(os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
+RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
+RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -624,8 +635,13 @@ def _replay_strategy(
             risk._sim_time = epoch
             risk._sim_monotonic_time = epoch
             
+            # Se for Rise/Fall, ignora o logic de regime switching de Acumulador
+            if CONTRACT_MODE == "rise_fall":
+                current_tp_pct = RISE_FALL_MIN_PAYOUT_PCT
+                is_win_trade = is_win
+                risk.martingale_payout_rate = RISE_FALL_MIN_PAYOUT_PCT
             # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
-            if is_super_frank:
+            elif is_super_frank:
                 is_absolute_calm = False
                 is_medium_calm = False
                 
@@ -936,7 +952,6 @@ def _collect_day_outcomes(
                         pass
 
         if day_indicators_df is None:
-            # Determina quais índices serão avaliados (amostrados) no backtest
             max_calm_thresh = get_max_calm_thresh(SYMBOL, avgs)
             super_indices = []
             for w in range(TICK_COUNT, len(day_df)):
@@ -944,9 +959,10 @@ def _collect_day_outcomes(
                     continue
                 if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
                     continue
-                avg = avgs[w]
-                if np.isnan(avg) or avg >= max_calm_thresh:
-                    continue
+                if CONTRACT_MODE != "rise_fall":
+                    avg = avgs[w]
+                    if np.isnan(avg) or avg >= max_calm_thresh:
+                        continue
                 super_indices.append(w)
                 
             day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
@@ -1010,18 +1026,22 @@ def _collect_day_outcomes(
             
         _indicators_list_cache[day] = indicators_map
 
-    # Pre-calcula win_ticks para cada TP unico
+    # Pre-calcula win_ticks para cada TP unico ou define fixo para Rise/Fall
     tp_to_wt: dict[float, int] = {}
-    for c in STRATEGY_CONFIGS:
-        tp = c["tp"]
-        if tp not in tp_to_wt:
-            tp_to_wt[tp] = _calc_win_ticks(tp)
-            
-    # Garantimos que se tivermos Super-Frankenstein, o max_wt inclua o wt máximo dele (9 ticks)
-    max_wt = max(tp_to_wt.values())
-    for c in STRATEGY_CONFIGS:
-        if c.get("is_super_frank", False):
-            max_wt = max(max_wt, 9)
+    if CONTRACT_MODE == "rise_fall":
+        max_wt = RISE_FALL_DURATION_TICKS
+        tp_to_wt = {c["tp"]: RISE_FALL_DURATION_TICKS for c in STRATEGY_CONFIGS}
+    else:
+        for c in STRATEGY_CONFIGS:
+            tp = c["tp"]
+            if tp not in tp_to_wt:
+                tp_to_wt[tp] = _calc_win_ticks(tp)
+                
+        # Garantimos que se tivermos Super-Frankenstein, o max_wt inclua o wt máximo dele (9 ticks)
+        max_wt = max(tp_to_wt.values()) if tp_to_wt else 9
+        for c in STRATEGY_CONFIGS:
+            if c.get("is_super_frank", False):
+                max_wt = max(max_wt, 9)
 
     # Outcomes: uma lista separada para cada (tp, score)
     outcomes: dict[str, list[tuple]] = {c["name"]: [] for c in STRATEGY_CONFIGS}
@@ -1057,7 +1077,10 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
         avg = avgs[i]
-        if np.isnan(avg) or avg >= CALM_THRESH:
+        if np.isnan(avg):
+            i += SAMPLE_EVERY
+            continue
+        if CONTRACT_MODE != "rise_fall" and avg >= CALM_THRESH:
             i += SAMPLE_EVERY
             continue
 
@@ -1071,34 +1094,49 @@ def _collect_day_outcomes(
             continue
         
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
-        if row.get("hard_blocked", False):
-            i += SAMPLE_EVERY
-            continue
+        if CONTRACT_MODE == "rise_fall":
+            cusum_v = float(row.get("cusum_score", 0) or 0)
+            velocity_v = float(row.get("price_velocity", 0) or 0)
+            imbalance_v = float(row.get("tick_imbalance", 0) or 0)
+            hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
+            shannon_v = float(row.get("shannon_entropy", 0) or 0)
+            kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
+            p_loss = 0.0
             
-        score = row.get("precalculated_score", 0)
-        if score < CALM_MIN_SCORE:
-            i += SAMPLE_EVERY
-            continue
-
-        p_loss = row.get("p_loss")
-        
-        # XGBoost P(LOSS) filter
-        use_ensemble = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
-        if use_ensemble and p_loss is not None:
-            if p_loss > ENSEMBLE_MIN_PROB:
+            if cusum_v > RISE_FALL_BOOM_MAX_CUSUM or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE:
                 i += SAMPLE_EVERY
-                continue  # sinal fraco, pula
+                continue
+                
+            actual_score = 25 # bypass c["score"] check
+        else:
+            if row.get("hard_blocked", False):
+                i += SAMPLE_EVERY
+                continue
+                
+            score = row.get("precalculated_score", 0)
+            if score < CALM_MIN_SCORE:
+                i += SAMPLE_EVERY
+                continue
 
-        cusum_v = float(row.get("cusum_score", 0) or 0)
-        hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
-        shannon_v = float(row.get("shannon_entropy", 0) or 0)
-        kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
-        if cusum_v > CUSUM_MAX or hurst_v < HURST_MIN:
-            i += SAMPLE_EVERY
-            continue
+            p_loss = row.get("p_loss")
+            
+            # XGBoost P(LOSS) filter
+            use_ensemble = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
+            if use_ensemble and p_loss is not None:
+                if p_loss > ENSEMBLE_MIN_PROB:
+                    i += SAMPLE_EVERY
+                    continue  # sinal fraco, pula
 
-        # Score do sinal
-        actual_score = score
+            cusum_v = float(row.get("cusum_score", 0) or 0)
+            hurst_v = float(row.get("hurst_exponent", 0.5) or 0.5)
+            shannon_v = float(row.get("shannon_entropy", 0) or 0)
+            kalman_v = float(row.get("kalman_residual_zscore", 0) or 0)
+            if cusum_v > CUSUM_MAX or hurst_v < HURST_MIN:
+                i += SAMPLE_EVERY
+                continue
+
+            actual_score = score
+
         total_signals += 1
 
         # Entry idx com slippage
@@ -1107,19 +1145,22 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
 
-        # Verifica outcome para cada (TP, score) combo
-        max_hold = max_wt
-        barrier_hit_at = None  # tick onde a barreira foi atingida
-        for j in range(1, max_hold + 1):
-            prev_idx = entry_idx + j - 1
-            curr_idx = entry_idx + j
-            if curr_idx >= len(prices):
-                barrier_hit_at = j
-                break
-            tick_move = abs(prices[curr_idx] - prices[prev_idx]) / prices[prev_idx]
-            if tick_move >= PER_TICK_BARRIER:
-                barrier_hit_at = j
-                break
+        if CONTRACT_MODE == "rise_fall":
+            barrier_hit_at = None
+        else:
+            # Verifica outcome para cada (TP, score) combo
+            max_hold = max_wt
+            barrier_hit_at = None  # tick onde a barreira foi atingida
+            for j in range(1, max_hold + 1):
+                prev_idx = entry_idx + j - 1
+                curr_idx = entry_idx + j
+                if curr_idx >= len(prices):
+                    barrier_hit_at = j
+                    break
+                tick_move = abs(prices[curr_idx] - prices[prev_idx]) / prices[prev_idx]
+                if tick_move >= PER_TICK_BARRIER:
+                    barrier_hit_at = j
+                    break
 
         # Para cada config, determina WIN/LOSS baseado no win_ticks e score
         best_hold = 0
@@ -1128,7 +1169,11 @@ def _collect_day_outcomes(
             if actual_score < c["score"]:
                 continue  # score insuficiente para esta config
                 
-            is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
+            if CONTRACT_MODE == "rise_fall":
+                is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] < prices[entry_idx]
+            else:
+                is_win = not (barrier_hit_at is not None and barrier_hit_at <= wt)
+                
             outcomes[c["name"]].append((
                 is_win, 
                 float(epochs[entry_idx]), 
@@ -1143,15 +1188,22 @@ def _collect_day_outcomes(
 
             best_hold = max(best_hold, wt)
 
-        i += (
-            (
-                barrier_hit_at
-                if barrier_hit_at and barrier_hit_at <= best_hold
-                else best_hold
+        if CONTRACT_MODE == "rise_fall":
+            i += (
+                RISE_FALL_DURATION_TICKS
+                + SLIPPAGE
+                + RISE_FALL_COOLDOWN_TICKS
             )
-            + SLIPPAGE
-            + SOROS_COOLDOWN
-        )
+        else:
+            i += (
+                (
+                    barrier_hit_at
+                    if barrier_hit_at and barrier_hit_at <= best_hold
+                    else best_hold
+                )
+                + SLIPPAGE
+                + SOROS_COOLDOWN
+            )
 
     elapsed = round(time.time() - t0, 1)
     return outcomes, elapsed
@@ -1201,6 +1253,7 @@ def main() -> None:
     start_date = _date.fromisoformat(sys.argv[1])
     end_date = _date.fromisoformat(sys.argv[2])
     start_balance = float(sys.argv[3])
+    apply_config(dict(os.environ))
     out_path = Path(sys.argv[4])
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1434,6 +1487,8 @@ def apply_config(env_overrides: dict):
     global STAKE, MAX_STAKE, GROWTH_RATE, TP_PCT, MAX_HOLD, SOROS_STEPS, SOROS_COOLDOWN, STOP_GAIN, TRAILING_S, TRAILING_L
     global CUSUM_MAX, HURST_MIN, CALM_THRESH, TICK_COUNT, CALM_MIN_SCORE, ENSEMBLE_MIN_PROB, BLOCKED_HOURS, WIN_TICKS
     global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
+    global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
+    global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
     
     os.environ.update(env_overrides)
     if os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
@@ -1448,8 +1503,17 @@ def apply_config(env_overrides: dict):
     SOROS_STEPS = int(os.environ.get("SOROS_MAX_STEPS", "3"))
     SOROS_COOLDOWN = int(os.environ.get("ACCUMULATOR_COOLDOWN_TICKS", "5"))
     STOP_GAIN = float(os.environ.get("STOP_GAIN_PCT", "100.0")) / 100.0
-    TRAILING_S = float(os.environ.get("DAILY_TRAILING_START", "30.0")) / 100.0
-    TRAILING_L = float(os.environ.get("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+    TRAILING_S = float(os.getenv("DAILY_TRAILING_START", "30.0")) / 100.0
+    TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+
+    CONTRACT_MODE = os.environ.get("CONTRACT_MODE", "calm_accu").strip().lower()
+    RISE_FALL_DURATION_TICKS = int(os.environ.get("RISE_FALL_DURATION_TICKS", "5"))
+    RISE_FALL_MIN_PAYOUT_PCT = float(os.environ.get("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
+    RISE_FALL_COOLDOWN_TICKS = int(os.environ.get("RISE_FALL_COOLDOWN_TICKS", "3"))
+    RISE_FALL_BOOM_MAX_CUSUM = float(os.environ.get("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
+    RISE_FALL_BOOM_MAX_VELOCITY = float(os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
+    RISE_FALL_BOOM_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
+    RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
 
     CUSUM_MAX = float(os.environ.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
     HURST_MIN = float(os.environ.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -1458,6 +1522,8 @@ def apply_config(env_overrides: dict):
     CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
     ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
     SAMPLE_EVERY = int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60"))
+    if CONTRACT_MODE == "rise_fall":
+        SAMPLE_EVERY = 1
     
     _v = 1.0
     WIN_TICKS = MAX_HOLD

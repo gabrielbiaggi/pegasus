@@ -311,28 +311,20 @@ MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
 # Paralelismo: usa todos os 8 cores com prioridade baixa (nice -n 19)
 N_WORKERS = 8
 
-# ── Espaço de busca focado no DNA do campeão it#508 (Jan-Mai 2026) ─────────────
-# it#508: STAKE=11.0 CUSUM=7.0 MIN_SCORE=14 XGB=0.314 HURST=0.47
-# Busca ±30% ao redor dos valores campeões — maximiza chance de superar
+# ── Espaço de busca focado nos parâmetros da estratégia Rise/Fall no BOOM1000 ───
 PARAM_SPACE = {
-    # Score mínimo do ensemble: it#508=14 → busca 9–19
-    "CALM_ACCU_MIN_SCORE":             {"type": "int",       "min": 9,    "max": 19,   "step": 1},
-    # Prob mínima XGBoost: it#508=0.314 → busca 0.22–0.42
-    "ENSEMBLE_MIN_PROB":               {"type": "float",     "min": 0.22, "max": 0.42, "step": 0.01},
-    # CUSUM máximo: it#508=7.0 → busca 4.5–10.5
-    "CALM_ACCU_MAX_ENTRY_CUSUM":       {"type": "float",     "min": 4.5,  "max": 10.5, "step": 0.5},
-    # Hurst mínimo: it#508=0.47 → busca 0.35–0.55 (ligeiramente maior p/ robustez multi-mês)
-    "ACCUMULATOR_MIN_HURST_EXPONENT":  {"type": "float",     "min": 0.35, "max": 0.55, "step": 0.01},
-    # Limiar de volatilidade: dinâmico com base na volatilidade mediana do símbolo ativo
-    "CALM_ACCU_THRESHOLD":             {"type": "float_sci", "min": 0.3 * MEDIAN_VOL, "max": 2.0 * MEDIAN_VOL},
-    # XGB bypass: it#508=0.25 → busca 0.15–0.35
-    "PCS_XGB_BYPASS_LIMIT":            {"type": "float",     "min": 0.15, "max": 0.35, "step": 0.01},
-    # TP regime B+: it#508=18.0 → busca 12.0–28.0
-    "PCS_REGIME_B_PLUS_TP":            {"type": "float",     "min": 12.0, "max": 28.0, "step": 1.0},
-    # TP regime B-: it#508=11.0 → busca 6.0–14.0
-    "PCS_REGIME_B_MINUS_TP":           {"type": "float",     "min": 6.0,  "max": 14.0, "step": 0.5},
-    # Stake: it#508=11.0 → busca 9.0–13.0 (foco na zona lucrativa)
-    "STAKE":                           {"type": "float",     "min": 9.0,  "max": 13.0, "step": 0.5},
+    # Stake base para operar: busca entre 2.0 e 15.0
+    "STAKE":                        {"type": "float", "min": 2.0, "max": 15.0, "step": 0.5},
+    # Cooldown entre entradas de ticks: busca entre 1 e 10
+    "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 10,   "step": 1},
+    # Payout minimo de Rise/Fall: busca entre 0.0040 e 0.0080
+    "RISE_FALL_MIN_PAYOUT_PCT":     {"type": "float", "min": 0.0040, "max": 0.0080, "step": 0.0005},
+    # CUSUM maximo do BOOM1000: busca entre 3.0 e 8.0
+    "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 3.0, "max": 8.0, "step": 0.5},
+    # Velocity maxima do BOOM1000: busca entre 0.0001 e 0.0030
+    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.0001, "max": 0.0030, "step": 0.0001},
+    # Imbalance maximo do BOOM1000: busca entre 0.5 e 3.0
+    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.5, "max": 3.0, "step": 0.1},
 }
 
 FROZEN_PARAMS = set()  # todos os params são livres
@@ -503,13 +495,20 @@ def _run_one(args) -> dict | None:
     
     # Garante flags de otimização no dicionário de overrides
     env_vars = env_vars.copy()
+    
+    # Extrai datas personalizadas se fornecidas
+    s_date = env_vars.pop("START_DATE", START_DATE)
+    e_date = env_vars.pop("END_DATE", END_DATE)
+    
     env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
+    env_vars["CONTRACT_MODE"] = "rise_fall"
+    env_vars["SYMBOL"] = "BOOM1000"
 
     try:
         return backtest_engine.run_backtest_direct(
-            start_date_str=START_DATE,
-            end_date_str=END_DATE,
+            start_date_str=s_date,
+            end_date_str=e_date,
             start_balance=float(START_BALANCE),
             env_overrides=env_vars,
             worker_id=worker_id,
@@ -836,121 +835,209 @@ def main():
     else:
         print("   🤖 [Ultra-Estresse] Bot ao vivo permanece em espera (OFFLINE) para prioridade de CPU/RAM.", flush=True)
 
-    print(f"\n{'─'*70}", flush=True)
-    print(f"  🚀 LOOP INFINITO — {N_WORKERS} backtests em paralelo por rodada", flush=True)
-    print(f"  Critério: 1) + dias positivos  2) + lucro/dia  3) + score", flush=True)
-    print(f"{'─'*70}\n", flush=True)
+    print(f"\n⚡ [Otimizador] Iniciando Otimização Evolutiva Mês a Mês...", flush=True)
 
-    # ── Loop infinito de otimização ──────────────────────────────────────────
+    months = [
+        {"name": "Janeiro", "start": "2026-01-01", "end": "2026-01-31"},
+        {"name": "Fevereiro", "start": "2026-02-01", "end": "2026-02-28"},
+        {"name": "Março", "start": "2026-03-01", "end": "2026-03-31"},
+        {"name": "Abril", "start": "2026-04-01", "end": "2026-04-30"},
+        {"name": "Maio", "start": "2026-05-01", "end": "2026-05-31"},
+    ]
+
+    monthly_champions = {}
+
+    # Executamos a busca para cada mês individualmente
+    for m_info in months:
+        m_name = m_info["name"]
+        m_start = m_info["start"]
+        m_end = m_info["end"]
+        print(f"\n📅 Otimizando para o mês: {m_name} ({m_start} a {m_end})...", flush=True)
+
+        month_best_score = -999999.0
+        month_best_env = best_env.copy()
+        month_best_env["START_DATE"] = m_start
+        month_best_env["END_DATE"] = m_end
+
+        # Rodar 48 iterações por mês (6 rodadas de 8 workers)
+        ITERS_PER_MONTH = 48
+        with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
+            for r in range(ITERS_PER_MONTH // N_WORKERS):
+                candidates = []
+                for w in range(N_WORKERS):
+                    cand = rand_params(month_best_env)
+                    cand["START_DATE"] = m_start
+                    cand["END_DATE"] = m_end
+                    candidates.append((cand, f"{m_name[:3]}_r{r}_w{w}"))
+
+                futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
+
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    try:
+                        res = fut.result()
+                        if res and res["score"] > month_best_score:
+                            month_best_score = res["score"]
+                            month_best_env = res["_env"].copy()
+                            month_best_env["START_DATE"] = m_start
+                            month_best_env["END_DATE"] = m_end
+                            print(f"   ✨ Mês {m_name} (rodada {r}): Novo melhor score = {month_best_score:.4f} | Lucro/Dia = ${res['avg_daily_profit']:.2f}/dia", flush=True)
+                    except Exception as e:
+                        print(f"   [Mês {m_name}] erro no worker {idx}: {e}", flush=True)
+
+        champ_params = month_best_env.copy()
+        champ_params.pop("START_DATE", None)
+        champ_params.pop("END_DATE", None)
+
+        monthly_champions[m_name] = {
+            "score": month_best_score,
+            "params": champ_params
+        }
+        print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
+        print(f"   Parâmetros: {champ_params}", flush=True)
+
+    # ── Crossover & Comparação Cruzada ───────────────────────────────────────
+    print(f"\n🔄 [Crossover] Iniciando validação cruzada dos campeões mensais...", flush=True)
+
+    crossover_results = []
+
+    with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
+        jobs = []
+        for champ_name, champ_info in monthly_champions.items():
+            env_test = champ_info["params"].copy()
+            env_test["START_DATE"] = "2026-01-01"
+            env_test["END_DATE"] = "2026-05-31"
+            jobs.append((env_test, champ_name))
+
+        futures = {pool.submit(_run_one, (job[0], f"cross_{job[1]}")): job[1] for job in jobs}
+
+        for fut in as_completed(futures):
+            champ_name = futures[fut]
+            try:
+                res = fut.result()
+                if res:
+                    crossover_results.append({
+                        "champ_name": champ_name,
+                        "score": res["score"],
+                        "avg_daily_profit": res["avg_daily_profit"],
+                        "total_pnl": res["total_pnl"],
+                        "consistency_pct": res["consistency_pct"],
+                        "positive_days": res["positive_days"],
+                        "active_days": res["active_days"],
+                        "params": res["_env"].copy(),
+                        "monthly_breakdown": res.get("monthly_breakdown", {})
+                    })
+            except Exception as e:
+                print(f"   [Crossover] erro ao testar campeão de {champ_name}: {e}", flush=True)
+
+    crossover_results = sorted(crossover_results, key=lambda x: x["score"], reverse=True)
+
+    print(f"\n📋 Tabela Comparativa de Validação Cruzada (Período Jan-Mai Completo):", flush=True)
+    print(f"{'-'*90}", flush=True)
+    print(f"{'Campeão de':<12} | {'Score Global':<12} | {'Lucro/Dia':<10} | {'PnL Total':<10} | {'Consistência':<12} | {'Dias Pos':<8}", flush=True)
+    print(f"{'-'*90}", flush=True)
+    for r in crossover_results:
+        print(f"{r['champ_name']:<12} | {r['score']:<12.4f} | ${r['avg_daily_profit']:<9.2f} | ${r['total_pnl']:<9.2f} | {r['consistency_pct']:<11.1f}% | {r['positive_days']}/{r['active_days']}", flush=True)
+    print(f"{'-'*90}", flush=True)
+
+    print(f"\n📊 Detalhamento Mensal de cada Campeão (PnL por Mês):", flush=True)
+    print(f"{'-'*75}", flush=True)
+    print(f"{'Campeão de':<12} | {'Jan':<9} | {'Fev':<9} | {'Mar':<9} | {'Abr':<9} | {'Mai':<9}", flush=True)
+    print(f"{'-'*75}", flush=True)
+    for r in crossover_results:
+        breakdown = r["monthly_breakdown"].get("Super-Frankenstein", {})
+        pnls = []
+        for m_info in months:
+            m_key = m_info["start"][:7]
+            pnl_val = breakdown.get(m_key, {}).get("pnl", 0.0)
+            pnls.append(f"${pnl_val:>6.2f}")
+        pnls_str = " | ".join(pnls)
+        print(f"{r['champ_name']:<12} | {pnls_str}", flush=True)
+    print(f"{'-'*75}", flush=True)
+
+    supreme_winner = crossover_results[0]
+    print(f"\n👑 Vencedor Supremo Selecionado: Campeão de {supreme_winner['champ_name']}", flush=True)
+    print(f"   Métricas Globais: Score={supreme_winner['score']:.4f} | Lucro/Dia=${supreme_winner['avg_daily_profit']:.2f}/dia", flush=True)
+
+    best_env = supreme_winner["params"].copy()
+    if "START_DATE" in best_env:
+        del best_env["START_DATE"]
+    if "END_DATE" in best_env:
+        del best_env["END_DATE"]
+
+    best_score = supreme_winner["score"]
+    best_pos = supreme_winner["positive_days"]
+    best_avg = supreme_winner["avg_daily_profit"]
+    best_data = {
+        "score": supreme_winner["score"],
+        "avg_daily_profit": supreme_winner["avg_daily_profit"],
+        "total_pnl": supreme_winner["total_pnl"],
+        "consistency_pct": supreme_winner["consistency_pct"],
+        "positive_days": supreme_winner["positive_days"],
+        "active_days": supreme_winner["active_days"],
+        "iteration": 9999,
+    }
+
+    # Faz deploy do vencedor supremo no bot ao vivo
+    print(f"\n🚀 Fazendo deploy do Vencedor Supremo no bot ao vivo...", flush=True)
+    ok = try_deploy_winner(best_env, f"Supreme Winner from month {supreme_winner['champ_name']}: score={supreme_winner['score']:.4f} avg_day=${supreme_winner['avg_daily_profit']:.2f}/dia", force=True)
+    if ok:
+        print(f"✅ Vencedor Supremo ativo com sucesso no servidor!", flush=True)
+
+    # ── Loop infinito de refinamento contínuo ─────────────────────────────────
+    print(f"\n{'-'*70}", flush=True)
+    print(f"  🚀 LOOP DE REFINAMENTO CONTÍNUO — {N_WORKERS} workers simultâneos", flush=True)
+    print(f"  Aprimorando o Vencedor Supremo ({supreme_winner['champ_name']})...", flush=True)
+    print(f"{'-'*70}\n", flush=True)
+
+    iteration = 10000
+    champion_pool = [best_env]
+
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         while True:
-            # 0. Verifica se há deploy pendente cujo cooldown expirou
-            if _pending_deploy_env is not None and (time.time() - _last_deploy_time >= DEPLOY_COOLDOWN):
-                print(f"   ⏰ Cooldown expirou. Executando deploy pendente do último campeão encontrado.", flush=True)
-                try_deploy_winner(_pending_deploy_env, _pending_deploy_msg, force=True)
-
-            # 1. Verifica e aplica o Modo Ultra-Estresse na rodada ativa
             is_stress = _read_stress_config()
             if is_stress and _is_on_server():
                 try:
-                    # Encerra o live bot para liberar 100% de CPU/RAM da VM
                     check = subprocess.run(["pgrep", "-f", "python bot.py"], capture_output=True, timeout=2)
                     if check.returncode == 0:
-                        print("   🤖 [Ultra-Estresse] Pausando Bot ao Vivo para estresse máximo do Otimizador...", flush=True)
+                        print("   🤖 [Ultra-Estresse] Pausando Bot ao Vivo...", flush=True)
                         subprocess.run(["screen", "-S", "pegasus", "-X", "quit"], capture_output=True)
                 except Exception:
                     pass
 
-            # Carrega o pool de campeões históricos para busca evolutiva multi-champion
-            champs = _load_top_champions()
-            champion_pool = []
-            for c in champs:
-                champion_pool.append({k: str(v) for k, v in c.items()})
-            if not champion_pool:
-                champion_pool = [best_env]
+            candidates = [(rand_params(random.choice(champion_pool)), f"ref_{i}") for i in range(N_WORKERS)]
 
-            # Gera N_WORKERS candidatos perturbando campeões históricos aleatórios do pool
-            candidates = [(rand_params(random.choice(champion_pool)), f"w{i}") for i in range(N_WORKERS)]
-
-            print(f"🔄 Iterações {iteration}–{iteration + N_WORKERS - 1} "
-                  f"({N_WORKERS} em paralelo)...", flush=True)
-
-            # Atualiza o arquivo de estado indicando que estamos ativamente avaliando estes candidatos
-            local_candidates = [
-                {
-                    **{k: c[0].get(k) for k in PARAM_SPACE if k in c[0]},
-                    "status": "Simulando...",
-                    "result_pnl": None,
-                    "result_days": None,
-                }
-                for c in candidates
-            ]
-            try:
-                with _state_lock:
-                    state_data = {}
-                    if STATE_PATH.exists():
-                        try:
-                            state_data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-                        except Exception:
-                            pass
-                    state_data["running"] = True
-                    state_data["current_iteration"] = iteration
-                    state_data["evaluating_candidates"] = local_candidates
-                    tmp = STATE_PATH.with_suffix(".tmp")
-                    tmp.write_text(json.dumps(state_data, indent=2, ensure_ascii=False), encoding="utf-8")
-                    tmp.replace(STATE_PATH)
-            except Exception as e:
-                print(f"[WARN] pre-write_state: {e}", flush=True)
+            print(f"🔄 Iteração de Refinamento {iteration}–{iteration + N_WORKERS - 1}...", flush=True)
 
             t0 = time.time()
             futures = {pool.submit(_run_one, c): i for i, c in enumerate(candidates)}
 
-            results_batch = []
             for fut in as_completed(futures):
                 idx = futures[fut]
                 try:
                     m = fut.result()
                     if not m:
-                        local_candidates[idx]["status"] = "Falha"
-                        write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
                         continue
                 except Exception as e:
                     print(f"   [worker {idx}] erro: {e}", flush=True)
-                    local_candidates[idx]["status"] = "Erro"
-                    write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
                     continue
 
-                is_better = False
-                reason    = ""
-
-                # Sanity check: só aceita recorde se:
-                # 1) PnL total >= 0 E avg_day > 0 (sem prejuízo)
-                # 2) avg_daily <= 120.0 (teto de plausibilidade realista com stakes maiores)
-                # 3) active_days >= 100 (bot realmente operou no período Jan-Mai)
                 active = m.get("active_days", 0) or 0
                 avg_d  = m["avg_daily_profit"]
                 pnl_ok = (
                     m["total_pnl"] >= 0
                     and avg_d > 0
-                    and avg_d <= 120.0     # teto de plausibilidade: max $120/dia com $50 banca e Soros
-                    and active >= 5       # 5 meses: pelo menos 5 dias com operações (de ~144)
+                    and avg_d <= 120.0
+                    and active >= 5
                 )
 
-                if pnl_ok:
-                    local_candidates[idx]["status"] = f"Finalizado: ${avg_d:.2f}/dia"
-                    local_candidates[idx]["result_pnl"] = round(avg_d, 2)
-                    local_candidates[idx]["result_days"] = f"{m['positive_days']}/{active}"
-                    updated_champ = update_monthly_champions(monthly_champions, iteration + idx, m, candidates[idx][0])
-                    if updated_champ:
-                        print(f"   🏆 [Campeão Mensal] Nova melhor performance mensal detectada!", flush=True)
-                else:
-                    local_candidates[idx]["status"] = f"Inválido (${avg_d:.2f}/dia)"
-                    local_candidates[idx]["result_pnl"] = round(avg_d, 2)
-                    local_candidates[idx]["result_days"] = f"{m['positive_days']}/{active}"
-
                 if not pnl_ok:
-                    pass  # resultado inválido ou implausível → descarta
-                elif m["score"] > best_score + 0.1:
+                    continue
+
+                is_better = False
+                reason = ""
+
+                if m["score"] > best_score + 0.1:
                     is_better = True
                     reason = f"+score ({best_score:.1f}→{m['score']:.1f})"
                 elif abs(m["score"] - best_score) <= 0.1:
@@ -964,35 +1051,6 @@ def main():
                 icon = "🔥 NOVO RECORD!" if is_better else "   ·"
                 print(f"   [it#{iteration+idx}] {fmt(m)} → {icon}", flush=True)
 
-                est_elapsed = time.time() - t0
-                entry = {
-                    "iteration":      iteration + idx,
-                    "roi":            m["roi_pct"],
-                    "pnl":            m["total_pnl"],
-                    "busted":         m["negative_days"],
-                    "elapsed_s":      round(est_elapsed, 1),
-                    "is_best":        is_better,
-                    "avg_daily":      m["avg_daily_profit"],
-                    "positive_days":  m["positive_days"],
-                    "negative_days":  m["negative_days"],
-                    "consistency_pct": m["consistency_pct"],
-                    "score":          m["score"],
-                    "sharpe":         m.get("sharpe_ratio", 0.0),
-                    "sortino":        m.get("sortino_ratio", 0.0),
-                    "drawdown":       m.get("max_drawdown", 0.0),
-                    "live_avg_daily": m.get("live_avg_daily"),
-                    "live_positive_days": m.get("live_positive_days"),
-                    "live_total_pnl": m.get("live_total_pnl"),
-                    "live_sharpe":    m.get("live_sharpe"),
-                    "live_sortino":   m.get("live_sortino"),
-                    "live_drawdown":  m.get("live_drawdown"),
-                    "best_day_pnl":   m.get("best_day_pnl"),
-                    "worst_day_pnl":  m.get("worst_day_pnl"),
-                    "ts":             time.time(),
-                }
-                history.append(entry)
-                _save_opt_iteration(entry, m["_env"])
-
                 if is_better:
                     best_score = m["score"]
                     best_pos   = m["positive_days"]
@@ -1002,41 +1060,18 @@ def main():
                     best_data  = {**m, "iteration": iteration + idx, "reason": reason}
 
                     print(f"\n{'★'*70}", flush=True)
-                    print(f"  🏆 NOVO RECORDE! — {reason}", flush=True)
+                    print(f"  🏆 NOVO RECORDE GLOBAL! — {reason}", flush=True)
                     print(f"     Lucro médio/dia: ${m['avg_daily_profit']:.2f}", flush=True)
                     print(f"     Dias positivos:  {m['positive_days']}/{m['active_days']} ({m['consistency_pct']:.0f}%)", flush=True)
-                    print(f"     PnL total período:  ${m['total_pnl']:.2f}  (ROI {m['roi_pct']:.1f}%)", flush=True)
-                    print(f"     Melhor dia: ${m['best_day_pnl']:.2f} | Pior dia: ${m['worst_day_pnl']:.2f}", flush=True)
-                    print(f"     Sharpe: {m.get('sharpe_ratio', 0.0):.4f} | Sortino: {m.get('sortino_ratio', 0.0):.4f} | Max DD: ${m.get('max_drawdown', 0.0):.2f}", flush=True)
+                    print(f"     PnL total período:  ${m['total_pnl']:.2f}", flush=True)
                     champ_params = {k: best_env.get(k) for k in PARAM_SPACE}
-                    print(f"     Parâmetros campeões: {champ_params}", flush=True)
+                    print(f"     Parâmetros: {champ_params}", flush=True)
                     print(f"{'★'*70}\n", flush=True)
 
-                    # Deploy no bot ao vivo
-                    ok = try_deploy_winner(best_env,
-                        f"opt-v3 it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
-                    if ok:
-                        print(f"   ✅ Bot ao vivo reiniciado com novos parâmetros!\n", flush=True)
-                        if is_stress:
-                            print(f"   🤖 [Ultra-Estresse] Ativando Bot ao Vivo imediatamente para operar com a estratégia campeã!\n", flush=True)
-                            if _is_on_server():
-                                try:
-                                    # Limpa sessões mortas e inicializa a sessão detached screen
-                                    subprocess.run(["screen", "-wipe"], capture_output=True)
-                                    cmd = "cd /opt/pegasus && PEGASUS_LIVE_BOT=true PYTHONUNBUFFERED=1 .venv/bin/python -u bot.py 2>&1 | tee -a logs/trades.log"
-                                    subprocess.run(["screen", "-dmS", "pegasus", "bash", "-c", cmd])
-                                except Exception as exc:
-                                    print(f"   [ERR] Falha ao inicializar o Bot em Modo Ultra-Estresse: {exc}", flush=True)
+                    try_deploy_winner(best_env, f"ref-opt it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
 
-                # Grava o estado de forma atômica e em tempo real para o dashboard ver
-                write_state(iteration + idx, baseline_metrics, best_data, history, evaluating_candidates=local_candidates, monthly_champions=monthly_champions)
-
-            elapsed = time.time() - t0
-            throughput = N_WORKERS / elapsed * 60  # iterações/min
-
-            print(f"   ⏱  Rodada completada em {elapsed:.0f}s ({N_WORKERS}/{N_WORKERS} ok | {throughput:.0f} iter/min estimado)", flush=True)
             iteration += N_WORKERS
-            time.sleep(0.2)  # respiração mínima
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":

@@ -327,6 +327,24 @@ class DerivBot:
             self.pending_order = None
             return
 
+        # Payout filter for Rise/Fall contracts
+        if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+            payout_val = float(proposal.get("payout", 0.0))
+            ask_price_val = float(ask_price)
+            if payout_val > 0 and ask_price_val > 0:
+                payout_pct = (payout_val - ask_price_val) / ask_price_val
+                min_payout_pct = self.config.rise_fall_min_payout_pct
+                if payout_pct < min_payout_pct:
+                    logger.warning(
+                        "⛔ [PAYOUT BLOCK] Payout proposto de %.4f%% abaixo do mínimo de %.4f%% | ask_price=%s, payout=%s",
+                        payout_pct * 100,
+                        min_payout_pct * 100,
+                        ask_price_val,
+                        payout_val
+                    )
+                    self.pending_order = None
+                    return
+
         self.waiting_for_result = True
         self._waiting_since = time.monotonic()
         direction = getattr(self.pending_order, "direction", "ACCU")

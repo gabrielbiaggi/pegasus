@@ -1513,6 +1513,11 @@ class RiseFallStrategyConfig:
     min_momentum: float = 0.0  # minimum |price_momentum| to count as directional
     use_ensemble: bool = False
     ensemble_min_prob: float = 0.52  # P(correct direction) threshold
+    symbol: str = "BOOM1000"
+    boom_max_cusum: float = 8.0
+    boom_max_velocity: float = 0.001
+    boom_max_imbalance: float = 1.5
+    boom_only_put: bool = True
 
     @property
     def minimum_ticks(self) -> int:
@@ -1540,6 +1545,35 @@ def generate_rise_fall_signal(
 
     last = df.iloc[-1]
 
+    def _get(name: str, default: float = 0.0) -> float:
+        v = last.get(name, default)
+        try:
+            f = float(v if v is not None else default)
+        except (TypeError, ValueError):
+            f = default
+        return default if f != f else f  # NaN guard
+
+    # Adaptacao especifica para BOOM1000 Rise/Fall
+    is_boom = "BOOM" in getattr(config, "symbol", "BOOM1000").upper()
+    if is_boom and getattr(config, "boom_only_put", True):
+        cusum = _get("cusum_score", 0.0)
+        velocity = _get("price_velocity", 0.0)
+        imbalance = _get("tick_imbalance", 0.0)
+
+        # Block signal if CUSUM or velocity indicates spike risk
+        if cusum > getattr(config, "boom_max_cusum", 8.0):
+            logger.debug("RF PUT BLOCK: CUSUM %.2f > %.2f", cusum, config.boom_max_cusum)
+            return None, 0, None
+        if velocity > getattr(config, "boom_max_velocity", 0.001):
+            logger.debug("RF PUT BLOCK: Velocity %.5f > %.5f", velocity, config.boom_max_velocity)
+            return None, 0, None
+        if imbalance > getattr(config, "boom_max_imbalance", 1.5):
+            logger.debug("RF PUT BLOCK: Imbalance %.2f > %.2f", imbalance, config.boom_max_imbalance)
+            return None, 0, None
+
+        # Propose PUT (FALL)
+        return "PUT", 25, None
+
     # Ensemble gate (optional): use trained direction model
     if config.use_ensemble and ensemble_scorer is not None:
         p_up = ensemble_scorer.predict_up_probability(last)
@@ -1559,14 +1593,6 @@ def generate_rise_fall_signal(
             return "PUT", 6, 1.0 - p_up
         logger.debug("EnsembleScorerRF P(UP)=%.4f — sem sinal direcional", p_up)
         return None, 0, None
-
-    def _get(name: str, default: float = 0.0) -> float:
-        v = last.get(name, default)
-        try:
-            f = float(v if v is not None else default)
-        except (TypeError, ValueError):
-            f = default
-        return default if f != f else f  # NaN guard
 
     velocity = _get("price_velocity")
     imbalance = _get("tick_imbalance")

@@ -12,7 +12,7 @@ import websockets
 from dotenv import load_dotenv
 
 load_dotenv()
-TOKEN = os.getenv("DERIV_TOKEN", "")
+TOKEN = os.getenv("DERIV_PAT") or os.getenv("DERIV_TOKEN") or ""
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
