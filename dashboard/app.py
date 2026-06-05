@@ -1184,6 +1184,57 @@ def _read_stress_config() -> bool:
         return False
 
 
+def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[dict]:
+    """Read live optimizer worker progress files, preferring current monthly workers."""
+    now = now if now is not None else _time.time()
+    workers: list[dict] = []
+
+    paths = list(logs_dir.glob("backtest_worker_par_*.json"))
+    paths.extend(logs_dir.glob("backtest_worker_w*.json"))
+
+    seen: set[str] = set()
+    for path in paths:
+        worker_id = path.stem.replace("backtest_worker_", "", 1)
+        if worker_id in seen:
+            continue
+        seen.add(worker_id)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            mtime = path.stat().st_mtime
+            curr_idx = int(data.get("current_day_index", 0) or 0)
+            total_days = int(data.get("total_days", 0) or 0)
+            elapsed = float(data.get("elapsed_s", 0.0) or 0.0)
+            progress = round((curr_idx / total_days) * 100, 1) if total_days > 0 else 0.0
+            est_remaining = None
+            if curr_idx > 0 and total_days > curr_idx:
+                est_remaining = round((total_days - curr_idx) * (elapsed / curr_idx), 1)
+            stale = (now - mtime) > 180
+            month = data.get("current_month") or ""
+            status = "Finalizado" if total_days and curr_idx >= total_days else "Simulando..."
+            if stale and status != "Finalizado":
+                status = "Stale"
+            workers.append({
+                "worker_id": worker_id,
+                "status": status,
+                "progress_pct": progress,
+                "est_remaining_s": est_remaining,
+                "current_day_index": curr_idx,
+                "total_days": total_days,
+                "current_day": data.get("current_day"),
+                "current_month": month,
+                "last_update_ago_s": int(now - mtime),
+                "stale": stale,
+            })
+        except Exception:
+            continue
+
+    def sort_key(worker: dict) -> tuple[int, str]:
+        worker_id = str(worker.get("worker_id", ""))
+        return (0 if worker_id.startswith("par_") else 1, worker_id)
+
+    return sorted(workers, key=sort_key)
+
+
 def _write_stress_config(enabled: bool) -> None:
     path = BASE / "logs" / "stress_config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1268,11 +1319,37 @@ def optimizer_status(response: Response):
             data["last_update_ago_s"] = int(_t.time() - mtime)
             data["ultra_stress"] = _read_stress_config()
             data["deployed_iteration"] = deployed_iteration_val
+            workers = _read_optimizer_workers(BASE / "logs", now=_t.time())
+            data["optimizer_workers"] = workers
 
             # Enriquecimento com progresso de workers em tempo real
             evaluating_candidates = data.get("evaluating_candidates", [])
+            workers_by_id = {
+                str(worker.get("worker_id")): worker
+                for worker in workers
+                if worker.get("worker_id")
+            }
+            if not evaluating_candidates and workers:
+                evaluating_candidates = [
+                    {
+                        **worker,
+                        "status": (
+                            f"Simulando {worker.get('current_month', '')}".strip()
+                            if worker.get("status") == "Simulando..."
+                            else worker.get("status")
+                        ),
+                    }
+                    for worker in workers
+                ]
+                data["evaluating_candidates"] = evaluating_candidates
             for idx, candidate in enumerate(evaluating_candidates):
-                if candidate.get("status") == "Simulando...":
+                status = str(candidate.get("status", ""))
+                worker_id = str(candidate.get("worker_id") or "")
+                live_worker = workers_by_id.get(worker_id)
+                if live_worker:
+                    candidate.update(live_worker)
+                    continue
+                if status.startswith("Simulando"):
                     worker_file = BASE / "logs" / f"backtest_worker_w{idx}.json"
                     if worker_file.exists():
                         try:
@@ -1309,6 +1386,7 @@ def optimizer_status(response: Response):
         "last_update_ago_s": 9999,
         "ultra_stress": _read_stress_config(),
         "deployed_iteration": deployed_iteration_val,
+        "optimizer_workers": _read_optimizer_workers(BASE / "logs"),
     }
 
 

@@ -5828,10 +5828,14 @@
                     var workersSection = document.getElementById("opt-workers-section");
                     var workersContainer = document.getElementById("opt-workers-container");
                     if (workersSection && workersContainer) {
-                        var candidates = d.evaluating_candidates || [];
+                        var candidates = (d.evaluating_candidates && d.evaluating_candidates.length)
+                            ? d.evaluating_candidates
+                            : (d.optimizer_workers || []);
                         if (d.running && candidates.length > 0) {
                             workersSection.style.display = "block";
                             workersContainer.innerHTML = candidates.map(function(c, idx) {
+                                var workerLabel = c.worker_id || ("#" + idx);
+                                var workerMonth = c.current_month || c.month || "";
                                 var stk = c.STAKE || "—";
                                 var score = c.CALM_ACCU_MIN_SCORE || "—";
                                 var pLoss = c.ENSEMBLE_MIN_PROB != null ? (c.ENSEMBLE_MIN_PROB * 100).toFixed(1) + "%" : "—";
@@ -5856,6 +5860,9 @@
                                     animation = "none";
                                 } else if (statusText.indexOf("Falha") >= 0 || statusText.indexOf("Erro") >= 0) {
                                     statusColor = "var(--red)";
+                                    animation = "none";
+                                } else if (statusText.indexOf("Stale") >= 0) {
+                                    statusColor = "var(--yellow)";
                                     animation = "none";
                                 }
 
@@ -5909,7 +5916,7 @@
                                 return '<div style="' + cardStyle + '">'
                                     + '<div>'
                                     + '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.05);padding-bottom:3px;margin-bottom:4px">'
-                                    + '<strong style="color:var(--cyan)">Worker #' + idx + '</strong>'
+                                    + '<strong style="color:var(--cyan)">Worker ' + workerLabel + (workerMonth ? ' · ' + workerMonth : '') + '</strong>'
                                     + '<span style="color:' + statusColor + ';font-size:.6rem;font-weight:700;animation:' + animation + '">' + statusIcon + statusText.split(" (")[0] + '</span>'
                                     + '</div>'
                                     + '<div style="color:var(--muted)">'

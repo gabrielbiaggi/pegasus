@@ -90,6 +90,7 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
     db_path = Path("logs/results.db")
     conn = sqlite3.connect(str(db_path))
     try:
+        safe_params = sanitize_params_for_storage(params)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
             """INSERT INTO optimizer_history
@@ -112,7 +113,7 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
                 entry["drawdown"],
                 entry["elapsed_s"],
                 1 if entry["is_best"] else 0,
-                json.dumps(params),
+                json.dumps(safe_params),
                 entry.get("live_avg_daily"),
                 entry.get("live_positive_days"),
                 entry.get("live_total_pnl"),
@@ -178,14 +179,20 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
     db_path = Path("logs/results.db")
     if not db_path.exists():
         return None
+    target_context = optimizer_context()
     conn = sqlite3.connect(str(db_path))
     try:
         conn.row_factory = sqlite3.Row
         cursor = conn.execute(
-            "SELECT * FROM optimizer_history WHERE is_best = 1 ORDER BY score DESC LIMIT 1"
+            "SELECT * FROM optimizer_history WHERE is_best = 1 ORDER BY score DESC LIMIT 50"
         )
-        r = cursor.fetchone()
-        if r:
+        for r in cursor.fetchall():
+            try:
+                params = json.loads(r["params"])
+            except Exception:
+                params = {}
+            if not params_match_context(params, target_context):
+                continue
             best_data = {
                 "iteration": r["iteration"],
                 "roi_pct": r["roi"],
@@ -210,10 +217,6 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
                 "worst_day_pnl": r["worst_day_pnl"] if "worst_day_pnl" in r.keys() else None,
                 "reason": "Recuperado do Banco de Dados",
             }
-            try:
-                params = json.loads(r["params"])
-            except Exception:
-                params = {}
             return best_data, params
     except Exception as e:
         print(f"[WARN] _load_best_opt_run error: {e}", flush=True)
@@ -225,6 +228,7 @@ def _load_top_champions() -> list[dict]:
     db_path = Path("logs/results.db")
     if not db_path.exists():
         return []
+    target_context = optimizer_context()
     champions = []
     conn = sqlite3.connect(str(db_path))
     try:
@@ -236,7 +240,7 @@ def _load_top_champions() -> list[dict]:
         for r in rows:
             try:
                 p = json.loads(r["params"])
-                if p:
+                if p and params_match_context(p, target_context):
                     champions.append(p)
             except Exception:
                 pass
@@ -245,6 +249,33 @@ def _load_top_champions() -> list[dict]:
     finally:
         conn.close()
     return champions
+
+
+def _history_entry(iteration_num: int, metrics: dict, elapsed_s: float, is_best: bool) -> dict:
+    return {
+        "iteration": iteration_num,
+        "avg_daily": metrics.get("avg_daily_profit", 0.0),
+        "positive_days": metrics.get("positive_days", 0),
+        "negative_days": metrics.get("negative_days", 0),
+        "consistency_pct": metrics.get("consistency_pct", 0.0),
+        "score": metrics.get("score", 0.0),
+        "pnl": metrics.get("total_pnl", 0.0),
+        "roi": metrics.get("roi_pct", 0.0),
+        "sharpe": metrics.get("sharpe_ratio", 0.0),
+        "sortino": metrics.get("sortino_ratio", 0.0),
+        "drawdown": metrics.get("max_drawdown", 0.0),
+        "elapsed_s": round(elapsed_s, 1),
+        "is_best": is_best,
+        "live_avg_daily": metrics.get("live_avg_daily"),
+        "live_positive_days": metrics.get("live_positive_days"),
+        "live_total_pnl": metrics.get("live_total_pnl"),
+        "live_sharpe": metrics.get("live_sharpe"),
+        "live_sortino": metrics.get("live_sortino"),
+        "live_drawdown": metrics.get("live_drawdown"),
+        "best_day_pnl": metrics.get("best_day_pnl"),
+        "worst_day_pnl": metrics.get("worst_day_pnl"),
+        "ts": time.time(),
+    }
 
 # ── Modo Ultra-Estresse ────────────────────────────────────────────────────────
 def _read_stress_config() -> bool:
@@ -339,7 +370,110 @@ PARAM_SPACE = {
 
 FROZEN_PARAMS = set()  # todos os params são livres
 
+SENSITIVE_PARAM_MARKERS = (
+    "TOKEN",
+    "PAT",
+    "SECRET",
+    "PASSWORD",
+    "PASS",
+    "DSN",
+    "KEY",
+    "APP_ID",
+)
+
+SAFE_PARAM_EXACT = {
+    "ACCOUNT_MODE",
+    "CONTRACT_MODE",
+    "SYMBOL",
+    "CURRENCY",
+    "STAKE",
+    "MIN_STAKE",
+    "MAX_STAKE",
+    "MAX_STAKE_PERCENT",
+    "STOP_LOSS_PCT",
+    "STOP_GAIN_PCT",
+    "USE_SOROS",
+    "SOROS_MAX_STEPS",
+    "SOROS_PROFIT_FACTOR",
+    "SOROS_POST_LOSS_COOLDOWN",
+    "USE_MARTINGALE",
+    "MARTINGALE_MAX_GALES",
+    "MARTINGALE_MODE",
+    "MARTINGALE_MULTIPLIER",
+    "MARTINGALE_PAYOUT_RATE",
+    "DYNAMIC_STAKE_BASE_PCT",
+    "OPTIMIZER_CHAMPION_ITERATION",
+}
+
+SAFE_PARAM_PREFIXES = (
+    "FRANKENSTEIN_",
+    "RISE_FALL_",
+    "CALM_ACCU_",
+    "ACCUMULATOR_",
+    "ENSEMBLE_",
+)
+
 # ── Funções utilitárias ───────────────────────────────────────────────────────
+
+def _norm_symbol(value: str | None) -> str:
+    return (value or "").strip().upper()
+
+
+def _norm_contract_mode(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def optimizer_context(env_vars: dict | None = None) -> dict:
+    """Contexto real usado pelo optimizer para comparar campeões equivalentes."""
+    env_vars = env_vars or {}
+    symbol = _norm_symbol(env_vars.get("SYMBOL") or ACTIVE_SYMBOL)
+    # O optimizer atual força Rise/Fall no worker/deploy para BOOM/Crash.
+    return {"contract_mode": "rise_fall", "symbol": symbol}
+
+
+def params_match_context(params: dict, context: dict | None = None) -> bool:
+    context = context or optimizer_context()
+    saved_ctx = params.get("_optimizer_context")
+    if isinstance(saved_ctx, dict):
+        mode = saved_ctx.get("contract_mode")
+        symbol = saved_ctx.get("symbol")
+    else:
+        mode = params.get("CONTRACT_MODE")
+        symbol = params.get("SYMBOL")
+
+    return (
+        _norm_contract_mode(mode) == _norm_contract_mode(context.get("contract_mode"))
+        and _norm_symbol(symbol) == _norm_symbol(context.get("symbol"))
+    )
+
+
+def _is_sensitive_param(key: str) -> bool:
+    upper = key.upper()
+    return any(marker in upper for marker in SENSITIVE_PARAM_MARKERS)
+
+
+def _is_safe_strategy_param(key: str) -> bool:
+    return (
+        key in PARAM_SPACE
+        or key in SAFE_PARAM_EXACT
+        or any(key.startswith(prefix) for prefix in SAFE_PARAM_PREFIXES)
+    )
+
+
+def sanitize_params_for_storage(params: dict) -> dict:
+    """Remove credenciais antes de persistir params no DB/dashboard."""
+    safe = {}
+    for key, value in params.items():
+        if _is_sensitive_param(key):
+            continue
+        if _is_safe_strategy_param(key):
+            safe[key] = str(value)
+
+    ctx = optimizer_context(params)
+    safe["CONTRACT_MODE"] = ctx["contract_mode"]
+    safe["SYMBOL"] = ctx["symbol"]
+    safe["_optimizer_context"] = ctx
+    return safe
 
 def load_env(path: Path = ENV_PATH) -> dict:
     env = {}
@@ -641,6 +775,7 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
             "start_date":        START_DATE,
             "end_date":          END_DATE,
             "n_workers":         N_WORKERS,
+            "optimizer_context": optimizer_context(),
         }
         if existing_candidates is not None:
             payload["evaluating_candidates"] = existing_candidates
@@ -676,7 +811,7 @@ def update_monthly_champions(monthly_champions: dict, iteration: int, m: dict, p
             monthly_champions[month] = {
                 "iteration": iteration,
                 "pnl": round(pnl, 2),
-                "params": params.copy(),
+                "params": sanitize_params_for_storage(params),
                 "monthly_pnls": all_months_pnls,
                 "avg_daily_profit": round(data["avg_daily_profit"], 2),
                 "consistency_pct": round(data["consistency_pct"], 1),
@@ -1052,11 +1187,22 @@ def main():
         with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
             for r in range(ITERS_PER_MONTH // N_WORKERS):
                 candidates = []
+                candidates_ui = []
                 for w in range(N_WORKERS):
                     cand = rand_params(month_best_env, month_best_metrics)
                     cand["START_DATE"] = m_start
                     cand["END_DATE"] = m_end
-                    candidates.append((cand, f"{m_name[:3]}_r{r}_w{w}"))
+                    worker_id = f"{m_name[:3]}_r{r}_w{w}"
+                    candidates.append((cand, worker_id))
+                    candidates_ui.append({
+                        **sanitize_params_for_storage(cand),
+                        "worker_id": worker_id,
+                        "current_month": m_name,
+                        "status": "Simulando...",
+                    })
+                write_state(iteration - 1, baseline_metrics, best_data, history,
+                            evaluating_candidates=candidates_ui,
+                            monthly_champions=monthly_champions)
 
                 futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
 
@@ -1064,6 +1210,7 @@ def main():
                     idx = futures[fut]
                     try:
                         res = fut.result()
+                        candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
                         if res and res["score"] > month_best_score:
                             month_best_score = res["score"]
                             month_best_env = res["_env"].copy()
@@ -1072,18 +1219,26 @@ def main():
                             month_best_metrics = res
                             print(f"   ✨ Mês {m_name} (rodada {r}): Novo melhor score = {month_best_score:.4f} | Lucro/Dia = ${res['avg_daily_profit']:.2f}/dia", flush=True)
                     except Exception as e:
+                        candidates_ui[idx]["status"] = "Erro"
                         print(f"   [Mês {m_name}] erro no worker {idx}: {e}", flush=True)
+                    finally:
+                        write_state(iteration - 1, baseline_metrics, best_data, history,
+                                    evaluating_candidates=candidates_ui,
+                                    monthly_champions=monthly_champions)
 
         champ_params = month_best_env.copy()
         champ_params.pop("START_DATE", None)
         champ_params.pop("END_DATE", None)
+        champ_params = sanitize_params_for_storage(champ_params)
 
         monthly_champions[m_name] = {
             "score": month_best_score,
             "params": champ_params
         }
+        write_state(iteration - 1, baseline_metrics, best_data, history,
+                    monthly_champions=monthly_champions)
         print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
-        print(f"   Parâmetros: {champ_params}", flush=True)
+        print(f"   Parâmetros seguros: {champ_params}", flush=True)
 
     # ── Crossover & Comparação Cruzada ───────────────────────────────────────
     print(f"\n🔄 [Crossover] Iniciando validação cruzada dos campeões mensais...", flush=True)
@@ -1113,7 +1268,7 @@ def main():
                         "consistency_pct": res["consistency_pct"],
                         "positive_days": res["positive_days"],
                         "active_days": res["active_days"],
-                        "params": res["_env"].copy(),
+                        "params": sanitize_params_for_storage(res["_env"]),
                         "monthly_breakdown": res.get("monthly_breakdown", {})
                     })
             except Exception as e:
@@ -1195,12 +1350,22 @@ def main():
                     pass
 
             candidates = []
+            candidates_ui = []
             for i in range(N_WORKERS):
                 base_env, base_metrics = random.choice(champion_pool)
                 cand = rand_params(base_env, base_metrics)
-                candidates.append((cand, f"ref_{i}"))
+                worker_id = f"ref_{i}"
+                candidates.append((cand, worker_id))
+                candidates_ui.append({
+                    **sanitize_params_for_storage(cand),
+                    "worker_id": worker_id,
+                    "status": "Simulando...",
+                })
 
             print(f"🔄 Iteração de Refinamento {iteration}–{iteration + N_WORKERS - 1}...", flush=True)
+            write_state(iteration, baseline_metrics, best_data, history,
+                        evaluating_candidates=candidates_ui,
+                        monthly_champions=monthly_champions)
 
             t0 = time.time()
             futures = {pool.submit(_run_one, c): i for i, c in enumerate(candidates)}
@@ -1209,10 +1374,18 @@ def main():
                 idx = futures[fut]
                 try:
                     m = fut.result()
+                    candidates_ui[idx]["status"] = "Finalizado" if m else "Inválido"
                     if not m:
+                        write_state(iteration + idx, baseline_metrics, best_data, history,
+                                    evaluating_candidates=candidates_ui,
+                                    monthly_champions=monthly_champions)
                         continue
                 except Exception as e:
+                    candidates_ui[idx]["status"] = "Erro"
                     print(f"   [worker {idx}] erro: {e}", flush=True)
+                    write_state(iteration + idx, baseline_metrics, best_data, history,
+                                evaluating_candidates=candidates_ui,
+                                monthly_champions=monthly_champions)
                     continue
 
                 active = m.get("active_days", 0) or 0
@@ -1224,25 +1397,29 @@ def main():
                     and active >= 5
                 )
 
-                if not pnl_ok:
-                    continue
-
                 is_better = False
                 reason = ""
 
-                if m["score"] > best_score + 0.1:
-                    is_better = True
-                    reason = f"+score ({best_score:.1f}→{m['score']:.1f})"
-                elif abs(m["score"] - best_score) <= 0.1:
-                    if m["positive_days"] > best_pos:
+                if pnl_ok:
+                    if m["score"] > best_score + 0.1:
                         is_better = True
-                        reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
-                    elif m["positive_days"] == best_pos and m["avg_daily_profit"] > best_avg + 0.05:
-                        is_better = True
-                        reason = f"+avg_day (${best_avg:.2f}→${m['avg_daily_profit']:.2f})"
+                        reason = f"+score ({best_score:.1f}→{m['score']:.1f})"
+                    elif abs(m["score"] - best_score) <= 0.1:
+                        if m["positive_days"] > best_pos:
+                            is_better = True
+                            reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
+                        elif m["positive_days"] == best_pos and m["avg_daily_profit"] > best_avg + 0.05:
+                            is_better = True
+                            reason = f"+avg_day (${best_avg:.2f}→${m['avg_daily_profit']:.2f})"
 
                 icon = "🔥 NOVO RECORD!" if is_better else "   ·"
                 print(f"   [it#{iteration+idx}] {fmt(m)} → {icon}", flush=True)
+
+                entry = _history_entry(iteration + idx, m, time.time() - t0, is_better)
+                _save_opt_iteration(entry, m.get("_env", {}))
+                history.append(entry)
+                if len(history) > 500:
+                    history = history[-500:]
 
                 if is_better:
                     best_score = m["score"]
@@ -1266,6 +1443,10 @@ def main():
                     print(f"{'★'*70}\n", flush=True)
 
                     try_deploy_winner(best_env, f"ref-opt it#{iteration+idx}: avg_day=${m['avg_daily_profit']:.2f} pos={m['positive_days']}")
+
+                write_state(iteration + idx, baseline_metrics, best_data, history,
+                            evaluating_candidates=candidates_ui,
+                            monthly_champions=monthly_champions)
 
             iteration += N_WORKERS
             time.sleep(0.5)
