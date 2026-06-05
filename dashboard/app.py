@@ -1291,6 +1291,19 @@ def _optimizer_dashboard_cards(
 ) -> list[dict]:
     """Return the worker cards that represent the current optimizer process."""
     limit = max(1, int(n_workers or len(workers) or 1))
+    saved_candidates = saved_candidates or []
+    saved_ids = [str(candidate.get("worker_id") or "") for candidate in saved_candidates]
+    live_by_id = {
+        str(worker.get("worker_id") or ""): worker
+        for worker in workers
+        if worker.get("worker_id")
+    }
+    if running and saved_ids and any(worker_id in live_by_id for worker_id in saved_ids):
+        return [
+            {**candidate, **live_by_id.get(str(candidate.get("worker_id") or ""), {})}
+            for candidate in saved_candidates[:limit]
+            if candidate.get("worker_id")
+        ]
     if running and workers:
         return workers[:limit]
     return _merge_optimizer_candidates(saved_candidates or [], workers)[:limit]

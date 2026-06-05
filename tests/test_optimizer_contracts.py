@@ -266,6 +266,20 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual([item["worker_id"] for item in cards], [f"Abr_r3_w{i}" for i in range(6)])
         self.assertEqual(cards[0]["progress_pct"], 76.7)
 
+    def test_optimizer_dashboard_cards_keep_state_declared_current_round(self) -> None:
+        saved = [{"worker_id": f"Fev_r4_w{i}", "status": "Simulando..."} for i in range(6)]
+        workers = [
+            {"worker_id": "Fev_r4_w0", "status": "Simulando...", "progress_pct": 96.4},
+            {"worker_id": "cross_Junho", "status": "Simulando...", "progress_pct": 48.4},
+            {"worker_id": "cross_Maio", "status": "Simulando...", "progress_pct": 54.8},
+            {"worker_id": "par_0_Jan", "status": "Finalizado", "progress_pct": 100.0},
+        ]
+
+        cards = dashboard_app._optimizer_dashboard_cards(saved, workers, n_workers=6, running=True)
+
+        self.assertEqual([item["worker_id"] for item in cards], [f"Fev_r4_w{i}" for i in range(6)])
+        self.assertEqual(cards[0]["progress_pct"], 96.4)
+
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [
             {
