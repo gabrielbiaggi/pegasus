@@ -1269,7 +1269,14 @@ def _merge_optimizer_candidates(saved_candidates: list[dict], workers: list[dict
             continue
         merged.append(candidate)
 
-    return merged
+    def sort_key(candidate: dict) -> tuple[int, str]:
+        status = str(candidate.get("status") or "")
+        stale = bool(candidate.get("stale"))
+        active = not stale and status != "Finalizado"
+        return (0 if active else 1, str(candidate.get("worker_id") or ""))
+
+    return sorted(merged, key=sort_key)
+
 
 
 def _write_stress_config(enabled: bool) -> None:
