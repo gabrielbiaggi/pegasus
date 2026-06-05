@@ -1362,7 +1362,7 @@ def main():
                         "current_month": m_name,
                         "status": "Simulando...",
                     })
-                write_state(iteration - 1, baseline_metrics, best_data, history,
+                write_state(dashboard_result_seq, baseline_metrics, best_data, history,
                             evaluating_candidates=candidates_ui,
                             monthly_champions=monthly_champions,
                             phase=f"monthly:{m_name}:round:{r}")
@@ -1404,7 +1404,7 @@ def main():
                         candidates_ui[idx]["status"] = "Erro"
                         print(f"   [Mês {m_name}] erro no worker {idx}: {e}", flush=True)
                     finally:
-                        write_state(iteration - 1, baseline_metrics, best_data, history,
+                        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
                                     evaluating_candidates=candidates_ui,
                                     monthly_champions=monthly_champions,
                                     phase=f"monthly:{m_name}:round:{r}")
