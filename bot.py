@@ -490,13 +490,16 @@ class DerivBot:
 
         if self.waiting_for_result:
             stuck_sec = time.monotonic() - self._waiting_since
-            if self.config.contract_mode == "multiplier" and stuck_sec > 120:
-                logger.warning(
-                    "MULT aguardando ha %.0fs; reconciliando portfolio sem contabilizar timeout como loss.",
-                    stuck_sec,
-                )
-                await self._reconcile_open_positions(ws)
-                self._waiting_since = time.monotonic()
+            if self.config.contract_mode == "multiplier":
+                if stuck_sec > 120:
+                    logger.warning(
+                        "MULT aguardando ha %.0fs; reconciliando portfolio sem contabilizar timeout como loss.",
+                        stuck_sec,
+                    )
+                    await self._reconcile_open_positions(ws)
+                    self._waiting_since = time.monotonic()
+                else:
+                    logger.info("Aguardando resultado da operacao MULT anterior.")
                 return
             if stuck_sec > 30:
                 logger.warning(
