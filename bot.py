@@ -490,6 +490,14 @@ class DerivBot:
 
         if self.waiting_for_result:
             stuck_sec = time.monotonic() - self._waiting_since
+            if self.config.contract_mode == "multiplier" and stuck_sec > 120:
+                logger.warning(
+                    "MULT aguardando ha %.0fs; reconciliando portfolio sem contabilizar timeout como loss.",
+                    stuck_sec,
+                )
+                await self._reconcile_open_positions(ws)
+                self._waiting_since = time.monotonic()
+                return
             if stuck_sec > 30:
                 logger.warning(
                     "waiting_for_result timeout (%.0fs sem resposta) — resetando estado e retomando operacoes.",
@@ -1712,7 +1720,7 @@ class DerivBot:
             # waiting_for_result stays True — next contract is dispatched on WIN settlement.
             self.pending_order = None
         elif self.config.contract_mode in {"rise_fall", "jump_rise_fall", "multiplier"}:
-            # RF/Multiplier: single contract per entry, auto-settles by expiry or TP/SL.
+            # RF expires by duration; multipliers stay open until TP/SL or explicit sell.
             self.current_contract_id = contract_id
             if self.pending_order:
                 direction = getattr(self.pending_order, "direction", "AUTO")
@@ -1759,8 +1767,52 @@ class DerivBot:
             or bool(contract.get("is_expired"))
         )
         if not is_sold:
+            if self.config.contract_mode == "multiplier":
+                order = self.pending_order
+                current_spot_time = int(
+                    contract.get("current_spot_time")
+                    or contract.get("date_start")
+                    or 0
+                )
+                entry_epoch = (
+                    self.accumulator_open_epoch
+                    or (order.entry_epoch if order else current_spot_time)
+                    or current_spot_time
+                )
+                held_ticks = max(0, current_spot_time - entry_epoch)
+                profit = float(contract.get("profit", 0.0) or 0.0)
+                should_sell = (
+                    profit >= self.config.multiplier_take_profit
+                    or profit <= -self.config.multiplier_stop_loss
+                    or held_ticks >= self.config.multiplier_max_hold_ticks
+                )
+                if should_sell and not self.accumulator_sell_requested:
+                    sell_price = float(contract.get("bid_price", 0.0) or 0.0)
+                    if profit >= self.config.multiplier_take_profit:
+                        reason = "take_profit"
+                    elif profit <= -self.config.multiplier_stop_loss:
+                        reason = "stop_loss"
+                    else:
+                        reason = "max_hold_ticks"
+                    self.accumulator_sell_requested = True
+                    logger.info(
+                        "Fechando MULT por %s | profit=%.2f TP=%.2f SL=%.2f held_ticks=%s/%s bid=%.2f",
+                        reason,
+                        profit,
+                        self.config.multiplier_take_profit,
+                        self.config.multiplier_stop_loss,
+                        held_ticks,
+                        self.config.multiplier_max_hold_ticks,
+                        sell_price,
+                    )
+                    await self.send(
+                        ws,
+                        {"sell": contract_id, "price": round(float(sell_price), 2)},
+                    )
+                return
+
             # Rise/Fall contracts settle automatically — no monitoring needed.
-            if self.config.contract_mode in {"rise_fall", "jump_rise_fall", "multiplier"}:
+            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
                 return
 
             # Multi-gale: per-contract open-position monitoring.
