@@ -1385,7 +1385,7 @@ class DerivBot:
         )
         # Subscribe to real-time balance updates (catches manual top-ups, etc.)
         await self.subscribe_balance(ws)
-        self._flush_balance(balance)  # seed balance.json imediatamente após autorização
+        self._flush_balance(self.risk.balance)  # seed balance.json imediatamente após autorização
         # Reconcile P&L counters from DB (fixes drift after restarts)
         db_summary = self.journal.get_daily_summary(self.risk.day)
 
