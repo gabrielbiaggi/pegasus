@@ -1553,8 +1553,8 @@ def generate_rise_fall_signal(
             f = default
         return default if f != f else f  # NaN guard
 
-    # Adaptacao especifica para BOOM1000 Rise/Fall
-    is_boom = "BOOM" in getattr(config, "symbol", "BOOM1000").upper()
+    # Adaptacao especifica para BOOM1000/1HZ100V Rise/Fall (forca modo PUT com filtros)
+    is_boom = True
     if is_boom and getattr(config, "boom_only_put", True):
         cusum = _get("cusum_score", 0.0)
         velocity = _get("price_velocity", 0.0)

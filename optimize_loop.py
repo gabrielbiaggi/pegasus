@@ -270,7 +270,7 @@ if Path(".env").exists():
     except Exception:
         pass
             
-ACTIVE_SYMBOL = _env_for_vol.get("SYMBOL", "BOOM1000")
+ACTIVE_SYMBOL = _env_for_vol.get("SYMBOL", "1HZ100V")
 
 def get_median_volatility(symbol: str) -> float:
     symbol_upper = symbol.upper()
@@ -578,7 +578,7 @@ def _run_one(args) -> dict | None:
     env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
     env_vars["CONTRACT_MODE"] = "rise_fall"
-    env_vars["SYMBOL"] = "BOOM1000"
+    env_vars["SYMBOL"] = "1HZ100V"
     env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
 
     try:
@@ -732,9 +732,9 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
         if k.startswith("FRANKENSTEIN_"):
             del out[k]
             
-    # Garante que o bot real opera em modo Rise/Fall e BOOM1000
+    # Garante que o bot real opera em modo Rise/Fall e 1HZ100V
     out["CONTRACT_MODE"] = "rise_fall"
-    out["SYMBOL"] = "BOOM1000"
+    out["SYMBOL"] = "1HZ100V"
     out["MARTINGALE_PAYOUT_RATE"] = "0.95"
     out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.90"
     
