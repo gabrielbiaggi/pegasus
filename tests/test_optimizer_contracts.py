@@ -144,6 +144,41 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertNotIn("_optimizer_context", safe)
         self.assertNotIn("BAD_LIST", safe)
 
+    def test_build_monthly_champion_entry_keeps_dashboard_metrics(self) -> None:
+        params = {"STAKE": "17.8", "CONTRACT_MODE": "multiplier", "SYMBOL": "BOOM1000"}
+        metrics = {
+            "score": 2344.7469,
+            "avg_daily_profit": 103.13,
+            "total_pnl": 2887.64,
+            "consistency_pct": 92.9,
+            "positive_days": 26,
+            "active_days": 28,
+            "worst_day_pnl": -12.5,
+            "max_drawdown": 36.2,
+        }
+
+        entry = optimize_loop.build_monthly_champion_entry(params, metrics)
+
+        self.assertEqual(entry["score"], 2344.7469)
+        self.assertEqual(entry["avg_daily_profit"], 103.13)
+        self.assertEqual(entry["consistency_pct"], 92.9)
+        self.assertEqual(entry["positive_days"], 26)
+        self.assertEqual(entry["active_days"], 28)
+        self.assertEqual(entry["params"]["STAKE"], "17.8")
+
+    def test_merge_optimizer_candidates_preserves_live_workers_not_in_saved_state(self) -> None:
+        saved = [{"worker_id": "Jan_r0_w0", "status": "Finalizado"}]
+        workers = [
+            {"worker_id": "Jan_r0_w0", "status": "Finalizado", "progress_pct": 100.0},
+            {"worker_id": "Mar_r1_w8", "status": "Simulando...", "progress_pct": 42.0},
+        ]
+
+        merged = dashboard_app._merge_optimizer_candidates(saved, workers)
+
+        self.assertEqual([item["worker_id"] for item in merged], ["Mar_r1_w8", "Jan_r0_w0"])
+        self.assertEqual(merged[0]["progress_pct"], 42.0)
+        self.assertEqual(merged[1]["progress_pct"], 100.0)
+
     def test_compile_summary_metrics_tolerates_missing_strategy_keys(self) -> None:
         results = [
             {

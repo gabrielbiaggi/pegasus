@@ -1243,6 +1243,35 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None) -> list[di
     return sorted(workers, key=sort_key)
 
 
+def _merge_optimizer_candidates(saved_candidates: list[dict], workers: list[dict]) -> list[dict]:
+    """Merge persisted optimizer candidates with live worker telemetry."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+
+    for worker in workers:
+        worker_id = str(worker.get("worker_id") or "")
+        if not worker_id:
+            continue
+        saved = next(
+            (
+                candidate
+                for candidate in saved_candidates
+                if str(candidate.get("worker_id") or "") == worker_id
+            ),
+            {},
+        )
+        merged.append({**saved, **worker})
+        seen.add(worker_id)
+
+    for candidate in saved_candidates:
+        worker_id = str(candidate.get("worker_id") or "")
+        if worker_id and worker_id in seen:
+            continue
+        merged.append(candidate)
+
+    return merged
+
+
 def _write_stress_config(enabled: bool) -> None:
     path = BASE / "logs" / "stress_config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1350,6 +1379,9 @@ def optimizer_status(response: Response):
                     for worker in workers
                 ]
                 data["evaluating_candidates"] = evaluating_candidates
+            elif evaluating_candidates:
+                evaluating_candidates = _merge_optimizer_candidates(evaluating_candidates, workers)
+                data["evaluating_candidates"] = evaluating_candidates
             for idx, candidate in enumerate(evaluating_candidates):
                 status = str(candidate.get("status", ""))
                 worker_id = str(candidate.get("worker_id") or "")
@@ -1383,18 +1415,6 @@ def optimizer_status(response: Response):
                                     candidate["status"] = f"Simulando {month_suffix} ({curr_idx}/{total_d})"
                         except Exception:
                             pass
-            active_worker_ids = {
-                str(candidate.get("worker_id"))
-                for candidate in evaluating_candidates
-                if candidate.get("worker_id")
-            }
-            if active_worker_ids:
-                data["optimizer_workers"] = [
-                    worker
-                    for worker in workers
-                    if str(worker.get("worker_id")) in active_worker_ids
-                ]
-
             return data
         except Exception as exc:
             pass

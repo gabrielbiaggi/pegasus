@@ -873,6 +873,35 @@ def update_monthly_champions(monthly_champions: dict, iteration: int, m: dict, p
     return updated
 
 
+def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
+    """Build the compact monthly champion payload consumed by the dashboard."""
+    metrics = metrics or {}
+    entry = {
+        "score": round(float(metrics.get("score", -999999.0) or -999999.0), 4),
+        "params": sanitize_params_for_storage(params),
+    }
+    for key in (
+        "avg_daily_profit",
+        "total_pnl",
+        "consistency_pct",
+        "positive_days",
+        "negative_days",
+        "active_days",
+        "worst_day_pnl",
+        "max_drawdown",
+        "sharpe",
+        "sortino",
+    ):
+        value = metrics.get(key)
+        if value is None:
+            continue
+        entry[key] = round(value, 4) if isinstance(value, float) else value
+    monthly_breakdown = metrics.get("monthly_breakdown")
+    if monthly_breakdown:
+        entry["monthly_breakdown"] = sanitize_metrics_for_state(monthly_breakdown)
+    return entry
+
+
 # Estado global para debouncing de deploy
 _last_deploy_time = 0.0
 _pending_deploy_env = None
@@ -1288,6 +1317,14 @@ def main():
                     try:
                         res = fut.result()
                         candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
+                        if res:
+                            candidates_ui[idx].update({
+                                "result_score": round(float(res.get("score", 0.0) or 0.0), 4),
+                                "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
+                                "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
+                                "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
+                                "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
+                            })
                         if res and res["score"] > month_best_score:
                             month_best_score = res["score"]
                             month_best_env = res["_env"].copy()
@@ -1308,10 +1345,7 @@ def main():
         champ_params.pop("END_DATE", None)
         champ_params = sanitize_params_for_storage(champ_params)
 
-        monthly_champions[m_name] = {
-            "score": month_best_score,
-            "params": champ_params
-        }
+        monthly_champions[m_name] = build_monthly_champion_entry(champ_params, month_best_metrics)
         write_state(iteration - 1, baseline_metrics, best_data, history,
                     monthly_champions=monthly_champions)
         print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)

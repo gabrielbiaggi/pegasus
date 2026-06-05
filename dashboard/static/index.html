@@ -2609,7 +2609,7 @@
                     <div id="opt-workers-section" style="margin-bottom:16px;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);display:none">
                         <div style="font-size:.72rem;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
                             <span>🔬 Buscando Gaps no Mercado (Avaliação de Workers)</span>
-                            <span style="font-size:.65rem;color:var(--green);animation:pulse 1.5s infinite">● 8 Workers Dedicados (Ratio Ótimo de 1:1 por Core Físico)</span>
+                            <span id="opt-workers-live-label" style="font-size:.65rem;color:var(--green);animation:pulse 1.5s infinite">● Workers ativos</span>
                         </div>
                         <div id="opt-workers-container" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">
                             <!-- Workers carregados via JS -->
@@ -5842,6 +5842,10 @@
                             : (d.optimizer_workers || []);
                         if (d.running && candidates.length > 0) {
                             workersSection.style.display = "block";
+                            var workersLiveLabel = document.getElementById("opt-workers-live-label");
+                            if (workersLiveLabel) {
+                                workersLiveLabel.textContent = "● " + (d.n_workers || candidates.length) + " workers em tempo real";
+                            }
                             workersContainer.innerHTML = candidates.map(function(c, idx) {
                                 var workerLabel = c.worker_id || ("#" + idx);
                                 var workerMonth = c.current_month || c.month || "";
@@ -5903,13 +5907,16 @@
                                 } else if (statusText.indexOf("Finalizado") >= 0 || statusText.indexOf("Inválido") >= 0) {
                                     var daysStr = c.result_days || "31/31";
                                     var pnlText = c.result_pnl != null ? "$" + c.result_pnl.toFixed(2) : "—";
+                                    var scoreText = c.result_score != null ? c.result_score.toFixed(1) : "—";
+                                    var avgText = c.result_avg_daily_profit != null ? "$" + c.result_avg_daily_profit.toFixed(2) + "/dia" : "—";
+                                    var consistText = c.result_consistency_pct != null ? c.result_consistency_pct.toFixed(0) + "%" : "—";
                                     var barColor = statusText.indexOf("Finalizado") >= 0 ? "var(--cyan)" : "var(--yellow)";
                                     progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
                                         + '<div style="background:' + barColor + ';height:100%;width:100%"></div>'
                                         + '</div>'
                                         + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
-                                        + '<span>Resultado: ' + pnlText + '</span>'
-                                        + '<span>Concluído (' + daysStr + ')</span>'
+                                        + '<span>' + avgText + ' · score ' + scoreText + '</span>'
+                                        + '<span>' + consistText + ' · ' + daysStr + ' · ' + pnlText + '</span>'
                                         + '</div>';
                                 } else {
                                     progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
