@@ -902,6 +902,14 @@ def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
     return entry
 
 
+def build_crossover_env(champ_info: dict) -> dict[str, str]:
+    """Build a clean worker env for cross-month validation."""
+    env_test = sanitize_env_for_worker((champ_info.get("params") or {}).copy())
+    env_test["START_DATE"] = "2026-01-01"
+    env_test["END_DATE"] = "2026-06-04"
+    return env_test
+
+
 # Estado global para debouncing de deploy
 _last_deploy_time = 0.0
 _pending_deploy_env = None
@@ -1359,9 +1367,7 @@ def main():
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         jobs = []
         for champ_name, champ_info in monthly_champions.items():
-            env_test = champ_info["params"].copy()
-            env_test["START_DATE"] = "2026-01-01"
-            env_test["END_DATE"] = "2026-06-04"
+            env_test = build_crossover_env(champ_info)
             jobs.append((env_test, champ_name))
 
         futures = {pool.submit(_run_one, (job[0], f"cross_{job[1]}")): job[1] for job in jobs}
@@ -1409,6 +1415,13 @@ def main():
         pnls_str = " | ".join(pnls)
         print(f"{r['champ_name']:<12} | {pnls_str}", flush=True)
     print(f"{'-'*85}", flush=True)
+
+    if not crossover_results:
+        print("   ⚠️  Nenhum campeão passou pela validação cruzada; mantendo bot offline e reiniciando busca.", flush=True)
+        write_state(iteration - 1, baseline_metrics, best_data, history,
+                    evaluating_candidates=[],
+                    monthly_champions=monthly_champions)
+        return
 
     supreme_winner = crossover_results[0]
     print(f"\n👑 Vencedor Supremo Selecionado: Campeão de {supreme_winner['champ_name']}", flush=True)

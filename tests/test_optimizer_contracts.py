@@ -169,6 +169,24 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertNotIn("_optimizer_context", safe)
         self.assertNotIn("BAD_LIST", safe)
 
+    def test_build_crossover_env_removes_dashboard_context_dict(self) -> None:
+        champ_info = {
+            "params": {
+                "STAKE": "15.0",
+                "CONTRACT_MODE": "multiplier",
+                "SYMBOL": "BOOM1000",
+                "_optimizer_context": {"contract_mode": "multiplier", "symbol": "BOOM1000"},
+            }
+        }
+
+        env = optimize_loop.build_crossover_env(champ_info)
+
+        self.assertEqual(env["STAKE"], "15.0")
+        self.assertEqual(env["START_DATE"], "2026-01-01")
+        self.assertEqual(env["END_DATE"], "2026-06-04")
+        self.assertNotIn("_optimizer_context", env)
+        self.assertTrue(all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()))
+
     def test_build_monthly_champion_entry_keeps_dashboard_metrics(self) -> None:
         params = {"STAKE": "17.8", "CONTRACT_MODE": "multiplier", "SYMBOL": "BOOM1000"}
         metrics = {
