@@ -950,16 +950,16 @@ def main():
 
                 if not pnl_ok:
                     pass  # resultado inválido ou implausível → descarta
-                elif m["positive_days"] > best_pos:
+                elif m["score"] > best_score + 0.1:
                     is_better = True
-                    reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
-                elif m["positive_days"] == best_pos:
-                    if m["avg_daily_profit"] > best_avg + 0.05:
+                    reason = f"+score ({best_score:.1f}→{m['score']:.1f})"
+                elif abs(m["score"] - best_score) <= 0.1:
+                    if m["positive_days"] > best_pos:
+                        is_better = True
+                        reason = f"+dias_pos ({best_pos}→{m['positive_days']})"
+                    elif m["positive_days"] == best_pos and m["avg_daily_profit"] > best_avg + 0.05:
                         is_better = True
                         reason = f"+avg_day (${best_avg:.2f}→${m['avg_daily_profit']:.2f})"
-                    elif abs(m["avg_daily_profit"] - best_avg) <= 0.05 and m["score"] > best_score + 1.0:
-                        is_better = True
-                        reason = f"+score ({best_score:.1f}→{m['score']:.1f})"
 
                 icon = "🔥 NOVO RECORD!" if is_better else "   ·"
                 print(f"   [it#{iteration+idx}] {fmt(m)} → {icon}", flush=True)
