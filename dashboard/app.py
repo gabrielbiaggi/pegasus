@@ -1427,6 +1427,12 @@ def optimizer_status(response: Response):
                                     candidate["status"] = f"Simulando {month_suffix} ({curr_idx}/{total_d})"
                         except Exception:
                             pass
+            if evaluating_candidates:
+                data["optimizer_workers"] = [
+                    candidate
+                    for candidate in evaluating_candidates
+                    if candidate.get("worker_id")
+                ]
             return data
         except Exception as exc:
             pass
