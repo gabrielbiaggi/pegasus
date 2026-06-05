@@ -1733,8 +1733,12 @@ def apply_config(env_overrides: dict):
     TICK_COUNT = int(os.environ.get("TICK_COUNT", "100"))
     CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
     ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
-    SAMPLE_EVERY = int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60"))
-    if CONTRACT_MODE in {"rise_fall", "multiplier"}:
+    SAMPLE_EVERY = max(1, int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60")))
+    optimizer_fast_sampling = (
+        os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true"
+        and os.environ.get("PEGASUS_OPTIMIZER_FULL_TICK", "false").lower() != "true"
+    )
+    if CONTRACT_MODE in {"rise_fall", "multiplier"} and not optimizer_fast_sampling:
         SAMPLE_EVERY = 1
     
     _v = 1.0
