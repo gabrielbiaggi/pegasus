@@ -466,7 +466,7 @@ def api_status(response: Response):
         "running": _bot_running(),
         "balance": _read_balance_fast(),
         "symbol": _get_env("SYMBOL") or "1HZ100V",
-        "deriv_app_id": _get_env("DERIV_APP_ID") or "1089",
+        "deriv_app_id": "1089",
         "contract_mode": _get_env("CONTRACT_MODE") or "accumulator",
         "wins": wins,
         "losses": losses,

@@ -91,8 +91,9 @@ fi
 
 if [ "$PULL_OK" = false ]; then
     echo "  ⚠️ Git desatualizado ou falhou no servidor. Copiando todos os arquivos modificados via SCP..."
-    $SCP backtest_engine.py risk_manager.py strategy.py journal.py "${SERVER}:${REMOTE_DIR}/"
-    $SCP dashboard/static/index.html "${SERVER}:${REMOTE_DIR}/dashboard/static/"
+    $SCP backtest_engine.py risk_manager.py strategy.py journal.py bot.py config.py optimize_loop.py "${SERVER}:${REMOTE_DIR}/"
+    $SCP dashboard/static/index.html dashboard/app.py "${SERVER}:${REMOTE_DIR}/dashboard/static/" || true
+    $SCP dashboard/app.py "${SERVER}:${REMOTE_DIR}/dashboard/"
     echo "  ✅ Arquivos copiados com sucesso via SCP"
 else
     echo "  ✅ Pull OK"
