@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 # Garante que imports do projeto funcionem mesmo rodando de outro dir
 sys.path.insert(0, str(Path(__file__).parent))
+from cooldown_rules import dynamic_cooldown_resume_ok
 from strategy import (
     AccumulatorStrategyConfig,
     EnsembleScorer,
@@ -630,19 +631,39 @@ def _replay_strategy(
         stop_reason = None
         
         for item in outcomes:
-            if len(item) == 9:
+            if len(item) == 11:
+                (
+                    is_win,
+                    epoch,
+                    avg,
+                    cusum_v,
+                    hurst_v,
+                    barrier_hit_at,
+                    shannon_v,
+                    kalman_v,
+                    p_loss,
+                    velocity_v,
+                    imbalance_v,
+                ) = item
+            elif len(item) == 9:
                 is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at, shannon_v, kalman_v, p_loss = item
+                velocity_v = 0.0
+                imbalance_v = 0.0
             elif len(item) == 6:
                 is_win, epoch, avg, cusum_v, hurst_v, barrier_hit_at = item
                 shannon_v = 0.0
                 kalman_v = 0.0
                 p_loss = 1.0
+                velocity_v = 0.0
+                imbalance_v = 0.0
             else:
                 is_win, epoch, avg, cusum_v, hurst_v = item
                 barrier_hit_at = None
                 shannon_v = 0.0
                 kalman_v = 0.0
                 p_loss = 1.0
+                velocity_v = 0.0
+                imbalance_v = 0.0
                 
             risk._sim_time = epoch
             risk._sim_monotonic_time = epoch
@@ -730,9 +751,39 @@ def _replay_strategy(
                 is_crash = "CRASH" in symbol_upper
                 
                 if is_boom or is_crash:
-                    _pass_xgb = (p_loss < 0.15)
-                    _pass_cusum = (cusum_v > -2.5) if is_crash else (cusum_v < 2.5)
-                    if avg < 2e-5 and _pass_cusum and _pass_xgb and hurst_v > 0.4:
+                    _cusum_limit = (
+                        RISE_FALL_BOOM_MAX_CUSUM
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        else CUSUM_MAX
+                    )
+                    _velocity_limit = (
+                        RISE_FALL_BOOM_MAX_VELOCITY
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        else 0.0002
+                    )
+                    _imbalance_limit = (
+                        RISE_FALL_BOOM_MAX_IMBALANCE
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        else 1.0
+                    )
+                    _ensemble_threshold = (
+                        RISE_FALL_ENSEMBLE_MIN_PROB
+                        if CONTRACT_MODE in {"rise_fall", "jump_rise_fall"}
+                        else ENSEMBLE_MIN_PROB
+                    )
+                    if dynamic_cooldown_resume_ok(
+                        symbol=SYMBOL,
+                        max_abs_ret=avg,
+                        cusum=cusum_v,
+                        velocity=velocity_v,
+                        imbalance=imbalance_v,
+                        hurst=hurst_v,
+                        p_loss=p_loss,
+                        cusum_limit=_cusum_limit,
+                        velocity_limit=_velocity_limit,
+                        imbalance_limit=_imbalance_limit,
+                        ensemble_loss_threshold=_ensemble_threshold,
+                    ):
                         risk.reset_cooldown_early()
                 else:
                     if (

@@ -13,6 +13,7 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from config import BotConfig, load_config
+from cooldown_rules import dynamic_cooldown_resume_ok
 import deriv_auth
 from journal import TradeJournal
 from logger import logger
@@ -521,37 +522,68 @@ class DerivBot:
                 if is_boom or is_crash:
                     # Boom/Crash specific dynamic calm check
                     max_abs_ret = max(abs_returns)
-                    no_recent_spikes = max_abs_ret < 0.00015
                     _velocity = float(_last.get("price_velocity", 0.0) or 0.0)
                     _imbalance = float(_last.get("tick_imbalance", 0.0) or 0.0)
-                    
-                    if is_crash:
-                        indicators_calm = (_cusum > -2.5 and _velocity > -0.0002 and _imbalance > -1.0)
-                    else:
-                        indicators_calm = (_cusum < 2.5 and _velocity < 0.0002 and _imbalance < 1.0)
-                        
+
+                    cusum_limit = (
+                        self.config.rise_fall_boom_max_cusum
+                        if _is_rf_like
+                        else self.config.calm_accu_max_entry_cusum
+                    )
+                    velocity_limit = (
+                        self.config.rise_fall_boom_max_velocity
+                        if _is_rf_like
+                        else 0.0002
+                    )
+                    imbalance_limit = (
+                        self.config.rise_fall_boom_max_imbalance
+                        if _is_rf_like
+                        else 1.0
+                    )
+                    ensemble_loss_threshold = (
+                        self.config.rise_fall_ensemble_min_prob
+                        if _is_rf_like
+                        else self.config.accumulator_ensemble_min_prob
+                    )
                     xgboost_safe = True
                     p_loss = None
                     if self._ensemble_scorer is not None:
                         try:
                             p_loss = self._ensemble_scorer.predict_loss_probability(_last)
-                            xgboost_safe = p_loss < 0.15  # high guarantee safety threshold
+                            xgboost_safe = p_loss < ensemble_loss_threshold
                         except Exception:
                             p_loss = None
+                    indicators_calm = dynamic_cooldown_resume_ok(
+                        symbol=self.config.symbol,
+                        max_abs_ret=max_abs_ret,
+                        cusum=_cusum,
+                        velocity=_velocity,
+                        imbalance=_imbalance,
+                        hurst=_hurst,
+                        p_loss=p_loss,
+                        cusum_limit=cusum_limit,
+                        velocity_limit=velocity_limit,
+                        imbalance_limit=imbalance_limit,
+                        ensemble_loss_threshold=ensemble_loss_threshold,
+                    )
+                    no_recent_spikes = max_abs_ret < 0.00015
 
                     # Log dynamic calm bypass conditions every 60 seconds
                     now_mono = time.monotonic()
                     if not hasattr(self, "_last_cooldown_debug_ts") or (now_mono - self._last_cooldown_debug_ts >= 60.0):
                         self._last_cooldown_debug_ts = now_mono
                         logger.info(
-                            "🔍 Dynamic Calm Check: spikes=%s (max_ret=%.2e/1.5e-4), calm=%s (CUSUM=%.2f, vel=%.5f, imb=%.2f), xgb=%s (P(LOSS)=%s), H=%.3f",
+                            "🔍 Dynamic Calm Check: spikes=%s (max_ret=%.2e/1.5e-4), calm=%s (CUSUM=%.2f/%.2f, vel=%.5f/%.5f, imb=%.2f/%.2f), xgb=%s (P(LOSS)=%s<th%.3f), H=%.3f",
                             no_recent_spikes, max_abs_ret,
-                            indicators_calm, _cusum, _velocity, _imbalance,
+                            indicators_calm, _cusum, cusum_limit,
+                            _velocity, velocity_limit,
+                            _imbalance, imbalance_limit,
                             xgboost_safe, f"{p_loss:.4f}" if p_loss is not None else "N/A",
+                            ensemble_loss_threshold,
                             _hurst
                         )
                         
-                    if no_recent_spikes and indicators_calm and xgboost_safe and _hurst > 0.4:
+                    if indicators_calm:
                         logger.warning(
                             "⚡ DYNAMIC BOOM/CRASH CALM RESUME: mercado calmo detectado (max_ret=%.2e, CUSUM=%.2f, P(LOSS)=%s) — encerrando cooldown antecipadamente!",
                             max_abs_ret,
