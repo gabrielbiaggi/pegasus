@@ -9,7 +9,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import websockets
+from dotenv import load_dotenv
 from deriv_auth import get_auth
+
+load_dotenv()
 
 TOKEN = os.getenv("DERIV_PAT") or os.getenv("DERIV_TOKEN") or ""
 APP_ID = os.getenv("DERIV_APP_ID", "1089")
