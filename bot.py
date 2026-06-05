@@ -1769,16 +1769,20 @@ class DerivBot:
         if not is_sold:
             if self.config.contract_mode == "multiplier":
                 order = self.pending_order
+                date_start = int(contract.get("date_start") or 0)
                 current_spot_time = int(
                     contract.get("current_spot_time")
-                    or contract.get("date_start")
+                    or date_start
                     or 0
                 )
                 entry_epoch = (
                     self.accumulator_open_epoch
                     or (order.entry_epoch if order else current_spot_time)
+                    or date_start
                     or current_spot_time
                 )
+                if order is None and date_start:
+                    entry_epoch = date_start
                 held_ticks = max(0, current_spot_time - entry_epoch)
                 profit = float(contract.get("profit", 0.0) or 0.0)
                 should_sell = (
