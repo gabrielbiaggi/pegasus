@@ -404,26 +404,32 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             return p
 
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
-        # Aumentamos o STAKE ou diminuímos o cooldown (mais trades)!
+        # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
-            action = random.choice(["stake", "cooldown"])
+            action = random.choice(["stake", "cooldown", "soros", "martingale", "filters"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
                 factor = 50.0 / max(1.0, avg_d)
-                target = val * factor
-                target = target * random.choice([0.9, 1.0, 1.1])
+                target = val * factor * random.choice([0.9, 1.0, 1.1])
                 target = round(max(val + 0.5, min(PARAM_SPACE["STAKE"]["max"], target)), 1)
                 p["STAKE"] = str(target)
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(max(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["min"], val - 1))
-            
-            # Opcional: afrouxa de leve os filtros se o número de trades for muito baixo
-            if random.random() < 0.2:
+            elif action == "soros":
+                p["FRANKENSTEIN_USE_SOROS"] = "true"
+                steps = int(p.get("FRANKENSTEIN_SOROS_STEPS", "1"))
+                p["FRANKENSTEIN_SOROS_STEPS"] = str(min(3, steps + 1))
+            elif action == "martingale":
+                p["FRANKENSTEIN_USE_MARTINGALE"] = "true"
+                gales = int(p.get("FRANKENSTEIN_MAX_GALES", "0"))
+                p["FRANKENSTEIN_MAX_GALES"] = str(min(2, gales + 1))
+            elif action == "filters":
+                # Afrouxa de leve os filtros se o número de trades for muito baixo
                 for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
                     if f_key in p:
                         val = float(p[f_key])
-                        p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.1), 4))
+                        p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.15), 4))
             
             return p
 
@@ -573,6 +579,7 @@ def _run_one(args) -> dict | None:
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
     env_vars["CONTRACT_MODE"] = "rise_fall"
     env_vars["SYMBOL"] = "BOOM1000"
+    env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
 
     try:
         return backtest_engine.run_backtest_direct(
@@ -728,6 +735,8 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
     # Garante que o bot real opera em modo Rise/Fall e BOOM1000
     out["CONTRACT_MODE"] = "rise_fall"
     out["SYMBOL"] = "BOOM1000"
+    out["MARTINGALE_PAYOUT_RATE"] = "0.95"
+    out["RISE_FALL_MIN_PAYOUT_PCT"] = "0.90"
     
     return out
 

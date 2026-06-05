@@ -1499,11 +1499,20 @@ def apply_config(env_overrides: dict):
     global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
     global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
+    global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
     os.environ.update(env_overrides)
     if os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
         import logging
         logging.getLogger("Pegasus").setLevel(logging.ERROR)
+        
+    new_symbol = os.environ.get("SYMBOL", "BOOM1000")
+    if new_symbol != SYMBOL:
+        SYMBOL = new_symbol
+        _max_csv_range = None
+        _day_df_cache.clear()
+        _indicators_df_cache.clear()
+        _indicators_list_cache.clear()
     
     STAKE = float(os.environ.get("STAKE", "5"))
     MAX_STAKE = float(os.environ.get("MAX_STAKE", "10"))
