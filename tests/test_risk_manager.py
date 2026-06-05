@@ -66,6 +66,19 @@ class RiskManagerTest(unittest.TestCase):
             if old_val is not None:
                 os.environ["PEGASUS_OPTIMIZER_RUN"] = old_val
 
+    def test_partial_loss_after_stake_deduction_returns_residual_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            risk = self.make_risk(Path(tmp) / "risk.json")
+            risk.balance = 95.0
+            risk.start_of_day_balance = 100.0
+            risk._pending_stake_deduction = 5.0
+
+            risk.update(profit=-0.60, buy_price=5.0)
+
+            self.assertEqual(risk.balance, 99.4)
+            self.assertEqual(risk.daily_loss, 0.60)
+            self.assertEqual(risk.daily_net_profit, -0.60)
+
     def test_trailing_daily_profit_blocks_risking_locked_profit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             risk = RiskManager(

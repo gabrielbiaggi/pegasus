@@ -1350,10 +1350,17 @@ class RiskManager:
                 else "NORMAL"
             )
             # Update local balance estimate immediately — Deriv balance message arrives ~100ms later.
-            # Production (handle_buy already deducted stake): balance is already correct, no change.
+            # Production (handle_buy already deducted stake): add back any residual
+            # settlement value. For RF/ACCU full losses profit == -stake, so this
+            # adds 0; for multipliers sold before wipeout it adds stake + profit.
             # Unit tests (no handle_buy): deduct the stake here.
             if _stake_deducted == 0:
                 self.balance = round(self.balance - buy_price, 2)
+            else:
+                self.balance = round(
+                    self.balance + max(0.0, _stake_deducted + profit),
+                    2,
+                )
             # Anchor P&L to updated balance estimate (never cumulative to avoid drift).
             self.daily_net_profit = round(self.balance - self.start_of_day_balance, 2)
             self.daily_peak_profit = max(self.daily_peak_profit, self.daily_net_profit)
