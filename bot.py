@@ -128,6 +128,20 @@ class DerivBot:
         self._pause_log_ts: float = 0.0  # throttle "Bot pausado" log (once per 60s)
         self._balance_file = os.path.join(config.journal_dir, "balance.json")
 
+    def _rf_temporarily_disabled(self) -> bool:
+        now = time.monotonic()
+        if now >= self._rf_disabled_until:
+            return False
+        remaining = int(self._rf_disabled_until - now)
+        if not hasattr(self, "_rf_disabled_log_ts") or now - self._rf_disabled_log_ts >= 60:
+            self._rf_disabled_log_ts = now
+            logger.error(
+                "RF temporariamente desativado por contrato/duração inválido: %s (%ss restantes)",
+                self._rf_disabled_reason or "motivo desconhecido",
+                remaining,
+            )
+        return True
+
     def _flush_balance(self, balance: float) -> None:
         """Persiste saldo atual em logs/balance.json para leitura rápida pelo dashboard."""
         try:
@@ -277,16 +291,7 @@ class DerivBot:
         metrics: dict[str, Any] | None = None,
     ) -> None:
         """Request a CALL or PUT proposal for Rise/Fall binary contracts."""
-        now = time.monotonic()
-        if now < self._rf_disabled_until:
-            remaining = int(self._rf_disabled_until - now)
-            if not hasattr(self, "_rf_disabled_log_ts") or now - self._rf_disabled_log_ts >= 60:
-                self._rf_disabled_log_ts = now
-                logger.error(
-                    "RF temporariamente desativado por contrato/duração inválido: %s (%ss restantes)",
-                    self._rf_disabled_reason or "motivo desconhecido",
-                    remaining,
-                )
+        if self._rf_temporarily_disabled():
             return
 
         self.pending_order = PendingOrder(stake, score, entry_epoch, metrics, direction)
@@ -964,6 +969,8 @@ class DerivBot:
                 if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
                 else "NORMAL"
             )
+            if self._rf_temporarily_disabled():
+                return
             logger.info(
                 "Setup JumpRF %s detectado: score=%s stake=%.2f conf=%s modo=%s",
                 signal,
@@ -1027,6 +1034,8 @@ class DerivBot:
                 if getattr(self.risk, "use_soros", False) and self.risk.soros_step > 0
                 else "NORMAL"
             )
+            if self._rf_temporarily_disabled():
+                return
             logger.info(
                 "Setup RF %s detectado: score=%s stake=%.2f p_dir=%s modo=%s",
                 signal,
