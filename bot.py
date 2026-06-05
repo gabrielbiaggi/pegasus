@@ -77,7 +77,8 @@ class DerivBot:
         self.journal = TradeJournal(config.pg_dsn, journal_dir=config.journal_dir)
         # Load XGBoost ensemble scorer if enabled
         self._ensemble_scorer: EnsembleScorer | None = None
-        if config.accumulator_use_ensemble:
+        is_boom_crash = config.symbol and ("BOOM" in config.symbol.upper() or "CRASH" in config.symbol.upper())
+        if config.accumulator_use_ensemble or (config.rise_fall_use_ensemble and is_boom_crash):
             try:
                 self._ensemble_scorer = EnsembleScorer()
                 logger.info("EnsembleScorer XGBoost carregado para producao.")
@@ -530,14 +531,25 @@ class DerivBot:
                         indicators_calm = (_cusum < 2.5 and _velocity < 0.0002 and _imbalance < 1.0)
                         
                     xgboost_safe = True
+                    p_loss = None
                     if self._ensemble_scorer is not None:
                         try:
                             p_loss = self._ensemble_scorer.predict_loss_probability(_last)
                             xgboost_safe = p_loss < 0.15  # high guarantee safety threshold
                         except Exception:
                             p_loss = None
-                    else:
-                        p_loss = None
+
+                    # Log dynamic calm bypass conditions every 60 seconds
+                    now_mono = time.monotonic()
+                    if not hasattr(self, "_last_cooldown_debug_ts") or (now_mono - self._last_cooldown_debug_ts >= 60.0):
+                        self._last_cooldown_debug_ts = now_mono
+                        logger.info(
+                            "🔍 Dynamic Calm Check: spikes=%s (max_ret=%.2e/1.5e-4), calm=%s (CUSUM=%.2f, vel=%.5f, imb=%.2f), xgb=%s (P(LOSS)=%s), H=%.3f",
+                            no_recent_spikes, max_abs_ret,
+                            indicators_calm, _cusum, _velocity, _imbalance,
+                            xgboost_safe, f"{p_loss:.4f}" if p_loss is not None else "N/A",
+                            _hurst
+                        )
                         
                     if no_recent_spikes and indicators_calm and xgboost_safe and _hurst > 0.4:
                         logger.warning(
