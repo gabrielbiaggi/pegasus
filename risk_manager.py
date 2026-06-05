@@ -810,20 +810,6 @@ class RiskManager:
 
         if self.daily_trailing_active:
             remaining_budget = max(0.0, self.daily_net_profit - self._daily_trailing_lock_abs)
-            # FIX: Se o remaining_budget é menor que min_stake, o bot ficaria
-            # permanentemente bloqueado (stake=0 → can_trade retorna False).
-            # Solução: desativa trailing e opera com orçamento normal.
-            if remaining_budget < self.min_stake and self.daily_net_profit > self._daily_trailing_lock_abs:
-                logger.info(
-                    "🔓 Trailing auto-desativado: budget_restante=%.2f < min_stake=%.2f — liberando operação",
-                    remaining_budget,
-                    self.min_stake,
-                )
-                self.daily_trailing_active = False
-                self._save_state()
-                remaining_budget = max(
-                    0.0, self._effective_loss_limit() + self.daily_net_profit
-                )
         else:
             remaining_budget = max(
                 0.0, self._effective_loss_limit() + self.daily_net_profit
@@ -1086,54 +1072,58 @@ class RiskManager:
                 self._log_ts_profit = _now
             return False
 
-        if (
-            self.daily_trailing_active
-            and self.daily_net_profit <= self._daily_trailing_lock_abs
-        ):
-            now_mono = _now
-            if self.cooldown_until <= 0:
-                # Primeira vez — inicia o cooldown
-                self.cooldown_until = now_mono + self.session_cooldown_seconds
-                logger.warning(
-                    "🔒 Trailing lock atingido: P&L=%.2f lock=%.2f — cooldown de %.1fh iniciado",
-                    self.daily_net_profit,
-                    self._daily_trailing_lock_abs,
-                    self.session_cooldown_seconds / 3600,
-                )
-                self._save_state()
-                return False
-            elif now_mono < self.cooldown_until:
-                # Ainda em cooldown
-                remaining_min = (self.cooldown_until - now_mono) / 60
-                if now_mono - self._log_ts_trailing >= 300:  # log a cada 5 min
-                    logger.info(
-                        "⏳ Cooldown ativo: %.0f min restantes — aguardando mercado calmar",
-                        remaining_min,
+        if self.daily_trailing_active:
+            is_lock_hit = self.daily_net_profit <= self._daily_trailing_lock_abs
+            remaining_budget = self.daily_net_profit - self._daily_trailing_lock_abs
+            is_budget_insufficient = remaining_budget < self.min_stake
+
+            if is_lock_hit or is_budget_insufficient:
+                now_mono = _now
+                if self.cooldown_until <= 0:
+                    # Primeira vez — inicia o cooldown
+                    self.cooldown_until = now_mono + self.session_cooldown_seconds
+                    reason = "atingido" if is_lock_hit else "atingido (orçamento insuficiente)"
+                    logger.warning(
+                        "🔒 Trailing lock %s: P&L=%.2f lock=%.2f — cooldown de %.1fh iniciado",
+                        reason,
+                        self.daily_net_profit,
+                        self._daily_trailing_lock_abs,
+                        self.session_cooldown_seconds / 3600,
                     )
-                    self._log_ts_trailing = now_mono
-                return False
-            else:
-                # Cooldown expirou — reseta contexto de sessão e continua
-                logger.info(
-                    "✅ Cooldown expirado — resetando sessao: novo start_of_day=%.2f",
-                    self.balance,
-                )
-                self.start_of_day_balance = self.balance
-                self.daily_net_profit = 0.0
-                self.daily_peak_profit = 0.0
-                self.daily_loss = 0.0
-                self.trades_today = 0
-                self.wins = 0
-                self.losses = 0
-                self.consecutive_losses = 0
-                self.max_loss_streak_today = 0
-                self.soros_step = 0
-                self.soros_profit = 0.0
-                self.daily_trailing_active = False
-                self.cooldown_until = 0.0
-                self.session_start_ts = self._get_time()
-                self._save_state()
-                # Não retorna False — sessão resetada, pode operar
+                    self._save_state()
+                    return False
+                elif now_mono < self.cooldown_until:
+                    # Ainda em cooldown
+                    remaining_min = (self.cooldown_until - now_mono) / 60
+                    if now_mono - self._log_ts_trailing >= 300:  # log a cada 5 min
+                        logger.info(
+                            "⏳ Cooldown ativo: %.0f min restantes — aguardando mercado calmar",
+                            remaining_min,
+                        )
+                        self._log_ts_trailing = now_mono
+                    return False
+                else:
+                    # Cooldown expirou — reseta contexto de sessão e continua
+                    logger.info(
+                        "✅ Cooldown expirado — resetando sessao: novo start_of_day=%.2f",
+                        self.balance,
+                    )
+                    self.start_of_day_balance = self.balance
+                    self.daily_net_profit = 0.0
+                    self.daily_peak_profit = 0.0
+                    self.daily_loss = 0.0
+                    self.trades_today = 0
+                    self.wins = 0
+                    self.losses = 0
+                    self.consecutive_losses = 0
+                    self.max_loss_streak_today = 0
+                    self.soros_step = 0
+                    self.soros_profit = 0.0
+                    self.daily_trailing_active = False
+                    self.cooldown_until = 0.0
+                    self.session_start_ts = self._get_time()
+                    self._save_state()
+                    # Não retorna False — sessão resetada, pode operar
 
         # max_trades_day limit removed — somente STOP_LOSS e STOP_GAIN controlam parada
         # consecutive_losses é apenas métrica — não bloqueia operações
@@ -1189,7 +1179,7 @@ class RiskManager:
 
         if (
             self.daily_trailing_start > 0
-            and self.daily_peak_profit >= self.daily_trailing_start
+            and self.daily_peak_profit >= self._daily_trailing_start_abs
         ):
             self.daily_trailing_active = True
 
