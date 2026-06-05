@@ -976,7 +976,9 @@ def _collect_day_outcomes(
                     except Exception as e:
                         print(f"  [SHM] Erro ao persistir {filename} no disco: {e}", flush=True)
             except Exception as e:
+                import traceback
                 print(f"  Erro ao pre-calcular indicadores para o dia {day}: {e}", flush=True)
+                traceback.print_exc()
                 return {c["name"]: [] for c in STRATEGY_CONFIGS}, 0.0
 
         if day_indicators_df is not None:
