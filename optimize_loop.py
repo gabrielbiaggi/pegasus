@@ -560,9 +560,60 @@ def save_env(env_vars: dict, path: Path = ENV_PATH) -> None:
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+def random_space_value(key: str) -> str:
+    space = PARAM_SPACE[key]
+    if space["type"] == "int":
+        step = int(space.get("step", 1))
+        count = int((space["max"] - space["min"]) / step)
+        return str(int(space["min"] + random.randint(0, count) * step))
+    if space["type"] == "float":
+        step = float(space.get("step", 0.01))
+        count = int(round((space["max"] - space["min"]) / step))
+        value = float(space["min"]) + random.randint(0, count) * step
+        return str(round(min(float(space["max"]), value), 4))
+    if space["type"] == "bool":
+        return "true" if random.random() < 0.5 else "false"
+    if space["type"] == "choice":
+        return str(random.choice(space["choices"]))
+    return str(space.get("min", ""))
+
+
+def inject_global_multiplier_search(params: dict) -> dict:
+    """Build a broad multiplier candidate instead of only local hill-climbing."""
+    p = params.copy()
+    for key in (
+        "STAKE",
+        "RISE_FALL_MIN_VOTES",
+        "RISE_FALL_COOLDOWN_TICKS",
+        "RISE_FALL_BOOM_MAX_CUSUM",
+        "RISE_FALL_BOOM_MAX_VELOCITY",
+        "RISE_FALL_BOOM_MAX_IMBALANCE",
+        "RISE_FALL_USE_ENSEMBLE",
+        "RISE_FALL_ENSEMBLE_MIN_PROB",
+        "MULTIPLIER_VALUE",
+        "MULTIPLIER_DIRECTION",
+        "MULTIPLIER_TAKE_PROFIT",
+        "MULTIPLIER_STOP_LOSS",
+        "MULTIPLIER_MAX_HOLD_TICKS",
+    ):
+        p[key] = random_space_value(key)
+
+    stake = float(p.get("STAKE", 1.0))
+    mult = int(float(p.get("MULTIPLIER_VALUE", 50)))
+    commission = stake * mult * 0.0002
+    tp = float(p.get("MULTIPLIER_TAKE_PROFIT", 0.5))
+    if commission > tp * 0.45:
+        p["STAKE"] = str(round(random.uniform(0.35, 8.0), 2))
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25, 30, 40, 50]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.25, 2.5), 2))
+    return p
+
+
 def rand_params(base: dict, metrics: dict | None = None) -> dict:
     """Perturba parâmetros com heurística de direção baseada em métricas anteriores."""
     p = base.copy()
+    if random.random() < 0.35:
+        return inject_global_multiplier_search(p)
     
     # Heurística inteligente baseada em performance anterior:
     if metrics:
@@ -573,7 +624,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
-            action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_value"])
+            action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_tp", "mult_value", "mult_dir", "exposure"])
             if action == "votes" and "RISE_FALL_MIN_VOTES" in p:
                 val = int(p["RISE_FALL_MIN_VOTES"])
                 p["RISE_FALL_MIN_VOTES"] = str(min(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["max"], val + 1))
@@ -595,6 +646,16 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             elif action == "mult_value" and "MULTIPLIER_VALUE" in p:
                 val = int(p["MULTIPLIER_VALUE"])
                 p["MULTIPLIER_VALUE"] = str(max(PARAM_SPACE["MULTIPLIER_VALUE"]["min"], val - random.choice([5, 10, 20])))
+            elif action == "mult_tp" and "MULTIPLIER_TAKE_PROFIT" in p:
+                val = float(p["MULTIPLIER_TAKE_PROFIT"])
+                p["MULTIPLIER_TAKE_PROFIT"] = str(round(min(PARAM_SPACE["MULTIPLIER_TAKE_PROFIT"]["max"], val * random.choice([1.2, 1.5, 2.0])), 2))
+            elif action == "mult_dir":
+                choices = PARAM_SPACE["MULTIPLIER_DIRECTION"]["choices"]
+                current = str(p.get("MULTIPLIER_DIRECTION", "signal"))
+                p["MULTIPLIER_DIRECTION"] = random.choice([c for c in choices if c != current])
+            elif action == "exposure":
+                p["STAKE"] = str(round(random.uniform(0.35, 10.0), 2))
+                p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25, 30, 40, 50, 75]))
             
             # Opcional: reduz o stake um pouco para proteger o capital
             if "STAKE" in p and random.random() < 0.3:
