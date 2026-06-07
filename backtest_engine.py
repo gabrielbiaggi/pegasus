@@ -103,10 +103,11 @@ RISE_FALL_QG_HURST_MAX = float(os.getenv("RISE_FALL_QG_HURST_MAX", "0.50"))
 MULTIPLIER_JUMP_MIN_CONFIDENCE = float(os.getenv("MULTIPLIER_JUMP_MIN_CONFIDENCE", str(JUMP_MIN_CONFIDENCE)))
 MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE = float(os.getenv("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", "4.0"))
 MULTIPLIER_JUMP_BAYES_STRONG_PROB = float(os.getenv("MULTIPLIER_JUMP_BAYES_STRONG_PROB", "0.62"))
+MULTIPLIER_JUMP_MIN_SCORE = int(float(os.getenv("MULTIPLIER_JUMP_MIN_SCORE", "5")) or 5)
 MULTIPLIER_JUMP_HURST_TRENDING = float(os.getenv("MULTIPLIER_JUMP_HURST_TRENDING", "0.58"))
 MULTIPLIER_JUMP_HURST_REVERTING = float(os.getenv("MULTIPLIER_JUMP_HURST_REVERTING", "0.38"))
 MULTIPLIER_JUMP_MI_FLOW_MIN = float(os.getenv("MULTIPLIER_JUMP_MI_FLOW_MIN", "0.02"))
-MULTIPLIER_JUMP_WAVELET_SNR_MIN = float(os.getenv("MULTIPLIER_JUMP_WAVELET_SNR_MIN", "0.48"))
+MULTIPLIER_JUMP_WAVELET_SNR_MIN = float(os.getenv("MULTIPLIER_JUMP_WAVELET_SNR_MIN", "0.02"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
 MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower()
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
@@ -1353,7 +1354,7 @@ def _collect_day_outcomes(
                     continue
                 quotes_window = prices[max(0, i - 39): i + 1].tolist()
                 jm_cfg = JumpMomentumConfig(
-                    min_score=max(7, RISE_FALL_MIN_VOTES + 1),
+                    min_score=max(3, MULTIPLIER_JUMP_MIN_SCORE),
                     min_confidence=MULTIPLIER_JUMP_MIN_CONFIDENCE,
                     min_ticks=30,
                     quality_gate_enabled=RISE_FALL_QUALITY_GATE,

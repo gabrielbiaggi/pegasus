@@ -62,6 +62,7 @@ class OptimizerContractsTest(unittest.TestCase):
                 "MULTIPLIER_JUMP_MIN_CONFIDENCE": "0.90",
                 "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": "0.5",
                 "MULTIPLIER_JUMP_BAYES_STRONG_PROB": "0.90",
+                "MULTIPLIER_JUMP_MIN_SCORE": "9",
                 "MULTIPLIER_JUMP_HURST_TRENDING": "0.90",
                 "MULTIPLIER_JUMP_HURST_REVERTING": "0.60",
                 "MULTIPLIER_JUMP_MI_FLOW_MIN": "0.30",
@@ -77,6 +78,7 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_CONFIDENCE"], "0.8")
         self.assertEqual(candidate["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"], "2.0")
         self.assertEqual(candidate["MULTIPLIER_JUMP_BAYES_STRONG_PROB"], "0.8")
+        self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_SCORE"], "7")
 
     def test_monthly_candidate_viability_rejects_sparse_month(self) -> None:
         self.assertFalse(
