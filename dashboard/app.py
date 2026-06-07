@@ -478,9 +478,12 @@ def api_status(response: Response):
     losses = int((df["result"] == "LOSS").sum()) if not df.empty else 0
     total = wins + losses
     last_ts = df["timestamp"].max().isoformat() if not df.empty else None
+    realized_pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
     risk_state = _read_risk_state()
-    # P&L = balance - session start balance (from risk_state.json)
-    pnl = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
+    # risk_state tracks available simulated balance and includes open stake exposure.
+    account_pnl = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
+    open_exposure = round(account_pnl - realized_pnl, 2)
+    pnl = realized_pnl
     bal_str = _read_balance_fast()
     try:
         bal_float = float(bal_str)
@@ -500,6 +503,8 @@ def api_status(response: Response):
         "total": total,
         "winrate": round(wins / total * 100, 1) if total else 0.0,
         "pnl": pnl,
+        "realized_pnl": realized_pnl,
+        "open_exposure": open_exposure,
         "last_trade_ts": last_ts,
         "block_weekends": _get_env("BLOCK_WEEKENDS") == "true",
         "block_hours_enabled": (_get_env("BLOCK_HOURS_ENABLED") or "true")
@@ -516,7 +521,7 @@ def api_status(response: Response):
         "max_loss_per_day": _compute_max_loss_day(risk_state),
         "max_profit_per_day": float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
         "daily_loss": round(risk_state.get("daily_loss", 0.0), 2),
-        "daily_net_profit": round(float(risk_state.get("daily_net_profit", 0.0)), 2),
+        "daily_net_profit": account_pnl,
         "soros_step": int(risk_state.get("soros_step", 0)),
         "soros_profit": round(float(risk_state.get("soros_profit", 0.0)), 2),
         "martingale_step": int(risk_state.get("martingale_step", 0)),
@@ -573,15 +578,20 @@ def api_balance(response: Response):
         bal_float = 0.0
     risk_state = _read_risk_state()
     ini_bal = float(risk_state.get("start_of_day_balance", 50.0)) or _initial_balance()
-    daily_net_profit = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
-    virtual_balance = round(ini_bal + daily_net_profit, 2)
+    account_pnl = round(float(risk_state.get("daily_net_profit", 0.0)), 2)
+    df = _today_df()
+    realized_pnl = round(float(df["profit"].sum()), 2) if not df.empty else 0.0
+    open_exposure = round(account_pnl - realized_pnl, 2)
+    virtual_balance = round(ini_bal + account_pnl, 2)
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
     return {
         "balance": bal,
         "pnl_total": pnl_total,
         "initial_balance": ini_bal,
         "virtual_balance": virtual_balance,
-        "daily_net_profit": daily_net_profit
+        "daily_net_profit": account_pnl,
+        "realized_pnl": realized_pnl,
+        "open_exposure": open_exposure,
     }
 
 

@@ -3979,19 +3979,18 @@
                     var prEl = $("pnl-risk");
                     if (prEl && d.daily_net_profit != null) {
                         var rnp = d.daily_net_profit,
-                            diff = Math.abs(pnl - rnp);
-                        if (diff > 0.05) {
+                            exposure = d.open_exposure || 0;
+                        if (Math.abs(exposure) > 0.05) {
                             prEl.textContent =
-                                "risco: " +
+                                "disponivel: " +
                                 (rnp >= 0 ? "+" : "") +
                                 rnp.toFixed(2) +
-                                " (\u0394" +
-                                diff.toFixed(2) +
-                                ")";
+                                " | aberto: " +
+                                exposure.toFixed(2);
                             prEl.style.color = "var(--yellow)";
                         } else {
                             prEl.textContent =
-                                "risco: " +
+                                "disponivel: " +
                                 (rnp >= 0 ? "+" : "") +
                                 rnp.toFixed(2);
                             prEl.style.color = "var(--muted)";
@@ -5282,7 +5281,8 @@
                     
                     // 1) Atualiza Banca Virtual e seu ROI no sub-label (nunca somem!)
                     if (d.virtual_balance != null) {
-                        var pt = d.daily_net_profit || 0,
+                        var pt = d.realized_pnl != null ? d.realized_pnl : (d.daily_net_profit || 0),
+                            exposure = d.open_exposure || 0,
                             ib = d.initial_balance || 50.0;
                         var vb = d.virtual_balance;
                         var pct = (pt / ib) * 100;
@@ -5291,9 +5291,13 @@
                         
                         var bsub = $("balance-sub");
                         if (bsub) {
-                            bsub.innerHTML = 
+                            var expHtml = Math.abs(exposure) > 0.05
+                                ? ` | aberto <span style="color: var(--yellow); font-weight: bold">${exposure.toFixed(2)}</span>`
+                                : "";
+                            bsub.innerHTML =
                                 `in&iacute;cio $${ib.toFixed(2)}: ` +
-                                `<span style="color: ${pt >= 0 ? "var(--green)" : "var(--red)"}; font-weight: bold">${pt >= 0 ? "+" : ""}${pt.toFixed(2)} (${pt >= 0 ? "+" : ""}${pct.toFixed(1)}%)</span>`;
+                                `<span style="color: ${pt >= 0 ? "var(--green)" : "var(--red)"}; font-weight: bold">${pt >= 0 ? "+" : ""}${pt.toFixed(2)} (${pt >= 0 ? "+" : ""}${pct.toFixed(1)}%)</span>` +
+                                expHtml;
                         }
                     }
                     
