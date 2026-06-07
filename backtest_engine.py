@@ -567,6 +567,29 @@ def _indicator_cache_is_stale(df: pd.DataFrame | None) -> bool:
     return all_bayes_default and all_hurst_missing and all_mi_zero and all_wavelet_default and all_cusum_zero
 
 
+def _build_indicator_sample_indices(
+    hours,
+    avgs,
+    contract_mode: str,
+    symbol: str,
+) -> list[int]:
+    """Return sampled tick indices for indicator precomputation."""
+    mode = str(contract_mode or "").strip().lower()
+    max_calm_thresh = get_max_calm_thresh(symbol, avgs)
+    indices: list[int] = []
+    for w in range(TICK_COUNT, len(hours)):
+        if hours[w] in BLOCKED_HOURS:
+            continue
+        if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
+            continue
+        if mode not in {"rise_fall", "multiplier"}:
+            avg = avgs[w]
+            if np.isnan(avg) or avg >= max_calm_thresh:
+                continue
+        indices.append(w)
+    return indices
+
+
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
 FIB_SEQ = [1, 1, 2, 3, 5, 8, 13, 21]
 DAILY_SL_PCT = float(os.getenv("STOP_LOSS_PCT", "100.0")) / 100.0
@@ -1198,18 +1221,12 @@ def _collect_day_outcomes(
                         pass
 
         if day_indicators_df is None:
-            max_calm_thresh = get_max_calm_thresh(SYMBOL, avgs)
-            super_indices = []
-            for w in range(TICK_COUNT, len(day_df)):
-                if hours[w] in BLOCKED_HOURS:
-                    continue
-                if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
-                    continue
-                if CONTRACT_MODE != "rise_fall":
-                    avg = avgs[w]
-                    if np.isnan(avg) or avg >= max_calm_thresh:
-                        continue
-                super_indices.append(w)
+            super_indices = _build_indicator_sample_indices(
+                hours,
+                avgs,
+                contract_mode=CONTRACT_MODE,
+                symbol=SYMBOL,
+            )
                 
             day_ticks = [{"epoch": int(epochs[w]), "quote": float(prices[w])} for w in range(len(day_df))]
             try:

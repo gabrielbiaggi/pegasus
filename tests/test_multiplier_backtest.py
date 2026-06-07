@@ -6,6 +6,19 @@ import pandas as pd
 
 
 class MultiplierBacktestTest(unittest.TestCase):
+    def test_multiplier_sampling_keeps_full_stride_without_calm_filter(self) -> None:
+        hours = [10] * 250
+        avgs = [1.0] * 250
+
+        indices = backtest_engine._build_indicator_sample_indices(
+            hours,
+            avgs,
+            contract_mode="multiplier",
+            symbol="BOOM1000",
+        )
+
+        self.assertEqual(indices, [100, 160, 220])
+
     def test_indicator_cache_stale_detection_flags_degenerate_sampled_frame(self) -> None:
         df = pd.DataFrame(
             {
