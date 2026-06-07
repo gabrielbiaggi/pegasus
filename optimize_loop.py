@@ -740,6 +740,9 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
         - bust_pen               # Penalidade catástrofe
     )
 
+    if n_act == 0:
+        score = -9999.0
+
 
     return {
         "avg_daily_profit": round(avg_day, 4),
@@ -918,9 +921,19 @@ def update_monthly_champions(monthly_champions: dict, iteration: int, m: dict, p
 def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
     """Build the compact monthly champion payload consumed by the dashboard."""
     metrics = metrics or {}
+    avg_day = float(metrics.get("avg_daily_profit", metrics.get("avg_daily", 0.0)) or 0.0)
+    consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
+    worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
+    active_days = int(metrics.get("active_days", 0) or 0)
     entry = {
         "score": round(float(metrics.get("score", -999999.0) or -999999.0), 4),
         "params": sanitize_params_for_storage(params),
+        "deployable": (
+            avg_day >= 50.0
+            and consistency >= 80.0
+            and worst_day >= -25.0
+            and active_days >= 20
+        ),
     }
     for key in (
         "avg_daily_profit",
