@@ -499,6 +499,11 @@ def sanitize_params_for_storage(params: dict) -> dict:
         if _is_sensitive_param(key):
             continue
         if _is_safe_strategy_param(key):
+            if key == "RISE_FALL_MIN_VOTES":
+                try:
+                    value = max(1, min(6, int(float(value))))
+                except (TypeError, ValueError):
+                    value = 4
             safe[key] = str(value)
 
     ctx = optimizer_context(params)
@@ -515,6 +520,11 @@ def sanitize_env_for_worker(env_vars: dict) -> dict[str, str]:
             continue
         if isinstance(value, (dict, list, tuple, set)):
             continue
+        if key == "RISE_FALL_MIN_VOTES":
+            try:
+                value = max(1, min(6, int(float(value))))
+            except (TypeError, ValueError):
+                value = 4
         safe[key] = str(value)
     return safe
 

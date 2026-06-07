@@ -90,7 +90,7 @@ RISE_FALL_BOOM_MAX_CUSUM = float(os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
 RISE_FALL_BOOM_MAX_VELOCITY = float(os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
 RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
 RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
-RISE_FALL_MIN_VOTES = int(os.getenv("RISE_FALL_MIN_VOTES", "4"))
+RISE_FALL_MIN_VOTES = max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
 RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
@@ -528,7 +528,7 @@ def _generate_strategy_configs() -> list[dict]:
     # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
     if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
         directional_score = (
-            int(os.getenv("RISE_FALL_MIN_VOTES", "4"))
+            max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
             if os.getenv("CONTRACT_MODE", "").strip().lower() in {"rise_fall", "multiplier"}
             else 25
         )
@@ -1788,7 +1788,7 @@ def apply_config(env_overrides: dict):
     RISE_FALL_BOOM_MAX_VELOCITY = float(os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
     RISE_FALL_BOOM_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
     RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
-    RISE_FALL_MIN_VOTES = int(os.environ.get("RISE_FALL_MIN_VOTES", "4"))
+    RISE_FALL_MIN_VOTES = max(1, min(6, int(os.environ.get("RISE_FALL_MIN_VOTES", "4"))))
     RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
     RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
     MULTIPLIER_VALUE = int(os.environ.get("MULTIPLIER_VALUE", "100"))
