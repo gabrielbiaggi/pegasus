@@ -359,18 +359,19 @@ def parse_optimizer_workers(env: dict | None = None, default: int = 6) -> int:
 N_WORKERS = parse_optimizer_workers()
 
 PARAM_SPACE = {
-    # Stake base para operar: busca expandida de 2.0 a 35.0
-    "STAKE":                        {"type": "float", "min": 2.0, "max": 35.0, "step": 0.5},
-    # Cooldown entre entradas de ticks: busca entre 1 e 10
-    "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 10,   "step": 1},
+    # Stake base para operar: permite micro-risco e agressividade controlada.
+    "STAKE":                        {"type": "float", "min": 0.35, "max": 35.0, "step": 0.25},
+    # Cooldown entre entradas de ticks: precisa conseguir bloquear overtrading.
+    "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 60,   "step": 1},
+    # Gate principal de entrada direcional: sem isso o optimizer só ajusta TP/SL
+    # depois de entrar demais em mercado ruim.
+    "RISE_FALL_MIN_VOTES":          {"type": "int",   "min": 7,   "max": 25,   "step": 1},
     # Payout minimo de Rise/Fall: busca entre 0.0040 e 0.0080
     "RISE_FALL_MIN_PAYOUT_PCT":     {"type": "float", "min": 0.0040, "max": 0.0080, "step": 0.0005},
-    # CUSUM maximo do BOOM1000: busca entre 3.0 e 8.0
-    "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 3.0, "max": 8.0, "step": 0.5},
-    # Velocity maxima do BOOM1000: busca entre 0.0001 e 0.0030
-    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.0001, "max": 0.0030, "step": 0.0001},
-    # Imbalance maximo do BOOM1000: busca entre 0.5 e 3.0
-    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.5, "max": 3.0, "step": 0.1},
+    # Filtros do BOOM1000: expande para regimes muito calmos e regimes de spike.
+    "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 0.5, "max": 12.0, "step": 0.25},
+    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.00002, "max": 0.0050, "step": 0.00005},
+    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.1, "max": 5.0, "step": 0.05},
 
     # Parâmetros de gerenciamento de risco da estratégia Frankenstein
     "FRANKENSTEIN_USE_SOROS":       {"type": "bool"},
@@ -381,12 +382,12 @@ PARAM_SPACE = {
 
     # Filtro XGBoost para Rise/Fall
     "RISE_FALL_USE_ENSEMBLE":       {"type": "bool"},
-    "RISE_FALL_ENSEMBLE_MIN_PROB":  {"type": "float", "min": 0.10, "max": 0.45, "step": 0.01},
-    "MULTIPLIER_VALUE":             {"type": "int",   "min": 20,  "max": 200,  "step": 10},
+    "RISE_FALL_ENSEMBLE_MIN_PROB":  {"type": "float", "min": 0.05, "max": 0.65, "step": 0.01},
+    "MULTIPLIER_VALUE":             {"type": "int",   "min": 5,   "max": 200,  "step": 5},
     "MULTIPLIER_DIRECTION":         {"type": "choice", "choices": ["signal", "up", "down"]},
-    "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.10, "max": 2.50, "step": 0.10},
-    "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.50, "max": 5.00, "step": 0.25},
-    "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 5,   "max": 80,   "step": 5},
+    "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.02, "max": 3.00, "step": 0.02},
+    "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.05, "max": 5.00, "step": 0.05},
+    "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 1,   "max": 120,  "step": 1},
 }
 
 FROZEN_PARAMS = {
@@ -562,22 +563,28 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
-            action = random.choice(["cusum", "velocity", "imbalance", "cooldown", "mult_sl"])
+            action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_value"])
+            if action == "votes" and "RISE_FALL_MIN_VOTES" in p:
+                val = int(p["RISE_FALL_MIN_VOTES"])
+                p["RISE_FALL_MIN_VOTES"] = str(min(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["max"], val + 1))
             if action == "cusum" and "RISE_FALL_BOOM_MAX_CUSUM" in p:
                 val = float(p["RISE_FALL_BOOM_MAX_CUSUM"])
-                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_CUSUM"]["min"], val - 0.5), 4))
+                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_CUSUM"]["min"], val * 0.85), 4))
             elif action == "velocity" and "RISE_FALL_BOOM_MAX_VELOCITY" in p:
                 val = float(p["RISE_FALL_BOOM_MAX_VELOCITY"])
-                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_VELOCITY"]["min"], val - 0.0002), 4))
+                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_VELOCITY"]["min"], val * 0.80), 6))
             elif action == "imbalance" and "RISE_FALL_BOOM_MAX_IMBALANCE" in p:
                 val = float(p["RISE_FALL_BOOM_MAX_IMBALANCE"])
-                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_IMBALANCE"]["min"], val - 0.2), 4))
+                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_IMBALANCE"]["min"], val * 0.85), 4))
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
-                p["RISE_FALL_COOLDOWN_TICKS"] = str(min(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["max"], val + 1))
+                p["RISE_FALL_COOLDOWN_TICKS"] = str(min(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["max"], val + random.choice([1, 2, 3, 5])))
             elif action == "mult_sl" and "MULTIPLIER_STOP_LOSS" in p:
                 val = float(p["MULTIPLIER_STOP_LOSS"])
-                p["MULTIPLIER_STOP_LOSS"] = str(round(max(PARAM_SPACE["MULTIPLIER_STOP_LOSS"]["min"], val - 0.25), 2))
+                p["MULTIPLIER_STOP_LOSS"] = str(round(max(PARAM_SPACE["MULTIPLIER_STOP_LOSS"]["min"], val * 0.75), 2))
+            elif action == "mult_value" and "MULTIPLIER_VALUE" in p:
+                val = int(p["MULTIPLIER_VALUE"])
+                p["MULTIPLIER_VALUE"] = str(max(PARAM_SPACE["MULTIPLIER_VALUE"]["min"], val - random.choice([5, 10, 20])))
             
             # Opcional: reduz o stake um pouco para proteger o capital
             if "STAKE" in p and random.random() < 0.3:
@@ -589,7 +596,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
-            action = random.choice(["stake", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters"])
+            action = random.choice(["stake", "votes", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
                 factor = 50.0 / max(1.0, avg_d)
@@ -599,6 +606,9 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(max(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["min"], val - 1))
+            elif action == "votes" and "RISE_FALL_MIN_VOTES" in p:
+                val = int(p["RISE_FALL_MIN_VOTES"])
+                p["RISE_FALL_MIN_VOTES"] = str(max(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["min"], val - 1))
             elif action == "multiplier" and "MULTIPLIER_VALUE" in p:
                 val = int(p["MULTIPLIER_VALUE"])
                 p["MULTIPLIER_VALUE"] = str(min(PARAM_SPACE["MULTIPLIER_VALUE"]["max"], val + 10))
@@ -1718,4 +1728,54 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    cycle = 1
+    while True:
+        try:
+            print(f"\n♾️  OPTIMIZER CYCLE #{cycle} — busca contínua até campeão validado", flush=True)
+            main()
+            cycle += 1
+            print("\n🔁 Rodada encerrada sem loop de refinamento ativo; reiniciando busca em 2s...", flush=True)
+            time.sleep(2.0)
+        except KeyboardInterrupt:
+            write_state(
+                0,
+                {},
+                {},
+                [],
+                running=False,
+                evaluating_candidates=[],
+                phase="stopped",
+            )
+            raise
+        except SystemExit as exc:
+            print(f"\n[ERROR] optimizer cycle requested exit: {exc}; tentando novamente em 10s", flush=True)
+            try:
+                write_state(
+                    0,
+                    {},
+                    {},
+                    [],
+                    running=False,
+                    evaluating_candidates=[],
+                    phase="error:system-exit",
+                )
+            except Exception:
+                pass
+            time.sleep(10.0)
+            cycle += 1
+        except Exception as exc:
+            print(f"\n[ERROR] optimizer cycle crashed: {exc}", flush=True)
+            try:
+                write_state(
+                    0,
+                    {},
+                    {},
+                    [],
+                    running=False,
+                    evaluating_candidates=[],
+                    phase=f"error:{type(exc).__name__}",
+                )
+            except Exception:
+                pass
+            time.sleep(5.0)
+            cycle += 1
