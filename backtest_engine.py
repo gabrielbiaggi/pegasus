@@ -90,6 +90,7 @@ RISE_FALL_BOOM_MAX_CUSUM = float(os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
 RISE_FALL_BOOM_MAX_VELOCITY = float(os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
 RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
 RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
+RISE_FALL_MIN_VOTES = int(os.getenv("RISE_FALL_MIN_VOTES", "4"))
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
 RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
@@ -526,12 +527,17 @@ def _calc_win_ticks(tp_pct: float) -> int:
 def _generate_strategy_configs() -> list[dict]:
     # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
     if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
+        directional_score = (
+            int(os.getenv("RISE_FALL_MIN_VOTES", "4"))
+            if os.getenv("CONTRACT_MODE", "").strip().lower() in {"rise_fall", "multiplier"}
+            else 25
+        )
         return [
-            {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+            {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": directional_score, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
             {
                 "name": "Super-Frankenstein",
                 "tp": float(os.getenv("FRANKENSTEIN_TP", "0.30")),
-                "score": 25,
+                "score": directional_score,
                 "mode": os.getenv("FRANKENSTEIN_MODE", "flat"),
                 "use_soros": os.getenv("FRANKENSTEIN_USE_SOROS", "true").lower() == "true",
                 "soros_steps": int(os.getenv("FRANKENSTEIN_SOROS_STEPS", "2")),
@@ -1173,6 +1179,11 @@ def _collect_day_outcomes(
         cusum_arr = day_indicators_df["cusum_score"].values if "cusum_score" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         velocity_arr = day_indicators_df["price_velocity"].values if "price_velocity" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         imbalance_arr = day_indicators_df["tick_imbalance"].values if "tick_imbalance" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        momentum_arr = day_indicators_df["price_momentum"].values if "price_momentum" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        ema_diff_arr = day_indicators_df["ema_diff"].values if "ema_diff" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        ols_arr = day_indicators_df["ols_slope"].values if "ols_slope" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
+        markov_up_arr = day_indicators_df["markov_p_up_given_up"].values if "markov_p_up_given_up" in day_indicators_df.columns else np.full(len(day_indicators_df), 0.5)
+        markov_dn_arr = day_indicators_df["markov_p_down_given_down"].values if "markov_p_down_given_down" in day_indicators_df.columns else np.full(len(day_indicators_df), 0.5)
         hurst_arr = day_indicators_df["hurst_exponent"].values if "hurst_exponent" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         shannon_arr = day_indicators_df["shannon_entropy"].values if "shannon_entropy" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         kalman_arr = day_indicators_df["kalman_residual_zscore"].values if "kalman_residual_zscore" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
@@ -1295,8 +1306,32 @@ def _collect_day_outcomes(
                 if cusum_v > RISE_FALL_BOOM_MAX_CUSUM or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE:
                     i += SAMPLE_EVERY
                     continue
-                
-            actual_score = 25 # bypass c["score"] check
+
+            momentum_v = float(momentum_arr[i]) if "momentum_arr" in locals() else 0.0
+            ema_diff_v = float(ema_diff_arr[i]) if "ema_diff_arr" in locals() else 0.0
+            ols_v = float(ols_arr[i]) if "ols_arr" in locals() else 0.0
+            markov_up_v = float(markov_up_arr[i]) if "markov_up_arr" in locals() else 0.5
+            markov_dn_v = float(markov_dn_arr[i]) if "markov_dn_arr" in locals() else 0.5
+            up_votes = (
+                int(velocity_v > 0.0)
+                + int(imbalance_v >= 1.0)
+                + int(ols_v > 0.0)
+                + int(momentum_v > 0.0)
+                + int(ema_diff_v > 0.0)
+                + int(markov_up_v > markov_dn_v)
+            )
+            down_votes = (
+                int(velocity_v < 0.0)
+                + int(imbalance_v <= -1.0)
+                + int(ols_v < 0.0)
+                + int(momentum_v < 0.0)
+                + int(ema_diff_v < 0.0)
+                + int(markov_dn_v > markov_up_v)
+            )
+            actual_score = up_votes if is_crash else down_votes
+            if actual_score < RISE_FALL_MIN_VOTES:
+                i += SAMPLE_EVERY
+                continue
         else:
             row = indicators_map.get(i)
             if row is None:
@@ -1716,7 +1751,7 @@ def apply_config(env_overrides: dict):
     global CUSUM_MAX, HURST_MIN, CALM_THRESH, TICK_COUNT, CALM_MIN_SCORE, ENSEMBLE_MIN_PROB, BLOCKED_HOURS, WIN_TICKS
     global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
-    global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT
+    global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT, RISE_FALL_MIN_VOTES
     global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
     global MULTIPLIER_VALUE, MULTIPLIER_DIRECTION, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
@@ -1753,6 +1788,7 @@ def apply_config(env_overrides: dict):
     RISE_FALL_BOOM_MAX_VELOCITY = float(os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
     RISE_FALL_BOOM_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
     RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
+    RISE_FALL_MIN_VOTES = int(os.environ.get("RISE_FALL_MIN_VOTES", "4"))
     RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
     RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
     MULTIPLIER_VALUE = int(os.environ.get("MULTIPLIER_VALUE", "100"))

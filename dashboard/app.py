@@ -1347,13 +1347,33 @@ def _optimizer_dashboard_cards(
         if worker.get("worker_id")
     }
     if running and saved_ids:
-        return [
+        cards = [
             {**candidate, **live_by_id.get(str(candidate.get("worker_id") or ""), {})}
             for candidate in saved_candidates[:limit]
             if candidate.get("worker_id")
         ]
+        while len(cards) < limit:
+            idx = len(cards)
+            cards.append({
+                "worker_id": f"slot_{idx + 1}",
+                "status": "Aguardando...",
+                "progress_pct": 0.0,
+                "stale": False,
+                "idle": True,
+            })
+        return cards
     if running and workers:
-        return workers[:limit]
+        cards = workers[:limit]
+        while len(cards) < limit:
+            idx = len(cards)
+            cards.append({
+                "worker_id": f"slot_{idx + 1}",
+                "status": "Aguardando...",
+                "progress_pct": 0.0,
+                "stale": False,
+                "idle": True,
+            })
+        return cards
     return _merge_optimizer_candidates(saved_candidates or [], workers)[:limit]
 
 

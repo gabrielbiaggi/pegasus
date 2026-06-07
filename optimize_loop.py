@@ -365,7 +365,7 @@ PARAM_SPACE = {
     "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 60,   "step": 1},
     # Gate principal de entrada direcional: sem isso o optimizer só ajusta TP/SL
     # depois de entrar demais em mercado ruim.
-    "RISE_FALL_MIN_VOTES":          {"type": "int",   "min": 7,   "max": 25,   "step": 1},
+    "RISE_FALL_MIN_VOTES":          {"type": "int",   "min": 1,   "max": 6,    "step": 1},
     # Payout minimo de Rise/Fall: busca entre 0.0040 e 0.0080
     "RISE_FALL_MIN_PAYOUT_PCT":     {"type": "float", "min": 0.0040, "max": 0.0080, "step": 0.0005},
     # Filtros do BOOM1000: expande para regimes muito calmos e regimes de spike.
