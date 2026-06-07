@@ -44,6 +44,8 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertFalse(
             optimize_loop.is_monthly_candidate_viable(
                 {
+                    "avg_daily_profit": 0.0,
+                    "total_pnl": 0.0,
                     "active_days": 2,
                     "total_trades": 4,
                     "positive_days": 0,
@@ -57,6 +59,23 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertTrue(
             optimize_loop.is_monthly_candidate_viable(
                 {
+                    "avg_daily_profit": 0.72,
+                    "total_pnl": 12.96,
+                    "active_days": 18,
+                    "total_trades": 64,
+                    "positive_days": 6,
+                    "consistency_pct": 33.3,
+                    "worst_day_pnl": -8.0,
+                }
+            )
+        )
+
+    def test_monthly_candidate_viability_rejects_negative_dense_month(self) -> None:
+        self.assertFalse(
+            optimize_loop.is_monthly_candidate_viable(
+                {
+                    "avg_daily_profit": -0.08,
+                    "total_pnl": -2.4,
                     "active_days": 18,
                     "total_trades": 64,
                     "positive_days": 6,
@@ -161,6 +180,21 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(safe["STAKE"], "13.0")
         self.assertEqual(safe["_optimizer_context"]["symbol"], "BOOM1000")
         self.assertEqual(safe["_optimizer_context"]["contract_mode"], "multiplier")
+
+    def test_sanitize_env_clamps_stake_to_real_bounds(self) -> None:
+        safe = optimize_loop.sanitize_env_for_worker(
+            {
+                "SYMBOL": "BOOM1000",
+                "CONTRACT_MODE": "multiplier",
+                "MIN_STAKE": "5",
+                "MAX_STAKE": "100",
+                "STAKE": "0.4",
+            }
+        )
+
+        self.assertEqual(safe["STAKE"], "5.0")
+        self.assertEqual(safe["MIN_STAKE"], "5.0")
+        self.assertEqual(safe["MAX_STAKE"], "35.0")
 
     def test_optimizer_context_rejects_old_market_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})

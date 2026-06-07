@@ -360,7 +360,7 @@ N_WORKERS = parse_optimizer_workers()
 
 PARAM_SPACE = {
     # Stake base para operar: permite micro-risco e agressividade controlada.
-    "STAKE":                        {"type": "float", "min": 0.35, "max": 35.0, "step": 0.25},
+    "STAKE":                        {"type": "float", "min": 5.0, "max": 35.0, "step": 0.25},
     # Cooldown entre entradas de ticks: precisa conseguir bloquear overtrading.
     "RISE_FALL_COOLDOWN_TICKS":     {"type": "int",   "min": 1,   "max": 60,   "step": 1},
     # Gate principal de entrada direcional: sem isso o optimizer só ajusta TP/SL
@@ -494,8 +494,9 @@ def _is_safe_strategy_param(key: str) -> bool:
 
 def sanitize_params_for_storage(params: dict) -> dict:
     """Remove credenciais antes de persistir params no DB/dashboard."""
+    normalized = normalize_candidate_params(params)
     safe = {}
-    for key, value in params.items():
+    for key, value in normalized.items():
         if _is_sensitive_param(key):
             continue
         if _is_safe_strategy_param(key):
@@ -514,6 +515,7 @@ def sanitize_params_for_storage(params: dict) -> dict:
 
 def sanitize_env_for_worker(env_vars: dict) -> dict[str, str]:
     """Return only string env overrides accepted by os.environ/backtest workers."""
+    env_vars = normalize_candidate_params(env_vars)
     safe: dict[str, str] = {}
     for key, value in (env_vars or {}).items():
         if not isinstance(key, str) or key.startswith("_"):
@@ -578,6 +580,51 @@ def random_space_value(key: str) -> str:
     return str(space.get("min", ""))
 
 
+def _configured_float(env_vars: dict | None, key: str, default: float) -> float:
+    raw = None
+    if env_vars:
+        raw = env_vars.get(key)
+    if raw is None:
+        raw = os.environ.get(key)
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError, AttributeError):
+        return default
+
+
+def effective_stake_bounds(env_vars: dict | None = None) -> tuple[float, float]:
+    floor = max(0.35, _configured_float(env_vars, "MIN_STAKE", 5.0))
+    ceiling = _configured_float(env_vars, "MAX_STAKE", PARAM_SPACE["STAKE"]["max"])
+    if ceiling <= 0:
+        ceiling = PARAM_SPACE["STAKE"]["max"]
+    ceiling = max(floor, min(PARAM_SPACE["STAKE"]["max"], ceiling))
+    return floor, ceiling
+
+
+def normalize_candidate_params(params: dict | None) -> dict:
+    if not params:
+        return {}
+    out = dict(params)
+    min_stake, max_stake = effective_stake_bounds(out)
+    out["MIN_STAKE"] = str(min_stake)
+    out["MAX_STAKE"] = str(max_stake)
+
+    if "STAKE" in out:
+        try:
+            stake = float(out["STAKE"])
+        except (TypeError, ValueError):
+            stake = min_stake
+        out["STAKE"] = str(round(max(min_stake, min(max_stake, stake)), 2))
+
+    if "RISE_FALL_MIN_VOTES" in out:
+        try:
+            out["RISE_FALL_MIN_VOTES"] = str(max(1, min(6, int(float(out["RISE_FALL_MIN_VOTES"])))))
+        except (TypeError, ValueError):
+            out["RISE_FALL_MIN_VOTES"] = "4"
+
+    return out
+
+
 def inject_global_multiplier_search(params: dict) -> dict:
     """Build a broad multiplier candidate instead of only local hill-climbing."""
     p = params.copy()
@@ -603,8 +650,9 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.0, 8.0), 4))
             p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0008, 0.0045), 6))
             p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.0, 4.0), 4))
-            p["STAKE"] = str(round(random.uniform(0.35, 6.0), 2))
-            return p
+            min_stake, _ = effective_stake_bounds(p)
+            p["STAKE"] = str(round(random.uniform(min_stake, 6.0), 2))
+            return normalize_candidate_params(p)
         if regime == "balanced_probe":
             p["MULTIPLIER_DIRECTION"] = "signal"
             p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20]))
@@ -614,8 +662,9 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_MIN_VOTES"] = str(random.choice([4, 5, 6]))
             p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(10, 40))
             p["RISE_FALL_USE_ENSEMBLE"] = random.choice(["true", "false"])
-            p["STAKE"] = str(round(random.uniform(0.35, 8.0), 2))
-            return p
+            min_stake, _ = effective_stake_bounds(p)
+            p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
+            return normalize_candidate_params(p)
         p["MULTIPLIER_DIRECTION"] = "down"
         p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
         p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.25, 0.90), 2))
@@ -625,8 +674,9 @@ def inject_global_multiplier_search(params: dict) -> dict:
         p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(20, 55))
         p["RISE_FALL_USE_ENSEMBLE"] = "true"
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.35, 0.60), 2))
-        p["STAKE"] = str(round(random.uniform(0.35, 4.0), 2))
-        return p
+        min_stake, _ = effective_stake_bounds(p)
+        p["STAKE"] = str(round(random.uniform(min_stake, max(min_stake, 6.0)), 2))
+        return normalize_candidate_params(p)
 
     for key in (
         "STAKE",
@@ -650,10 +700,11 @@ def inject_global_multiplier_search(params: dict) -> dict:
     commission = stake * mult * 0.0002
     tp = float(p.get("MULTIPLIER_TAKE_PROFIT", 0.5))
     if commission > tp * 0.45:
-        p["STAKE"] = str(round(random.uniform(0.35, 8.0), 2))
+        min_stake, _ = effective_stake_bounds(p)
+        p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
         p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25, 30, 40, 50]))
         p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.25, 2.5), 2))
-    return p
+    return normalize_candidate_params(p)
 
 
 def rand_params(base: dict, metrics: dict | None = None) -> dict:
@@ -681,7 +732,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 24))
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
             p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.40), 2))
-            return p
+            return normalize_candidate_params(p)
         
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
@@ -724,7 +775,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 val = float(p["STAKE"])
                 p["STAKE"] = str(round(max(PARAM_SPACE["STAKE"]["min"], val - 1.0), 1))
             
-            return p
+            return normalize_candidate_params(p)
 
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
@@ -799,7 +850,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             choices = space["choices"]
             p[key] = str(random.choice(choices))
 
-    return p
+    return normalize_candidate_params(p)
 
 
 def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
@@ -1068,15 +1119,7 @@ def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
     consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
     worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
     active_days = int(metrics.get("active_days", 0) or 0)
-    total_trades = int(metrics.get("total_trades", 0) or 0)
-    positive_days = int(metrics.get("positive_days", 0) or 0)
-    candidate_viable = (
-        active_days >= 8
-        and total_trades >= 25
-        and positive_days >= 3
-        and consistency >= 20.0
-        and worst_day >= -25.0
-    )
+    candidate_viable = is_monthly_candidate_viable(metrics)
     entry = {
         "score": round(float(metrics.get("score", -999999.0) or -999999.0), 4),
         "params": sanitize_params_for_storage(params),
@@ -1173,16 +1216,20 @@ def is_live_deployable(metrics: dict | None) -> bool:
 def is_monthly_candidate_viable(metrics: dict | None) -> bool:
     if not metrics:
         return False
+    avg_day = float(metrics.get("avg_daily_profit", metrics.get("avg_daily", 0.0)) or 0.0)
+    total_pnl = float(metrics.get("total_pnl", 0.0) or 0.0)
     active_days = int(metrics.get("active_days", 0) or 0)
     total_trades = int(metrics.get("total_trades", 0) or 0)
     positive_days = int(metrics.get("positive_days", 0) or 0)
     consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
     worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
     return (
-        active_days >= 8
-        and total_trades >= 25
-        and positive_days >= 3
-        and consistency >= 20.0
+        avg_day > 0.0
+        and total_pnl > 0.0
+        and active_days >= 8
+        and total_trades >= 40
+        and positive_days >= 4
+        and consistency >= 25.0
         and worst_day >= -25.0
     )
 
