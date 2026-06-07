@@ -40,6 +40,32 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
         self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {4, 5, 6})
 
+    def test_monthly_candidate_viability_rejects_sparse_month(self) -> None:
+        self.assertFalse(
+            optimize_loop.is_monthly_candidate_viable(
+                {
+                    "active_days": 2,
+                    "total_trades": 4,
+                    "positive_days": 0,
+                    "consistency_pct": 0.0,
+                    "worst_day_pnl": -0.5,
+                }
+            )
+        )
+
+    def test_monthly_candidate_viability_accepts_dense_month(self) -> None:
+        self.assertTrue(
+            optimize_loop.is_monthly_candidate_viable(
+                {
+                    "active_days": 18,
+                    "total_trades": 64,
+                    "positive_days": 6,
+                    "consistency_pct": 33.3,
+                    "worst_day_pnl": -8.0,
+                }
+            )
+        )
+
     def test_compute_score_penalizes_sparse_near_zero_activity(self) -> None:
         results = []
         for idx in range(155):

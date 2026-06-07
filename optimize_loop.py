@@ -1068,9 +1068,19 @@ def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
     consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
     worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
     active_days = int(metrics.get("active_days", 0) or 0)
+    total_trades = int(metrics.get("total_trades", 0) or 0)
+    positive_days = int(metrics.get("positive_days", 0) or 0)
+    candidate_viable = (
+        active_days >= 8
+        and total_trades >= 25
+        and positive_days >= 3
+        and consistency >= 20.0
+        and worst_day >= -25.0
+    )
     entry = {
         "score": round(float(metrics.get("score", -999999.0) or -999999.0), 4),
         "params": sanitize_params_for_storage(params),
+        "candidate_viable": candidate_viable,
         "deployable": (
             avg_day >= 50.0
             and consistency >= 80.0
@@ -1085,6 +1095,7 @@ def build_monthly_champion_entry(params: dict, metrics: dict | None) -> dict:
         "positive_days",
         "negative_days",
         "active_days",
+        "total_trades",
         "worst_day_pnl",
         "max_drawdown",
         "sharpe",
@@ -1156,6 +1167,23 @@ def is_live_deployable(metrics: dict | None) -> bool:
         and consistency >= 80.0
         and worst_day >= -25.0
         and active_days >= 20
+    )
+
+
+def is_monthly_candidate_viable(metrics: dict | None) -> bool:
+    if not metrics:
+        return False
+    active_days = int(metrics.get("active_days", 0) or 0)
+    total_trades = int(metrics.get("total_trades", 0) or 0)
+    positive_days = int(metrics.get("positive_days", 0) or 0)
+    consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
+    worst_day = float(metrics.get("worst_day_pnl", 0.0) or 0.0)
+    return (
+        active_days >= 8
+        and total_trades >= 25
+        and positive_days >= 3
+        and consistency >= 20.0
+        and worst_day >= -25.0
     )
 
 
@@ -1597,9 +1625,11 @@ def main():
         champ_params.pop("END_DATE", None)
         champ_params = sanitize_params_for_storage(champ_params)
 
-        monthly_champions[m_key] = build_monthly_champion_entry(champ_params, month_best_metrics)
-        monthly_champions[m_key]["month_name"] = m_name
-        monthly_champions[m_key]["month_key"] = m_key
+        monthly_champion_entry = build_monthly_champion_entry(champ_params, month_best_metrics)
+        monthly_champion_entry["month_name"] = m_name
+        monthly_champion_entry["month_key"] = m_key
+        monthly_champion_entry["eligible_for_crossover"] = bool(is_monthly_candidate_viable(month_best_metrics))
+        monthly_champions[m_key] = monthly_champion_entry
         write_state(dashboard_result_seq, baseline_metrics, best_data, history,
                     evaluating_candidates=[],
                     monthly_champions=monthly_champions,
@@ -1616,6 +1646,9 @@ def main():
         jobs = []
         candidates_ui = []
         for champ_name, champ_info in monthly_champions.items():
+            if not champ_info.get("eligible_for_crossover"):
+                print(f"   ⏭️  Pulando campeão de {champ_name}: densidade operacional insuficiente para crossover.", flush=True)
+                continue
             env_test = build_crossover_env(champ_info)
             jobs.append((env_test, champ_name))
             candidates_ui.append({
@@ -1653,6 +1686,7 @@ def main():
                         "consistency_pct": res["consistency_pct"],
                         "positive_days": res["positive_days"],
                         "active_days": res["active_days"],
+                        "total_trades": int(res.get("total_trades", 0) or 0),
                         "worst_day_pnl": res.get("worst_day_pnl", 0.0),
                         "max_drawdown": res.get("max_drawdown", 0.0),
                         "params": sanitize_params_for_storage(res["_env"]),
