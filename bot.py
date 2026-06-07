@@ -2098,6 +2098,45 @@ class DerivBot:
                 profit,
                 buy_price,
             )
+            try:
+                exit_epoch = (
+                    int(
+                        contract.get("sell_time")
+                        or contract.get("current_spot_time")
+                        or contract.get("date_expiry")
+                        or 0
+                    )
+                    or None
+                )
+                entry_epoch = int(contract.get("date_start") or exit_epoch or time.time())
+                held_ticks = (
+                    max(0, exit_epoch - entry_epoch)
+                    if exit_epoch is not None
+                    else None
+                )
+                direction = (
+                    contract.get("contract_type")
+                    or contract.get("display_name")
+                    or "ZOMBIE"
+                )
+                self.journal.log_trade(
+                    symbol=self.config.symbol,
+                    contract_mode=self.config.contract_mode,
+                    contract_id=contract_id,
+                    entry_epoch=entry_epoch,
+                    direction=str(direction),
+                    score=0,
+                    stake=buy_price,
+                    buy_price=buy_price,
+                    profit=profit,
+                    exit_epoch=exit_epoch,
+                    held_ticks=held_ticks,
+                    metrics=None,
+                    soros_step=self.risk.soros_step,
+                    gale_step=self.risk.martingale_step,
+                )
+            except Exception as exc:
+                logger.exception("Falha ao registrar zombie trade no journal: %s", exc)
             if self.risk:
                 self.risk.update(profit=profit, buy_price=buy_price)
                 self._flush_balance(
