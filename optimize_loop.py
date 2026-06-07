@@ -1442,10 +1442,13 @@ def main():
         month_best_env["END_DATE"] = m_end
         month_best_metrics = None
 
-        # Rodar 48 iterações por mês (6 rodadas de 8 workers)
-        ITERS_PER_MONTH = 48
+        # Mantem 9 workers simultaneos, mas aprofunda a busca mensal em mais
+        # rodadas. Mais candidatos por mes melhora a chance de escapar de
+        # vizinhancas ruins sem aumentar RAM ao mesmo tempo.
+        rounds_per_month = int(os.getenv("PEGASUS_OPTIMIZER_ROUNDS_PER_MONTH", "10"))
+        ITERS_PER_MONTH = max(N_WORKERS, N_WORKERS * max(1, rounds_per_month))
         with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
-            for r in range(ITERS_PER_MONTH // N_WORKERS):
+            for r in range(max(1, ITERS_PER_MONTH // N_WORKERS)):
                 candidates = []
                 candidates_ui = []
                 for w in range(N_WORKERS):
