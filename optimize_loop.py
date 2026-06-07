@@ -581,6 +581,53 @@ def random_space_value(key: str) -> str:
 def inject_global_multiplier_search(params: dict) -> dict:
     """Build a broad multiplier candidate instead of only local hill-climbing."""
     p = params.copy()
+    symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
+    contract_mode = _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier")
+
+    if contract_mode == "multiplier" and symbol == "BOOM1000":
+        regime = random.choices(
+            ["spike_long", "balanced_probe", "rare_short"],
+            weights=[0.65, 0.25, 0.10],
+            k=1,
+        )[0]
+        if regime == "spike_long":
+            p["MULTIPLIER_DIRECTION"] = "up"
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.45, 1.80), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.35, 1.40), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 24))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 32))
+            p["RISE_FALL_USE_ENSEMBLE"] = "true"
+            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.42), 2))
+            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.0, 8.0), 4))
+            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0008, 0.0045), 6))
+            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.0, 4.0), 4))
+            p["STAKE"] = str(round(random.uniform(0.35, 6.0), 2))
+            return p
+        if regime == "balanced_probe":
+            p["MULTIPLIER_DIRECTION"] = "signal"
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.35, 1.25), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.45, 1.80), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 36))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([4, 5, 6]))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(10, 40))
+            p["RISE_FALL_USE_ENSEMBLE"] = random.choice(["true", "false"])
+            p["STAKE"] = str(round(random.uniform(0.35, 8.0), 2))
+            return p
+        p["MULTIPLIER_DIRECTION"] = "down"
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.25, 0.90), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.25, 0.80), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(2, 12))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(20, 55))
+        p["RISE_FALL_USE_ENSEMBLE"] = "true"
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.35, 0.60), 2))
+        p["STAKE"] = str(round(random.uniform(0.35, 4.0), 2))
+        return p
+
     for key in (
         "STAKE",
         "RISE_FALL_MIN_VOTES",
@@ -620,6 +667,21 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         avg_d = metrics.get("avg_daily_profit", 0.0) or metrics.get("avg_daily", 0.0) or 0.0
         neg_days = metrics.get("negative_days", 0) or metrics.get("busted", 0) or 0
         consist = metrics.get("consistency_pct", 0.0)
+        total_trades = int(metrics.get("total_trades", 0) or 0)
+        contract_mode = _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier")
+        symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
+
+        if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
+            p["MULTIPLIER_DIRECTION"] = random.choice(["up", "signal"])
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.40, 1.50), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.35, 1.20), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 20))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([4, 5, 6]))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 24))
+            p["RISE_FALL_USE_ENSEMBLE"] = "true"
+            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.40), 2))
+            return p
         
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
@@ -1835,24 +1897,15 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        print("\n♾️  OPTIMIZER MAIN LOOP — busca contínua até campeão validado", flush=True)
-        main()
-        raise RuntimeError("optimizer main returned unexpectedly")
-    except KeyboardInterrupt:
-        write_state(
-            0,
-            {},
-            {},
-            [],
-            running=False,
-            evaluating_candidates=[],
-            phase="stopped",
-        )
-        raise
-    except SystemExit as exc:
-        print(f"\n[ERROR] optimizer requested exit: {exc}", flush=True)
+    cycle = 1
+    while True:
         try:
+            print(f"\n♾️  OPTIMIZER MAIN LOOP #{cycle} — busca contínua até campeão validado", flush=True)
+            main()
+            cycle += 1
+            print("\n🔁 main() encerrou sem campeão refinável; iniciando novo ciclo imediatamente...", flush=True)
+            time.sleep(0.2)
+        except KeyboardInterrupt:
             write_state(
                 0,
                 {},
@@ -1860,23 +1913,38 @@ if __name__ == "__main__":
                 [],
                 running=False,
                 evaluating_candidates=[],
-                phase="error:system-exit",
+                phase="stopped",
             )
-        except Exception:
-            pass
-        raise
-    except Exception as exc:
-        print(f"\n[ERROR] optimizer crashed: {exc}", flush=True)
-        try:
-            write_state(
-                0,
-                {},
-                {},
-                [],
-                running=False,
-                evaluating_candidates=[],
-                phase=f"error:{type(exc).__name__}",
-            )
-        except Exception:
-            pass
-        raise
+            raise
+        except SystemExit as exc:
+            print(f"\n[ERROR] optimizer requested exit: {exc}", flush=True)
+            try:
+                write_state(
+                    0,
+                    {},
+                    {},
+                    [],
+                    running=False,
+                    evaluating_candidates=[],
+                    phase="error:system-exit",
+                )
+            except Exception:
+                pass
+            time.sleep(5.0)
+            cycle += 1
+        except Exception as exc:
+            print(f"\n[ERROR] optimizer crashed: {exc}", flush=True)
+            try:
+                write_state(
+                    0,
+                    {},
+                    {},
+                    [],
+                    running=False,
+                    evaluating_candidates=[],
+                    phase=f"error:{type(exc).__name__}",
+                )
+            except Exception:
+                pass
+            time.sleep(2.0)
+            cycle += 1

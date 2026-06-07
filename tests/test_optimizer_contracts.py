@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import tempfile
 import time
 import unittest
@@ -11,6 +12,34 @@ import optimize_loop
 
 
 class OptimizerContractsTest(unittest.TestCase):
+    def test_boom1000_global_search_biases_toward_spike_families(self) -> None:
+        random.seed(7)
+        params = {
+            "SYMBOL": "BOOM1000",
+            "CONTRACT_MODE": "multiplier",
+        }
+
+        candidate = optimize_loop.inject_global_multiplier_search(params)
+
+        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal", "down"})
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {4, 5, 6})
+        self.assertGreaterEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 2)
+        self.assertLessEqual(float(candidate["STAKE"]), 8.0)
+
+    def test_boom1000_sparse_metrics_force_directional_probe(self) -> None:
+        random.seed(11)
+        base = {
+            "SYMBOL": "BOOM1000",
+            "CONTRACT_MODE": "multiplier",
+        }
+        metrics = {"total_trades": 3, "avg_daily_profit": 0.0, "negative_days": 0, "consistency_pct": 0.0}
+
+        candidate = optimize_loop.rand_params(base, metrics)
+
+        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
+        self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {4, 5, 6})
+
     def test_compute_score_penalizes_sparse_near_zero_activity(self) -> None:
         results = []
         for idx in range(155):
