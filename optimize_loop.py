@@ -1187,6 +1187,30 @@ def is_monthly_candidate_viable(metrics: dict | None) -> bool:
     )
 
 
+def is_crossover_candidate_viable(metrics: dict | None) -> bool:
+    if not metrics:
+        return False
+    total_pnl = float(metrics.get("total_pnl", 0.0) or 0.0)
+    active_days = int(metrics.get("active_days", 0) or 0)
+    total_trades = int(metrics.get("total_trades", 0) or 0)
+    consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
+    breakdown = (metrics.get("monthly_breakdown") or {}).get("Super-Frankenstein", {})
+    pnls = [float((data or {}).get("pnl", 0.0) or 0.0) for data in breakdown.values()]
+    positive_months = sum(1 for pnl in pnls if pnl > 0.0)
+    negative_months = sum(1 for pnl in pnls if pnl < 0.0)
+    best_month = max(pnls) if pnls else 0.0
+    concentration_ratio = (best_month / total_pnl) if total_pnl > 0 and best_month > 0 else 0.0
+    return (
+        total_pnl > 0.0
+        and active_days >= 20
+        and total_trades >= 60
+        and consistency >= 5.0
+        and positive_months >= 2
+        and negative_months <= 3
+        and concentration_ratio <= 0.85
+    )
+
+
 def try_deploy_winner(env_vars: dict, msg: str, force: bool = False) -> bool:
     global _last_deploy_time, _pending_deploy_env, _pending_deploy_msg
     now = time.time()
@@ -1752,7 +1776,7 @@ def main():
                     monthly_champions=monthly_champions)
         return
 
-    deployable_crossovers = [r for r in crossover_results if is_live_deployable(r)]
+    deployable_crossovers = [r for r in crossover_results if is_live_deployable(r) and is_crossover_candidate_viable(r)]
     if not deployable_crossovers:
         print("\n⏸️ Nenhum campeão da validação cruzada passou o gate live; mantendo melhor anterior e reiniciando busca.", flush=True)
         write_state(dashboard_result_seq, baseline_metrics, best_data, history,

@@ -2089,12 +2089,35 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
     else:
         m["score"] += live_avg * 3.0
 
-    m["score"] = round(m["score"], 4)
     m["summary"] = summary
     m["monthly_breakdown"] = {
         "Super-Frankenstein": compute_monthly_breakdown(results, "Super-Frankenstein"),
         "Pegasus Live Sniper (9% TP)": compute_monthly_breakdown(results, "Pegasus Live Sniper (9% TP)")
     }
+    sf_months = list(m["monthly_breakdown"]["Super-Frankenstein"].values())
+    sf_month_pnls = [float((month or {}).get("pnl", 0.0) or 0.0) for month in sf_months]
+    positive_months = sum(1 for pnl in sf_month_pnls if pnl > 0.0)
+    negative_months = sum(1 for pnl in sf_month_pnls if pnl < 0.0)
+    best_month = max(sf_month_pnls) if sf_month_pnls else 0.0
+    total_positive_pnl = sum(pnl for pnl in sf_month_pnls if pnl > 0.0)
+    concentration_ratio = (best_month / total_positive_pnl) if total_positive_pnl > 0.0 else 0.0
+
+    if positive_months <= 1:
+        m["score"] -= 450.0
+    elif positive_months == 2:
+        m["score"] -= 120.0
+    if negative_months >= 4:
+        m["score"] -= negative_months * 45.0
+    if concentration_ratio > 0.85:
+        m["score"] -= (concentration_ratio - 0.85) * 1200.0
+    elif concentration_ratio > 0.70:
+        m["score"] -= (concentration_ratio - 0.70) * 500.0
+
+    m["positive_months"] = positive_months
+    m["negative_months"] = negative_months
+    m["best_month_pnl"] = round(best_month, 2)
+    m["concentration_ratio"] = round(concentration_ratio, 4)
+    m["score"] = round(m["score"], 4)
     m["results"] = results
     return m
 

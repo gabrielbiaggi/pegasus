@@ -66,6 +66,50 @@ class OptimizerContractsTest(unittest.TestCase):
             )
         )
 
+    def test_crossover_candidate_viability_rejects_single_month_concentration(self) -> None:
+        self.assertFalse(
+            optimize_loop.is_crossover_candidate_viable(
+                {
+                    "total_pnl": 5.61,
+                    "active_days": 155,
+                    "total_trades": 80,
+                    "consistency_pct": 8.0,
+                    "monthly_breakdown": {
+                        "Super-Frankenstein": {
+                            "2026-01": {"pnl": 0.0},
+                            "2026-02": {"pnl": 0.0},
+                            "2026-03": {"pnl": -0.01},
+                            "2026-04": {"pnl": 0.0},
+                            "2026-05": {"pnl": 5.62},
+                            "2026-06": {"pnl": 0.0},
+                        }
+                    },
+                }
+            )
+        )
+
+    def test_crossover_candidate_viability_accepts_multi_month_distribution(self) -> None:
+        self.assertTrue(
+            optimize_loop.is_crossover_candidate_viable(
+                {
+                    "total_pnl": 12.5,
+                    "active_days": 155,
+                    "total_trades": 120,
+                    "consistency_pct": 12.0,
+                    "monthly_breakdown": {
+                        "Super-Frankenstein": {
+                            "2026-01": {"pnl": 2.0},
+                            "2026-02": {"pnl": 1.8},
+                            "2026-03": {"pnl": -0.5},
+                            "2026-04": {"pnl": 1.2},
+                            "2026-05": {"pnl": 5.0},
+                            "2026-06": {"pnl": 3.0},
+                        }
+                    },
+                }
+            )
+        )
+
     def test_compute_score_penalizes_sparse_near_zero_activity(self) -> None:
         results = []
         for idx in range(155):
