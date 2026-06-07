@@ -1,7 +1,13 @@
 import unittest
 
 from logger import logger
-from strategy import AccumulatorStrategyConfig, calculate_tick_indicators, generate_accumulator_signal
+from strategy import (
+    AccumulatorStrategyConfig,
+    MultiplierContinuationConfig,
+    calculate_tick_indicators,
+    generate_accumulator_signal,
+    generate_multiplier_continuation_snapshot_signal,
+)
 
 
 logger.disabled = True
@@ -60,6 +66,48 @@ class StrategyTest(unittest.TestCase):
         ):
             self.assertIn(column, df.columns)
             self.assertFalse(pd_isna(last[column]))
+
+    def test_multiplier_continuation_signal_accepts_boom1000_up_regime_without_mi_wavelet_edge(self) -> None:
+        quotes = [100.0]
+        for delta in (
+            0.0001, 0.0001, 0.0002, -0.00005, 0.0002, 0.00015, 0.0001, 0.0002, 0.00015, 0.0001,
+            0.0002, 0.00015, 0.0001, 0.00025, 0.00015, 0.0001, 0.0002, 0.00015, 0.0001, 0.0002,
+            0.00015, 0.0001, 0.0002, 0.00015, 0.0001, 0.0002, 0.00015, 0.0001, 0.0002, 0.00015,
+            0.0001, 0.0002, 0.00015, 0.0001, 0.0002, 0.00015, 0.0001, 0.0002, 0.00015,
+        ):
+            quotes.append(quotes[-1] + delta)
+
+        row = {
+            "price_velocity": 0.00018,
+            "price_acceleration": 0.00005,
+            "velocity_zscore": 1.3,
+            "acceleration_zscore": 0.9,
+            "tick_imbalance": 3.2,
+            "markov_p_up_given_up": 0.68,
+            "markov_p_down_given_down": 0.44,
+            "bayesian_prob_up": 0.53,
+            "hurst_exponent": 0.61,
+            "shannon_entropy": 0.61,
+            "renyi_entropy": 0.32,
+            "fisher_information": 0.08,
+            "mi_flow": 0.0,
+            "wavelet_energy_ratio": 0.0,
+        }
+
+        signal, score, confidence = generate_multiplier_continuation_snapshot_signal(
+            quotes,
+            row,
+            config=MultiplierContinuationConfig(
+                min_score=4,
+                min_confidence=0.57,
+                min_up_ticks=4,
+                max_down_ticks=1,
+            ),
+        )
+
+        self.assertEqual(signal, "CALL")
+        self.assertGreaterEqual(score, 4)
+        self.assertGreater(confidence, 0.57)
 
 
 if __name__ == "__main__":

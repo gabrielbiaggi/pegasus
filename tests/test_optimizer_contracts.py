@@ -516,6 +516,45 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertIn("cross_Abril", [item["worker_id"] for item in merged_first])
         self.assertEqual([item["worker_id"] for item in cards], [f"Mar_r3_w{i}" for i in range(6)])
 
+    def test_optimizer_runtime_summary_exposes_live_progress_even_without_history(self) -> None:
+        summary = dashboard_app._derive_optimizer_runtime_summary(
+            {
+                "running": True,
+                "phase": "monthly:Janeiro:round:0",
+                "current_iteration": 1,
+                "iterations": [],
+                "baseline": {"total_trades": 0, "active_days": 0, "avg_daily_profit": 0.0},
+                "best": {"total_trades": 0, "active_days": 0, "avg_daily_profit": 0.0},
+                "optimizer_workers": [
+                    {
+                        "worker_id": "Jan_r0_w0",
+                        "status": "Simulando...",
+                        "progress_pct": 20.0,
+                        "idle": False,
+                    },
+                    {
+                        "worker_id": "Jan_r0_w1",
+                        "status": "Simulando...",
+                        "progress_pct": 40.0,
+                        "idle": False,
+                    },
+                    {
+                        "worker_id": "slot_3",
+                        "status": "Sem job nesta fase",
+                        "progress_pct": 0.0,
+                        "idle": True,
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(summary["active_workers"], 2)
+        self.assertEqual(summary["worker_slots"], 3)
+        self.assertEqual(summary["avg_progress_pct"], 30.0)
+        self.assertTrue(summary["history_empty"])
+        self.assertTrue(summary["zero_trade_baseline"])
+        self.assertIn("Janeiro", summary["status_text"])
+
     def test_monthly_dashboard_history_entry_exposes_winner_metrics(self) -> None:
         metrics = {
             "score": 123.4,

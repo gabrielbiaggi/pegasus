@@ -30,8 +30,10 @@ from strategy import (
     AccumulatorStrategyConfig,
     EnsembleScorer,
     JumpMomentumConfig,
+    MultiplierContinuationConfig,
     calculate_tick_indicators,
     generate_calm_accu_signal,
+    generate_multiplier_continuation_snapshot_signal,
     RiseFallStrategyConfig,
     generate_jump_momentum_snapshot_signal,
     generate_rise_fall_signal,
@@ -108,6 +110,12 @@ MULTIPLIER_JUMP_HURST_TRENDING = float(os.getenv("MULTIPLIER_JUMP_HURST_TRENDING
 MULTIPLIER_JUMP_HURST_REVERTING = float(os.getenv("MULTIPLIER_JUMP_HURST_REVERTING", "0.38"))
 MULTIPLIER_JUMP_MI_FLOW_MIN = float(os.getenv("MULTIPLIER_JUMP_MI_FLOW_MIN", "0.02"))
 MULTIPLIER_JUMP_WAVELET_SNR_MIN = float(os.getenv("MULTIPLIER_JUMP_WAVELET_SNR_MIN", "0.02"))
+MULTIPLIER_CONTINUATION_MIN_SCORE = int(float(os.getenv("MULTIPLIER_CONTINUATION_MIN_SCORE", "4")) or 4)
+MULTIPLIER_CONTINUATION_MIN_CONFIDENCE = float(os.getenv("MULTIPLIER_CONTINUATION_MIN_CONFIDENCE", "0.57"))
+MULTIPLIER_CONTINUATION_MIN_UP_TICKS = int(float(os.getenv("MULTIPLIER_CONTINUATION_MIN_UP_TICKS", "4")) or 4)
+MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS = int(float(os.getenv("MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS", "1")) or 1)
+MULTIPLIER_CONTINUATION_MIN_IMBALANCE = float(os.getenv("MULTIPLIER_CONTINUATION_MIN_IMBALANCE", "1.5"))
+MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE = float(os.getenv("MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE", "0.04"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
 MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower()
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
@@ -1372,18 +1380,44 @@ def _collect_day_outcomes(
                     row,
                     config=jm_cfg,
                 )
+                cont_cfg = MultiplierContinuationConfig(
+                    min_score=max(3, MULTIPLIER_CONTINUATION_MIN_SCORE),
+                    min_confidence=MULTIPLIER_CONTINUATION_MIN_CONFIDENCE,
+                    min_ticks=30,
+                    min_up_ticks=max(2, MULTIPLIER_CONTINUATION_MIN_UP_TICKS),
+                    max_down_ticks=max(0, MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS),
+                    min_abs_imbalance=MULTIPLIER_CONTINUATION_MIN_IMBALANCE,
+                    min_markov_edge=MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE,
+                )
+                cont_signal, cont_score, cont_conf = generate_multiplier_continuation_snapshot_signal(
+                    quotes_window,
+                    row,
+                    config=cont_cfg,
+                )
                 if MULTIPLIER_DIRECTION == "up":
-                    if jm_signal != "CALL":
+                    if jm_signal == "CALL":
+                        selected_signal = "CALL"
+                        actual_score = jm_score
+                        p_loss = 1.0 - float(jm_conf) if jm_conf is not None else p_loss
+                    elif cont_signal == "CALL":
+                        selected_signal = "CALL"
+                        actual_score = cont_score
+                        p_loss = 1.0 - float(cont_conf) if cont_conf is not None else p_loss
+                    else:
                         i += SAMPLE_EVERY
                         continue
-                    selected_signal = "CALL"
                 else:
-                    if jm_signal not in {"CALL", "PUT"}:
+                    if jm_signal in {"CALL", "PUT"}:
+                        selected_signal = jm_signal
+                        actual_score = jm_score
+                        p_loss = 1.0 - float(jm_conf) if jm_conf is not None else p_loss
+                    elif cont_signal == "CALL":
+                        selected_signal = "CALL"
+                        actual_score = cont_score
+                        p_loss = 1.0 - float(cont_conf) if cont_conf is not None else p_loss
+                    else:
                         i += SAMPLE_EVERY
                         continue
-                    selected_signal = jm_signal
-                actual_score = jm_score
-                p_loss = 1.0 - float(jm_conf) if jm_conf is not None else p_loss
             else:
                 momentum_v = float(momentum_arr[i]) if "momentum_arr" in locals() else 0.0
                 ema_diff_v = float(ema_diff_arr[i]) if "ema_diff_arr" in locals() else 0.0
@@ -1412,7 +1446,14 @@ def _collect_day_outcomes(
 
             signal_vote_floor = RISE_FALL_MIN_VOTES
             if CONTRACT_MODE == "multiplier":
-                signal_vote_floor = max(2, min(RISE_FALL_MIN_VOTES, MULTIPLIER_JUMP_MIN_SCORE))
+                signal_vote_floor = max(
+                    2,
+                    min(
+                        RISE_FALL_MIN_VOTES,
+                        MULTIPLIER_JUMP_MIN_SCORE,
+                        MULTIPLIER_CONTINUATION_MIN_SCORE,
+                    ),
+                )
             if actual_score < signal_vote_floor:
                 i += SAMPLE_EVERY
                 continue

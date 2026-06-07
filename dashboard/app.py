@@ -1386,6 +1386,49 @@ def _optimizer_dashboard_cards(
     return _merge_optimizer_candidates(saved_candidates or [], workers)[:limit]
 
 
+def _derive_optimizer_runtime_summary(data: dict) -> dict:
+    """Summarize live optimizer execution for the dashboard cards."""
+    workers = list(data.get("optimizer_workers") or data.get("evaluating_candidates") or [])
+    worker_slots = int(data.get("worker_slots_count") or len(workers) or data.get("n_workers") or 0)
+    active_workers = [worker for worker in workers if not worker.get("idle")]
+    progresses: list[float] = []
+    for worker in active_workers:
+        try:
+            progresses.append(float(worker.get("progress_pct", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            continue
+
+    avg_progress = round(sum(progresses) / len(progresses), 1) if progresses else 0.0
+    baseline = data.get("baseline") or {}
+    best = data.get("best") or {}
+    baseline_trades = int(baseline.get("total_trades") or 0)
+    baseline_active_days = int(baseline.get("active_days") or 0)
+    best_trades = int(best.get("total_trades") or 0)
+    best_active_days = int(best.get("active_days") or 0)
+    phase = str(data.get("phase") or "").strip()
+    history = list(data.get("iterations") or [])
+
+    status_parts = []
+    if active_workers:
+        phase_text = f" em {phase}" if phase else ""
+        status_parts.append(f"{len(active_workers)}/{worker_slots or len(active_workers)} workers{phase_text}")
+    if progresses:
+        status_parts.append(f"progresso medio {avg_progress:.1f}%")
+    if baseline_trades == 0 and baseline_active_days == 0:
+        status_parts.append("sem trades validos ainda")
+    status_text = " | ".join(status_parts) if status_parts else "Aguardando workers do optimizer"
+
+    return {
+        "active_workers": len(active_workers),
+        "worker_slots": worker_slots,
+        "avg_progress_pct": avg_progress,
+        "history_empty": len(history) == 0,
+        "iteration_rows_count": len(history),
+        "zero_trade_baseline": baseline_trades == 0 and baseline_active_days == 0,
+        "zero_trade_best": best_trades == 0 and best_active_days == 0,
+        "status_text": status_text,
+    }
+
 
 def _write_stress_config(enabled: bool) -> None:
     path = BASE / "logs" / "stress_config.json"
@@ -1545,6 +1588,7 @@ def optimizer_status(response: Response):
                 data["optimizer_workers"] = evaluating_candidates
                 data["worker_cards_count"] = len([c for c in evaluating_candidates if not c.get("idle")])
                 data["worker_slots_count"] = len(evaluating_candidates)
+            data["runtime_summary"] = _derive_optimizer_runtime_summary(data)
             return data
         except Exception as exc:
             pass
@@ -1560,6 +1604,16 @@ def optimizer_status(response: Response):
         "ultra_stress": _read_stress_config(),
         "deployed_iteration": deployed_iteration_val,
         "optimizer_workers": _read_optimizer_workers(BASE / "logs"),
+        "runtime_summary": {
+            "active_workers": 0,
+            "worker_slots": 0,
+            "avg_progress_pct": 0.0,
+            "history_empty": True,
+            "iteration_rows_count": 0,
+            "zero_trade_baseline": True,
+            "zero_trade_best": True,
+            "status_text": "Aguardando workers do optimizer",
+        },
     }
 
 

@@ -5417,6 +5417,7 @@
                     }
 
                     // ── Baseline (v2: métricas de lucro diário real) ─────────────────────────
+                    var runtime = d.runtime_summary || {};
                     var bl = d.baseline;
                     var _baselineAvgDay = 0;
                     if (bl) {
@@ -5427,7 +5428,13 @@
                             bDaily.textContent = "$" + (_baselineAvgDay).toFixed(2) + "/dia";
                             bDaily.style.color = _baselineAvgDay >= 0 ? "var(--green)" : "var(--red)";
                         }
-                        if (bPos) bPos.textContent = "dias positivos: " + (bl.positive_days != null ? bl.positive_days : "—") + " | consist: " + (bl.consistency_pct != null ? bl.consistency_pct.toFixed(0) + "%" : "—");
+                        if (bPos) {
+                            if (runtime.zero_trade_baseline) {
+                                bPos.textContent = "sem trades | " + (runtime.active_workers || 0) + "/" + (runtime.worker_slots || 0) + " workers";
+                            } else {
+                                bPos.textContent = "dias positivos: " + (bl.positive_days != null ? bl.positive_days : "—") + " | consist: " + (bl.consistency_pct != null ? bl.consistency_pct.toFixed(0) + "%" : "—");
+                            }
+                        }
                         
                         // Atualiza a meta baseline de forma dinâmica
                         var bBase = document.getElementById("opt-meta-baseline");
@@ -5745,8 +5752,8 @@
                         }
                     } else {
                         if (lastDaily) lastDaily.textContent = "—";
-                        if (lastPos) lastPos.textContent = "dias positivos: —";
-                        if (lastStatus) lastStatus.innerHTML = '<span style="color:var(--dim)">Aguardando iteração...</span>';
+                        if (lastPos) lastPos.textContent = runtime.zero_trade_baseline ? "sem trades nesta fase" : "dias positivos: —";
+                        if (lastStatus) lastStatus.innerHTML = '<span style="color:var(--dim)">' + (runtime.status_text || "Aguardando iteração...") + '</span>';
                     }
 
                     // ── Contador, workers, records e última atualização ───────────────────────
@@ -5756,7 +5763,7 @@
                     var iwk = document.getElementById("opt-workers");
                     
                     var nRec = iters_all.filter(function(x){return x.is_best;}).length;
-                    if (ict) ict.textContent = "de " + (d.current_iteration || 0) + " iterações";
+                    if (ict) ict.textContent = "loop #" + (d.current_iteration || 0) + " · " + (runtime.iteration_rows_count != null ? runtime.iteration_rows_count : iters_all.length) + " resultados";
                     if (irc) irc.textContent = nRec;
                     if (iwk) {
                         var activeWorkersCount = parseInt(d.worker_cards_count || 0, 10);
@@ -5827,7 +5834,7 @@
                     } else if (tbody && iters_all.length === 0) {
                         _last_rendered_max_iter = 0;
                         _last_rendered_best_iter = 0;
-                        tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Nenhuma iteração ainda — optimizer calculando baseline...</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">' + (runtime.status_text || "Nenhuma iteração ainda — optimizer calculando baseline...") + '</td></tr>';
                     }
 
                     // ── Badge de Deploy Sincronizado no Modal ──

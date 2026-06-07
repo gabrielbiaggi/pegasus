@@ -1778,6 +1778,109 @@ class JumpMomentumConfig:
     qg_hurst_max: float = 0.50  # hurst below this for bayes+hurst combo
 
 
+@dataclass(frozen=True)
+class MultiplierContinuationConfig:
+    """BOOM1000 multiplier continuation gate biased toward MULTUP entries."""
+
+    min_ticks: int = 30
+    trend_lookback: int = 6
+    min_up_ticks: int = 4
+    max_down_ticks: int = 1
+    ema_fast: int = 5
+    ema_slow: int = 13
+    min_score: int = 4
+    min_confidence: float = 0.57
+    min_positive_velocity: float = 0.0
+    min_markov_edge: float = 0.04
+    min_abs_imbalance: float = 1.5
+    bayes_floor: float = 0.48
+    hurst_trending: float = 0.52
+    shannon_ceiling: float = 0.78
+    renyi_ceiling: float = 0.42
+    fisher_min: float = 0.04
+    velocity_z_min: float = 0.50
+
+
+def generate_multiplier_continuation_snapshot_signal(
+    quotes: list[float],
+    row: pd.Series | dict,
+    config: MultiplierContinuationConfig | None = None,
+) -> tuple[Optional[str], int, Optional[float]]:
+    """Continuation-only fallback for BOOM1000 multiplier entries.
+
+    This path deliberately ignores MI/Wavelet as primary gates. It focuses on
+    short-run continuation for MULTUP when the newer market regime no longer
+    exposes useful MI/Wavelet separation.
+    """
+    config = config or MultiplierContinuationConfig()
+    n = len(quotes)
+    if n < config.min_ticks:
+        return None, 0, None
+
+    def _g(name: str, default: float = 0.0) -> float:
+        v = row.get(name, default) if isinstance(row, dict) else row.get(name, default)
+        try:
+            f = float(v if v is not None else default)
+        except (TypeError, ValueError):
+            f = default
+        return default if f != f else f
+
+    lookback = min(config.trend_lookback, n - 1)
+    if lookback < 2:
+        return None, 0, None
+
+    last_slice = quotes[-(lookback + 1):]
+    deltas = [last_slice[i] - last_slice[i - 1] for i in range(1, len(last_slice))]
+    up_ticks = sum(delta > 0 for delta in deltas)
+    down_ticks = sum(delta < 0 for delta in deltas)
+    net_move = quotes[-1] - quotes[-(lookback + 1)]
+    ema_fast = _ema_series(quotes, config.ema_fast)
+    ema_slow = _ema_series(quotes, config.ema_slow)
+
+    vel = _g("price_velocity", 0.0)
+    accel = _g("price_acceleration", 0.0)
+    vel_z = _g("velocity_zscore", 0.0)
+    accel_z = _g("acceleration_zscore", 0.0)
+    imbalance = _g("tick_imbalance", 0.0)
+    markov_up = _g("markov_p_up_given_up", 0.5)
+    markov_dn = _g("markov_p_down_given_down", 0.5)
+    bayes_up = _g("bayesian_prob_up", 0.5)
+    hurst = _g("hurst_exponent", 0.5)
+    shannon = _g("shannon_entropy", 1.0)
+    renyi = _g("renyi_entropy", 1.0)
+    fisher = _g("fisher_information", 0.0)
+
+    score = 0
+    checks = 0
+
+    def _check(ok: bool) -> None:
+        nonlocal score, checks
+        checks += 1
+        if ok:
+            score += 1
+
+    _check(up_ticks >= config.min_up_ticks and down_ticks <= config.max_down_ticks)
+    _check(net_move > 0.0)
+    _check(ema_fast[-1] > ema_slow[-1])
+    _check(quotes[-1] > ema_fast[-1] > ema_slow[-1])
+    _check(vel > config.min_positive_velocity)
+    _check(vel > 0.0 and accel >= 0.0)
+    _check(markov_up >= 0.52 and (markov_up - markov_dn) >= config.min_markov_edge)
+    _check(imbalance >= config.min_abs_imbalance)
+    _check(bayes_up >= config.bayes_floor)
+    _check(hurst >= config.hurst_trending)
+    _check(shannon <= config.shannon_ceiling or renyi <= config.renyi_ceiling)
+    _check(fisher >= config.fisher_min or vel_z >= config.velocity_z_min or accel_z >= 0.5)
+
+    if checks == 0:
+        return None, 0, None
+
+    confidence = score / checks
+    if score < config.min_score or confidence < config.min_confidence:
+        return None, score, confidence
+    return "CALL", score, confidence
+
+
 def generate_jump_momentum_snapshot_signal(
     quotes: list[float],
     row: pd.Series | dict,
