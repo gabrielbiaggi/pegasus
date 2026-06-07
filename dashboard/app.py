@@ -254,6 +254,33 @@ def _read_log_tail(n_bytes: int = 65536) -> str:
 _pg_trades_cache: dict = {"ts": 0.0, "today": "", "df": None}
 
 
+def _local_period_bounds(scope: str) -> tuple[datetime, datetime, str]:
+    try:
+        tz_offset = int(_get_env("USER_TZ_OFFSET") or "-3")
+    except Exception:
+        tz_offset = -3
+
+    from datetime import timedelta as _timedelta
+
+    utc_now = datetime.now(timezone.utc)
+    local_now = utc_now + _timedelta(hours=tz_offset)
+    if scope == "month":
+        local_start = datetime(local_now.year, local_now.month, 1)
+        if local_now.month == 12:
+            local_end = datetime(local_now.year + 1, 1, 1)
+        else:
+            local_end = datetime(local_now.year, local_now.month + 1, 1)
+        label = local_start.strftime("%Y-%m")
+    else:
+        local_start = datetime(local_now.year, local_now.month, local_now.day)
+        local_end = local_start + _timedelta(days=1)
+        label = local_start.strftime("%Y-%m-%d")
+
+    start_utc = (local_start - _timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
+    end_utc = (local_end - _timedelta(hours=tz_offset)).replace(tzinfo=timezone.utc)
+    return start_utc, end_utc, label
+
+
 def _today_df() -> pd.DataFrame:
     """Read today's trades from PostgreSQL or local CSV fallback (no session restart filter)."""
     global _pg_trades_cache
@@ -696,11 +723,9 @@ def api_reset(scope: str = "day", response: Response = None):
     scope='month' → remove current month's rows from trades.csv + reset risk_state
     """
     import shutil
-    from datetime import date as _date
-
     now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    month = now.strftime("%Y-%m")
+    period_start_utc, period_end_utc, period_label = _local_period_bounds(scope)
+    today = _local_period_bounds("day")[2]
 
     # --- backup & filter trades.csv ---
     if TRADES_CSV.exists():
@@ -708,12 +733,18 @@ def api_reset(scope: str = "day", response: Response = None):
         shutil.copy2(TRADES_CSV, bak)
         try:
             df = pd.read_csv(TRADES_CSV, parse_dates=["timestamp"])
-            df["_date"] = df["timestamp"].dt.strftime("%Y-%m-%d")
+            df["_ts"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
             if scope == "day":
-                df = df[df["_date"] != today]
+                df = df[
+                    (df["_ts"] < period_start_utc)
+                    | (df["_ts"] >= period_end_utc)
+                ]
             elif scope == "month":
-                df = df[~df["_date"].str.startswith(month)]
-            df.drop(columns=["_date"]).to_csv(TRADES_CSV, index=False)
+                df = df[
+                    (df["_ts"] < period_start_utc)
+                    | (df["_ts"] >= period_end_utc)
+                ]
+            df.drop(columns=["_ts"]).to_csv(TRADES_CSV, index=False)
         except Exception:
             # fallback: just keep header
             header = TRADES_CSV.read_text().split("\n")[0]
@@ -723,6 +754,7 @@ def api_reset(scope: str = "day", response: Response = None):
     risk_path = BASE / "logs" / "risk_state.json"
     risk_state = {
         "day": today,
+        "start_of_day_balance": 50.0,
         "daily_loss": 0.0,
         "daily_net_profit": 0.0,
         "daily_peak_profit": 0.0,
@@ -737,18 +769,24 @@ def api_reset(scope: str = "day", response: Response = None):
         "martingale_step": 0,
         "martingale_accumulated_loss": 0.0,
         "martingale_base_stake": 0.0,
+        "loss_block_override": False,
+        "session_start_ts": _time.time(),
+        "cooldown_until": 0.0,
+        "cooldown_until_epoch": 0.0,
     }
     risk_path.write_text(json.dumps(risk_state, indent=2))
+    (BASE / "logs" / "balance.json").write_text(
+        json.dumps({"balance": 50.0, "ts": _time.time()})
+    )
 
     # --- delete from PostgreSQL trades table ---
     try:
         conn = psycopg2.connect(_pg_dsn_str())
         cur = conn.cursor()
-        if scope == "day":
-            cur.execute("DELETE FROM trades WHERE timestamp::date = %s", (today,))
-        elif scope == "month":
+        if scope in {"day", "month"}:
             cur.execute(
-                "DELETE FROM trades WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,)
+                "DELETE FROM trades WHERE timestamp >= %s AND timestamp < %s",
+                (period_start_utc, period_end_utc),
             )
         deleted = cur.rowcount
         conn.commit()
@@ -761,11 +799,10 @@ def api_reset(scope: str = "day", response: Response = None):
     try:
         conn = psycopg2.connect(_pg_dsn_str())
         cur = conn.cursor()
-        if scope == "day":
-            cur.execute("DELETE FROM signals WHERE timestamp::date = %s", (today,))
-        elif scope == "month":
+        if scope in {"day", "month"}:
             cur.execute(
-                "DELETE FROM signals WHERE to_char(timestamp, 'YYYY-MM') = %s", (month,)
+                "DELETE FROM signals WHERE timestamp >= %s AND timestamp < %s",
+                (period_start_utc, period_end_utc),
             )
         conn.commit()
         cur.close()
@@ -791,6 +828,7 @@ def api_reset(scope: str = "day", response: Response = None):
     return {
         "ok": True,
         "scope": scope,
+        "period": period_label,
         "msg": f"Histórico '{scope}' resetado ({deleted} trades removidos do DB). Bot reiniciado.",
     }
 

@@ -1470,6 +1470,8 @@ def main():
                         "consistency_pct": res["consistency_pct"],
                         "positive_days": res["positive_days"],
                         "active_days": res["active_days"],
+                        "worst_day_pnl": res.get("worst_day_pnl", 0.0),
+                        "max_drawdown": res.get("max_drawdown", 0.0),
                         "params": sanitize_params_for_storage(res["_env"]),
                         "monthly_breakdown": res.get("monthly_breakdown", {})
                     }
@@ -1533,7 +1535,17 @@ def main():
                     monthly_champions=monthly_champions)
         return
 
-    supreme_winner = crossover_results[0]
+    deployable_crossovers = [r for r in crossover_results if is_live_deployable(r)]
+    if not deployable_crossovers:
+        print("\n⏸️ Nenhum campeão da validação cruzada passou o gate live; mantendo melhor anterior e reiniciando busca.", flush=True)
+        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                    evaluating_candidates=[],
+                    monthly_champions=monthly_champions,
+                    phase="crossover:rejected",
+                    crossover_results=crossover_results)
+        return
+
+    supreme_winner = deployable_crossovers[0]
     print(f"\n👑 Vencedor Supremo Selecionado: Campeão de {supreme_winner['champ_name']}", flush=True)
     print(f"   Métricas Globais: Score={supreme_winner['score']:.4f} | Lucro/Dia=${supreme_winner['avg_daily_profit']:.2f}/dia", flush=True)
 
@@ -1553,6 +1565,8 @@ def main():
         "consistency_pct": supreme_winner["consistency_pct"],
         "positive_days": supreme_winner["positive_days"],
         "active_days": supreme_winner["active_days"],
+        "worst_day_pnl": supreme_winner.get("worst_day_pnl", 0.0),
+        "max_drawdown": supreme_winner.get("max_drawdown", 0.0),
         "iteration": 9999,
         "monthly_breakdown": supreme_winner.get("monthly_breakdown", {}),
         "phase": f"supreme:{supreme_winner['champ_name']}",
