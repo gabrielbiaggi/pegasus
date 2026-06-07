@@ -1359,7 +1359,7 @@ def _optimizer_dashboard_cards(
             idx = len(cards)
             cards.append({
                 "worker_id": f"slot_{idx + 1}",
-                "status": "Aguardando...",
+                "status": "Sem job nesta fase",
                 "progress_pct": 0.0,
                 "stale": False,
                 "idle": True,
@@ -1371,7 +1371,7 @@ def _optimizer_dashboard_cards(
             idx = len(cards)
             cards.append({
                 "worker_id": f"slot_{idx + 1}",
-                "status": "Aguardando...",
+                "status": "Sem job nesta fase",
                 "progress_pct": 0.0,
                 "stale": False,
                 "idle": True,
@@ -1537,7 +1537,8 @@ def optimizer_status(response: Response):
                 )
                 data["evaluating_candidates"] = evaluating_candidates
                 data["optimizer_workers"] = evaluating_candidates
-                data["worker_cards_count"] = len(evaluating_candidates)
+                data["worker_cards_count"] = len([c for c in evaluating_candidates if not c.get("idle")])
+                data["worker_slots_count"] = len(evaluating_candidates)
             return data
         except Exception as exc:
             pass

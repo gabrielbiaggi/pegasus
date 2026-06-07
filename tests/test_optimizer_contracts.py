@@ -11,6 +11,36 @@ import optimize_loop
 
 
 class OptimizerContractsTest(unittest.TestCase):
+    def test_compute_score_penalizes_sparse_near_zero_activity(self) -> None:
+        results = []
+        for idx in range(155):
+            trades = 1 if idx == 0 else 0
+            pnl = 0.01 if idx == 0 else 0.0
+            results.append({
+                "date": f"2026-01-{(idx % 31) + 1:02d}",
+                "strategies": {"Super-Frankenstein": {"pnl": pnl, "trades": trades}},
+            })
+
+        metrics = optimize_loop.compute_score(results)
+
+        self.assertEqual(metrics["active_days"], 1)
+        self.assertEqual(metrics["total_trades"], 1)
+        self.assertLess(metrics["score"], -500.0)
+
+    def test_compute_score_rewards_broad_positive_coverage(self) -> None:
+        results = []
+        for idx in range(30):
+            results.append({
+                "date": f"2026-02-{idx + 1:02d}",
+                "strategies": {"Super-Frankenstein": {"pnl": 2.0, "trades": 3}},
+            })
+
+        metrics = optimize_loop.compute_score(results)
+
+        self.assertEqual(metrics["active_days"], 30)
+        self.assertEqual(metrics["total_trades"], 90)
+        self.assertGreater(metrics["score"], 0.0)
+
     def test_sanitize_params_removes_secrets_and_keeps_strategy_context(self) -> None:
         params = {
             "DERIV_TOKEN": "secret",

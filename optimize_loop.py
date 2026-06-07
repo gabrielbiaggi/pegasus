@@ -760,6 +760,8 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     n_act  = len(active)
     n_pos  = len(pos)
     n_neg  = len(neg)
+    total_days = len(days)
+    total_trades = sum(max(0, int(d["trades"])) for d in days)
 
     avg_day   = (sum(d["pnl"] for d in active) / n_act) if n_act > 0 else 0.0
     consist   = (n_pos / n_act * 100) if n_act > 0 else 0.0
@@ -790,6 +792,20 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     norm = n_act if n_act > 0 else 1
     consist_bonus = (n_pos / norm)  # 0.0–1.0 — fracção de dias positivos
     neg_rate      = (n_neg / norm)  # 0.0–1.0 — fracção de dias negativos
+    coverage = (n_act / total_days) if total_days > 0 else 0.0
+    avg_trades_per_active_day = (total_trades / n_act) if n_act > 0 else 0.0
+
+    inactivity_penalty = 0.0
+    if coverage < 0.20:
+        inactivity_penalty += (0.20 - coverage) * 4000.0
+    if n_act < 10:
+        inactivity_penalty += (10 - n_act) * 120.0
+    if total_trades < 40:
+        inactivity_penalty += (40 - total_trades) * 8.0
+    if total <= 0.50:
+        inactivity_penalty += (0.50 - total) * 160.0
+    if avg_trades_per_active_day < 1.0:
+        inactivity_penalty += (1.0 - avg_trades_per_active_day) * 250.0
 
     score = (
         avg_day        * 12.0    # Lucro médio/dia — independente de período
@@ -799,10 +815,13 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
         - std_dev       * 3.0    # Penalidade por volatilidade diária
         - dd_penalty             # Penalidade por rebaixamento / pior dia
         - bust_pen               # Penalidade catástrofe
+        - inactivity_penalty     # Penaliza falso positivo que quase não opera
     )
 
     if n_act == 0:
         score = -9999.0
+    elif total <= 0.0 and n_pos == 0:
+        score = min(score, -5000.0)
 
 
     return {
@@ -810,7 +829,8 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
         "positive_days":    n_pos,
         "negative_days":    n_neg,
         "active_days":      n_act,
-        "total_days":       len(days),
+        "total_days":       total_days,
+        "total_trades":     total_trades,
         "consistency_pct":  round(consist, 1),
         "total_pnl":        round(total, 2),
         "score":            round(score, 4),
@@ -1815,15 +1835,24 @@ def main():
 
 
 if __name__ == "__main__":
-    cycle = 1
-    while True:
+    try:
+        print("\n♾️  OPTIMIZER MAIN LOOP — busca contínua até campeão validado", flush=True)
+        main()
+        raise RuntimeError("optimizer main returned unexpectedly")
+    except KeyboardInterrupt:
+        write_state(
+            0,
+            {},
+            {},
+            [],
+            running=False,
+            evaluating_candidates=[],
+            phase="stopped",
+        )
+        raise
+    except SystemExit as exc:
+        print(f"\n[ERROR] optimizer requested exit: {exc}", flush=True)
         try:
-            print(f"\n♾️  OPTIMIZER CYCLE #{cycle} — busca contínua até campeão validado", flush=True)
-            main()
-            cycle += 1
-            print("\n🔁 Rodada encerrada sem loop de refinamento ativo; reiniciando busca em 2s...", flush=True)
-            time.sleep(2.0)
-        except KeyboardInterrupt:
             write_state(
                 0,
                 {},
@@ -1831,38 +1860,23 @@ if __name__ == "__main__":
                 [],
                 running=False,
                 evaluating_candidates=[],
-                phase="stopped",
+                phase="error:system-exit",
             )
-            raise
-        except SystemExit as exc:
-            print(f"\n[ERROR] optimizer cycle requested exit: {exc}; tentando novamente em 10s", flush=True)
-            try:
-                write_state(
-                    0,
-                    {},
-                    {},
-                    [],
-                    running=False,
-                    evaluating_candidates=[],
-                    phase="error:system-exit",
-                )
-            except Exception:
-                pass
-            time.sleep(10.0)
-            cycle += 1
-        except Exception as exc:
-            print(f"\n[ERROR] optimizer cycle crashed: {exc}", flush=True)
-            try:
-                write_state(
-                    0,
-                    {},
-                    {},
-                    [],
-                    running=False,
-                    evaluating_candidates=[],
-                    phase=f"error:{type(exc).__name__}",
-                )
-            except Exception:
-                pass
-            time.sleep(5.0)
-            cycle += 1
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        print(f"\n[ERROR] optimizer crashed: {exc}", flush=True)
+        try:
+            write_state(
+                0,
+                {},
+                {},
+                [],
+                running=False,
+                evaluating_candidates=[],
+                phase=f"error:{type(exc).__name__}",
+            )
+        except Exception:
+            pass
+        raise

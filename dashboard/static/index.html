@@ -5759,9 +5759,10 @@
                     if (ict) ict.textContent = "de " + (d.current_iteration || 0) + " iterações";
                     if (irc) irc.textContent = nRec;
                     if (iwk) {
-                        var nw = d.n_workers || 1;
-                        iwk.textContent = nw + "x";
-                        iwk.style.color = nw >= 6 ? "#f97316" : "var(--yellow)";
+                        var activeWorkersCount = parseInt(d.worker_cards_count || 0, 10);
+                        var workerSlotsCount = parseInt(d.worker_slots_count || d.n_workers || 1, 10);
+                        iwk.textContent = activeWorkersCount + "/" + workerSlotsCount + "x";
+                        iwk.style.color = activeWorkersCount >= 6 ? "#f97316" : "var(--yellow)";
                     }
                     if (ilu && d.last_update_ago_s != null) {
                         var ago = d.last_update_ago_s;
@@ -5865,7 +5866,8 @@
                             var workersLiveLabel = document.getElementById("opt-workers-live-label");
                             if (workersLiveLabel) {
                                 var phaseLabel = d.phase ? " · " + d.phase : "";
-                                workersLiveLabel.textContent = "● " + candidates.length + "/" + (expectedWorkers || candidates.length) + " workers em tempo real" + phaseLabel;
+                                var activeWorkerCards = candidates.filter(function(c){ return !c.idle; }).length;
+                                workersLiveLabel.textContent = "● " + activeWorkerCards + "/" + (expectedWorkers || candidates.length) + " workers em tempo real" + phaseLabel;
                             }
                             workersContainer.innerHTML = candidates.map(function(c, idx) {
                                 var workerLabel = c.worker_id || ("#" + idx);
@@ -5885,7 +5887,11 @@
                                 var statusColor = "var(--green)";
                                 var animation = "pulse 1.5s infinite";
                                 var statusIcon = '● ';
-                                if (statusText.indexOf("Simulando") >= 0) {
+                                if (c.idle) {
+                                    statusColor = "var(--muted)";
+                                    statusIcon = '○ ';
+                                    animation = "none";
+                                } else if (statusText.indexOf("Simulando") >= 0) {
                                     statusColor = "var(--green)";
                                     statusIcon = '<span class="spin" style="margin-right:2px;display:inline-block">⚙️</span> ';
                                     animation = "none";
