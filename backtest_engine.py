@@ -121,7 +121,7 @@ MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
 MULTIPLIER_STOP_LOSS = float(os.getenv("MULTIPLIER_STOP_LOSS", "1.00"))
 MULTIPLIER_MAX_HOLD_TICKS = int(os.getenv("MULTIPLIER_MAX_HOLD_TICKS", "30"))
-INDICATORS_CACHE_VERSION = "v2"
+INDICATORS_CACHE_VERSION = "v3"
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -1184,7 +1184,8 @@ def _collect_day_outcomes(
         except Exception:
             cache_dir = disk_dir
 
-    filename = f"indicators_{SYMBOL}_{day.isoformat()}_sample{SAMPLE_EVERY}_{INDICATORS_CACHE_VERSION}.feather"
+    cache_mode = str(CONTRACT_MODE or "default").strip().lower()
+    filename = f"indicators_{SYMBOL}_{cache_mode}_{day.isoformat()}_sample{SAMPLE_EVERY}_{INDICATORS_CACHE_VERSION}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
 
