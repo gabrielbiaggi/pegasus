@@ -29,9 +29,11 @@ from cooldown_rules import dynamic_cooldown_resume_ok
 from strategy import (
     AccumulatorStrategyConfig,
     EnsembleScorer,
+    JumpMomentumConfig,
     calculate_tick_indicators,
     generate_calm_accu_signal,
     RiseFallStrategyConfig,
+    generate_jump_momentum_snapshot_signal,
     generate_rise_fall_signal,
 )
 
@@ -93,6 +95,11 @@ RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() =
 RISE_FALL_MIN_VOTES = max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
 RISE_FALL_ENSEMBLE_MIN_PROB = float(os.getenv("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
+JUMP_MIN_CONFIDENCE = float(os.getenv("JUMP_MIN_CONFIDENCE", "0.60"))
+RISE_FALL_QUALITY_GATE = os.getenv("RISE_FALL_QUALITY_GATE", "true").lower() == "true"
+RISE_FALL_QG_MIN_ABS_IMBALANCE = float(os.getenv("RISE_FALL_QG_MIN_ABS_IMBALANCE", "6.0"))
+RISE_FALL_QG_BAYES_STRONG = float(os.getenv("RISE_FALL_QG_BAYES_STRONG", "0.70"))
+RISE_FALL_QG_HURST_MAX = float(os.getenv("RISE_FALL_QG_HURST_MAX", "0.50"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
 MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower()
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
@@ -1298,43 +1305,61 @@ def _collect_day_outcomes(
                 i += SAMPLE_EVERY
                 continue
 
-            momentum_v = float(momentum_arr[i]) if "momentum_arr" in locals() else 0.0
-            ema_diff_v = float(ema_diff_arr[i]) if "ema_diff_arr" in locals() else 0.0
-            ols_v = float(ols_arr[i]) if "ols_arr" in locals() else 0.0
-            markov_up_v = float(markov_up_arr[i]) if "markov_up_arr" in locals() else 0.5
-            markov_dn_v = float(markov_dn_arr[i]) if "markov_dn_arr" in locals() else 0.5
-            up_votes = (
-                int(velocity_v > 0.0)
-                + int(imbalance_v >= 1.0)
-                + int(ols_v > 0.0)
-                + int(momentum_v > 0.0)
-                + int(ema_diff_v > 0.0)
-                + int(markov_up_v > markov_dn_v)
-            )
-            down_votes = (
-                int(velocity_v < 0.0)
-                + int(imbalance_v <= -1.0)
-                + int(ols_v < 0.0)
-                + int(momentum_v < 0.0)
-                + int(ema_diff_v < 0.0)
-                + int(markov_dn_v > markov_up_v)
-            )
-
-            is_crash = "CRASH" in SYMBOL.upper()
             if CONTRACT_MODE == "multiplier":
+                row = indicators_map.get(i)
+                if row is None:
+                    i += SAMPLE_EVERY
+                    continue
+                quotes_window = prices[max(0, i - 39): i + 1].tolist()
+                jm_cfg = JumpMomentumConfig(
+                    min_score=max(7, RISE_FALL_MIN_VOTES + 1),
+                    min_confidence=JUMP_MIN_CONFIDENCE,
+                    min_ticks=30,
+                    quality_gate_enabled=RISE_FALL_QUALITY_GATE,
+                    qg_min_abs_imbalance=RISE_FALL_QG_MIN_ABS_IMBALANCE,
+                    qg_bayes_strong=RISE_FALL_QG_BAYES_STRONG,
+                    qg_hurst_max=RISE_FALL_QG_HURST_MAX,
+                )
+                jm_signal, jm_score, jm_conf = generate_jump_momentum_snapshot_signal(
+                    quotes_window,
+                    row,
+                    config=jm_cfg,
+                )
                 if MULTIPLIER_DIRECTION == "up":
+                    if jm_signal != "CALL":
+                        i += SAMPLE_EVERY
+                        continue
                     selected_signal = "CALL"
-                    actual_score = up_votes
-                elif MULTIPLIER_DIRECTION == "down":
-                    selected_signal = "PUT"
-                    actual_score = down_votes
-                elif up_votes > down_votes:
-                    selected_signal = "CALL"
-                    actual_score = up_votes
                 else:
-                    selected_signal = "PUT"
-                    actual_score = down_votes
+                    if jm_signal not in {"CALL", "PUT"}:
+                        i += SAMPLE_EVERY
+                        continue
+                    selected_signal = jm_signal
+                actual_score = jm_score
+                p_loss = 1.0 - float(jm_conf) if jm_conf is not None else p_loss
             else:
+                momentum_v = float(momentum_arr[i]) if "momentum_arr" in locals() else 0.0
+                ema_diff_v = float(ema_diff_arr[i]) if "ema_diff_arr" in locals() else 0.0
+                ols_v = float(ols_arr[i]) if "ols_arr" in locals() else 0.0
+                markov_up_v = float(markov_up_arr[i]) if "markov_up_arr" in locals() else 0.5
+                markov_dn_v = float(markov_dn_arr[i]) if "markov_dn_arr" in locals() else 0.5
+                up_votes = (
+                    int(velocity_v > 0.0)
+                    + int(imbalance_v >= 1.0)
+                    + int(ols_v > 0.0)
+                    + int(momentum_v > 0.0)
+                    + int(ema_diff_v > 0.0)
+                    + int(markov_up_v > markov_dn_v)
+                )
+                down_votes = (
+                    int(velocity_v < 0.0)
+                    + int(imbalance_v <= -1.0)
+                    + int(ols_v < 0.0)
+                    + int(momentum_v < 0.0)
+                    + int(ema_diff_v < 0.0)
+                    + int(markov_dn_v > markov_up_v)
+                )
+                is_crash = "CRASH" in SYMBOL.upper()
                 selected_signal = "CALL" if is_crash else "PUT"
                 actual_score = up_votes if is_crash else down_votes
 

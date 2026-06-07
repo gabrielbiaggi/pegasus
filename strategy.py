@@ -1778,6 +1778,220 @@ class JumpMomentumConfig:
     qg_hurst_max: float = 0.50  # hurst below this for bayes+hurst combo
 
 
+def generate_jump_momentum_snapshot_signal(
+    quotes: list[float],
+    row: pd.Series | dict,
+    config: JumpMomentumConfig | None = None,
+) -> tuple[Optional[str], int, Optional[float]]:
+    """Fast directional snapshot for precomputed indicator rows.
+
+    Uses the same family of validators as JumpMomentum, but operates on a
+    bounded quote window plus the already-computed indicator row. This keeps
+    the optimizer fast while giving multiplier entries a richer regime gate
+    than the old 6-vote Rise/Fall heuristic.
+    """
+    config = config or JumpMomentumConfig()
+    n = len(quotes)
+    if n < config.min_ticks:
+        return None, 0, None
+
+    up_votes = 0
+    dn_votes = 0
+
+    def _g(name: str, default: float = 0.0) -> float:
+        v = row.get(name, default) if isinstance(row, dict) else row.get(name, default)
+        try:
+            f = float(v if v is not None else default)
+        except (TypeError, ValueError):
+            f = default
+        return default if f != f else f
+
+    lyap = _g("lyapunov_exponent")
+    ret_z = _g("return_zscore")
+    cusum = _g("cusum_score", 0.0)
+    jerk_z = _g("jerk_zscore")
+    tail_dep = _g("tail_dependence", 0.0)
+
+    if lyap > config.lyapunov_chaos or abs(ret_z) > config.return_z_extreme:
+        return None, 0, None
+    if cusum > config.cusum_regime_alert or abs(jerk_z) > config.jerk_regime_z:
+        return None, 0, None
+    if tail_dep > config.tail_dep_danger:
+        return None, 0, None
+
+    lb = config.mom_lookback
+    if n > lb:
+        tick_dirs = [quotes[i] > quotes[i - 1] for i in range(n - lb, n)]
+        up_count = sum(tick_dirs)
+        dn_count = sum(not d for d in tick_dirs)
+        if up_count >= lb * 0.6:
+            up_votes += 1
+        elif dn_count >= lb * 0.6:
+            dn_votes += 1
+
+    if n > config.ema_slow + 1:
+        ema_f = _ema_series(quotes, config.ema_fast)
+        ema_s = _ema_series(quotes, config.ema_slow)
+        fast_above_now = ema_f[-1] > ema_s[-1]
+        fast_above_prev = ema_f[-2] > ema_s[-2]
+        if fast_above_now and not fast_above_prev:
+            up_votes += 1
+        elif not fast_above_now and fast_above_prev:
+            dn_votes += 1
+        else:
+            gap_pct = abs(ema_f[-1] - ema_s[-1]) / ema_s[-1] * 100
+            if gap_pct > 0.005:
+                if ema_f[-1] > ema_s[-1]:
+                    up_votes += 1
+                else:
+                    dn_votes += 1
+        if quotes[-1] > ema_s[-1]:
+            up_votes += 1
+        elif quotes[-1] < ema_s[-1]:
+            dn_votes += 1
+
+    slb = config.short_mom_lookback
+    if n > slb:
+        short_dirs = [quotes[i] > quotes[i - 1] for i in range(n - slb, n)]
+        up_short = sum(short_dirs)
+        dn_short = sum(not d for d in short_dirs)
+        if up_short >= 2:
+            up_votes += 1
+        elif dn_short >= 2:
+            dn_votes += 1
+
+    rl = config.rev_lookback
+    if n > rl:
+        streak_dirs = [quotes[i] > quotes[i - 1] for i in range(n - rl, n)]
+        up_streak = sum(streak_dirs)
+        dn_streak = sum(not d for d in streak_dirs)
+        if up_streak >= rl - 2:
+            dn_votes += 1
+        elif dn_streak >= rl - 2:
+            up_votes += 1
+
+    vel = _g("price_velocity")
+    accel = _g("price_acceleration", 0.0)
+    curv_z = _g("curvature_zscore")
+    int_div = _g("integral_momentum_div")
+    energy = _g("derivative_energy")
+    bayes_up = _g("bayesian_prob_up", 0.5)
+    kalman_z = _g("kalman_residual_zscore")
+    hurst = _g("hurst_exponent", 0.5)
+    markov_up = _g("markov_p_up_given_up", 0.5)
+    markov_dn = _g("markov_p_down_given_down", 0.5)
+    imbalance = _g("tick_imbalance", 0.0)
+    shannon = _g("shannon_entropy", 1.0)
+    renyi = _g("renyi_entropy", 0.5)
+    mi = _g("mi_flow", 0.0)
+    wavelet = _g("wavelet_energy_ratio", 0.5)
+    fisher = _g("fisher_information", 0.0)
+    exhaust = _g("trend_exhaustion")
+    vel_z = _g("velocity_zscore", 0.0)
+    accel_z = _g("acceleration_zscore", 0.0)
+
+    if vel > 0:
+        up_votes += 1
+    elif vel < 0:
+        dn_votes += 1
+    if vel > 0 and accel > 0:
+        up_votes += 1
+    elif vel < 0 and accel < 0:
+        dn_votes += 1
+    if curv_z > config.curvature_reversal_z:
+        if vel > 0 and accel < 0:
+            dn_votes += 1
+        elif vel < 0 and accel > 0:
+            up_votes += 1
+    if energy > 1e-10:
+        norm_div = int_div / energy
+        if norm_div > 1.0:
+            up_votes += 1
+        elif norm_div < -1.0:
+            dn_votes += 1
+    if bayes_up > config.bayesian_strong_prob:
+        up_votes += 1
+    elif bayes_up < (1.0 - config.bayesian_strong_prob):
+        dn_votes += 1
+    if kalman_z > 1.0:
+        up_votes += 1
+    elif kalman_z < -1.0:
+        dn_votes += 1
+    if hurst > config.hurst_trending:
+        if vel > 0:
+            up_votes += 1
+        elif vel < 0:
+            dn_votes += 1
+    elif hurst < config.hurst_reverting:
+        if vel > 0:
+            dn_votes += 1
+        elif vel < 0:
+            up_votes += 1
+    if markov_up > 0.55 and markov_up > markov_dn:
+        up_votes += 1
+    elif markov_dn > 0.55 and markov_dn > markov_up:
+        dn_votes += 1
+    if imbalance > 0.1:
+        up_votes += 1
+    elif imbalance < -0.1:
+        dn_votes += 1
+    if shannon < 0.7:
+        if vel > 0:
+            up_votes += 1
+        elif vel < 0:
+            dn_votes += 1
+    if renyi < config.renyi_low_entropy:
+        if vel > 0:
+            up_votes += 1
+        elif vel < 0:
+            dn_votes += 1
+    if mi > config.mi_flow_min:
+        if vel_z > 0.5:
+            up_votes += 1
+        elif vel_z < -0.5:
+            dn_votes += 1
+    if wavelet > config.wavelet_snr_min:
+        if vel > 0:
+            up_votes += 1
+        elif vel < 0:
+            dn_votes += 1
+    if fisher > config.fisher_info_min:
+        if accel_z > 0.5:
+            up_votes += 1
+        elif accel_z < -0.5:
+            dn_votes += 1
+    if energy < config.energy_calm_pctile and hurst < 0.50 and n > config.ema_slow:
+        ema_s_local = _ema_series(quotes, config.ema_slow)
+        if quotes[-1] > ema_s_local[-1]:
+            up_votes += 1
+        elif quotes[-1] < ema_s_local[-1]:
+            dn_votes += 1
+    if abs(exhaust) > config.exhaustion_extreme:
+        if exhaust > config.exhaustion_extreme:
+            dn_votes += 1
+        else:
+            up_votes += 1
+
+    total_votes = up_votes + dn_votes
+    if total_votes == 0:
+        return None, 0, None
+
+    winning_votes = max(up_votes, dn_votes)
+    confidence = winning_votes / total_votes
+    if winning_votes < config.min_score or confidence < config.min_confidence:
+        return None, 0, None
+
+    qg_imbalance = abs(imbalance) >= config.qg_min_abs_imbalance
+    qg_bayes = bayes_up > config.qg_bayes_strong or bayes_up < (1.0 - config.qg_bayes_strong)
+    qg_hurst = hurst < config.qg_hurst_max
+    if config.quality_gate_enabled and not (qg_imbalance or (qg_bayes and qg_hurst)):
+        return None, 0, None
+
+    if up_votes > dn_votes:
+        return "CALL", up_votes, confidence
+    return "PUT", dn_votes, confidence
+
+
 def _ema_series(prices: list[float], period: int) -> list[float]:
     """Compute exponential moving average from a list of prices."""
     k = 2.0 / (period + 1)
