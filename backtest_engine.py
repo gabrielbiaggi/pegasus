@@ -536,15 +536,27 @@ def _indicator_cache_is_stale(df: pd.DataFrame | None) -> bool:
     if not required.issubset(df.columns):
         return True
 
-    probe = df.iloc[:: max(int(SAMPLE_EVERY), 1)].copy()
-    if probe.empty:
-        probe = df
+    bayes = pd.to_numeric(df["bayesian_prob_up"], errors="coerce")
+    hurst = pd.to_numeric(df["hurst_exponent"], errors="coerce")
+    mi = pd.to_numeric(df["mi_flow"], errors="coerce")
+    wavelet = pd.to_numeric(df["wavelet_energy_ratio"], errors="coerce")
+    cusum = pd.to_numeric(df["cusum_score"], errors="coerce")
 
-    bayes = pd.to_numeric(probe["bayesian_prob_up"], errors="coerce")
-    hurst = pd.to_numeric(probe["hurst_exponent"], errors="coerce")
-    mi = pd.to_numeric(probe["mi_flow"], errors="coerce")
-    wavelet = pd.to_numeric(probe["wavelet_energy_ratio"], errors="coerce")
-    cusum = pd.to_numeric(probe["cusum_score"], errors="coerce")
+    informative_bayes = int((bayes.fillna(0.5) != 0.5).sum())
+    informative_hurst = int(hurst.notna().sum())
+    informative_mi = int((mi.fillna(0.0) != 0.0).sum())
+    informative_wavelet = int((wavelet.fillna(0.5) != 0.5).sum())
+    informative_cusum = int((cusum.fillna(0.0) != 0.0).sum())
+
+    informative_rows = max(
+        informative_bayes,
+        informative_hurst,
+        informative_mi,
+        informative_wavelet,
+        informative_cusum,
+    )
+    if informative_rows >= max(8, min(len(df) // 500, 128)):
+        return False
 
     all_bayes_default = bool((bayes.fillna(0.5) == 0.5).all())
     all_hurst_missing = bool(hurst.isna().all())

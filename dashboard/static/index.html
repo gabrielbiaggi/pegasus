@@ -5498,23 +5498,42 @@
                         var brDrawdown = document.getElementById("opt-best-drawdown");
 
                         if (brDaily) {
-                            brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
-                            brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
+                            if (runtime.zero_trade_best) {
+                                brDaily.textContent = (runtime.avg_progress_pct || 0).toFixed(1) + "%";
+                                brDaily.style.color = "var(--cyan)";
+                            } else {
+                                brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
+                                brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
+                            }
                         }
                         if (brPos) {
                             var itNum = activeBest.iteration !== undefined ? activeBest.iteration : 0;
                             var posD = activeBest.positive_days !== undefined ? activeBest.positive_days : "—";
-                            brPos.textContent = "dias positivos: " + posD + " (it#" + itNum + ")";
+                            if (runtime.zero_trade_best) {
+                                brPos.textContent = (runtime.active_workers || 0) + "/" + (runtime.worker_slots || 0) + " workers | " + (d.phase || "sem fase");
+                            } else {
+                                brPos.textContent = "dias positivos: " + posD + " (it#" + itNum + ")";
+                            }
                         }
                         if (brCons) {
-                            var cons = activeBest.consistency_pct || 0;
-                            brCons.textContent = cons.toFixed(0) + "%";
-                            brCons.style.color = cons >= 90 ? "var(--green)" : cons >= 60 ? "var(--yellow)" : "var(--red)";
+                            if (runtime.zero_trade_best) {
+                                brCons.textContent = (runtime.avg_progress_pct || 0).toFixed(0) + "%";
+                                brCons.style.color = "var(--cyan)";
+                            } else {
+                                var cons = activeBest.consistency_pct || 0;
+                                brCons.textContent = cons.toFixed(0) + "%";
+                                brCons.style.color = cons >= 90 ? "var(--green)" : cons >= 60 ? "var(--yellow)" : "var(--red)";
+                            }
                         }
                         if (brImp) {
-                            var imp = bestAvgDay - _baselineAvgDay;
-                            brImp.textContent = (imp >= 0 ? "+" : "") + "$" + imp.toFixed(2) + "/dia";
-                            brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
+                            if (runtime.zero_trade_best) {
+                                brImp.textContent = "loop #" + (d.current_iteration || 0);
+                                brImp.style.color = "var(--cyan)";
+                            } else {
+                                var imp = bestAvgDay - _baselineAvgDay;
+                                brImp.textContent = (imp >= 0 ? "+" : "") + "$" + imp.toFixed(2) + "/dia";
+                                brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
+                            }
                         }
                         
                         // Atualiza os novos cards de métricas quant avançadas

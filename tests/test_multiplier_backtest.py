@@ -34,6 +34,27 @@ class MultiplierBacktestTest(unittest.TestCase):
         with patch.object(backtest_engine, "SAMPLE_EVERY", 60):
             self.assertFalse(backtest_engine._indicator_cache_is_stale(df))
 
+    def test_indicator_cache_stale_detection_accepts_sparse_valid_frame(self) -> None:
+        rows = 86400
+        df = pd.DataFrame(
+            {
+                "tick_imbalance": [-10.0] * rows,
+                "bayesian_prob_up": [0.5] * rows,
+                "mi_flow": [0.0] * rows,
+                "wavelet_energy_ratio": [0.5] * rows,
+                "cusum_score": [0.0] * rows,
+                "hurst_exponent": [float("nan")] * rows,
+            }
+        )
+        df.loc[1234:1245, "bayesian_prob_up"] = 0.03125
+        df.loc[1234:1245, "mi_flow"] = 0.2259
+        df.loc[1234:1245, "wavelet_energy_ratio"] = 0.0
+        df.loc[1234:1245, "cusum_score"] = 4.73
+        df.loc[1234:1245, "hurst_exponent"] = 0.49
+
+        with patch.object(backtest_engine, "SAMPLE_EVERY", 60):
+            self.assertFalse(backtest_engine._indicator_cache_is_stale(df))
+
     def test_multiplier_profit_caps_at_take_profit(self) -> None:
         with patch.object(backtest_engine, "MULTIPLIER_VALUE", 100), patch.object(
             backtest_engine, "MULTIPLIER_TAKE_PROFIT", 0.50
