@@ -372,6 +372,13 @@ PARAM_SPACE = {
     "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 0.5, "max": 12.0, "step": 0.25},
     "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.00002, "max": 0.0050, "step": 0.00005},
     "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.1, "max": 5.0, "step": 0.05},
+    "MULTIPLIER_JUMP_MIN_CONFIDENCE": {"type": "float", "min": 0.55, "max": 0.85, "step": 0.01},
+    "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": {"type": "float", "min": 2.0, "max": 8.0, "step": 0.25},
+    "MULTIPLIER_JUMP_BAYES_STRONG_PROB": {"type": "float", "min": 0.55, "max": 0.80, "step": 0.01},
+    "MULTIPLIER_JUMP_HURST_TRENDING": {"type": "float", "min": 0.50, "max": 0.75, "step": 0.01},
+    "MULTIPLIER_JUMP_HURST_REVERTING": {"type": "float", "min": 0.20, "max": 0.45, "step": 0.01},
+    "MULTIPLIER_JUMP_MI_FLOW_MIN": {"type": "float", "min": 0.00, "max": 0.12, "step": 0.005},
+    "MULTIPLIER_JUMP_WAVELET_SNR_MIN": {"type": "float", "min": 0.35, "max": 0.85, "step": 0.01},
 
     # Parâmetros de gerenciamento de risco da estratégia Frankenstein
     "FRANKENSTEIN_USE_SOROS":       {"type": "bool"},
@@ -640,6 +647,13 @@ def normalize_candidate_params(params: dict | None) -> dict:
         max_cusum = float(out.get("RISE_FALL_BOOM_MAX_CUSUM", 3.8) or 3.8)
         max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.0026) or 0.0026)
         max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 2.2) or 2.2)
+        jump_conf = float(out.get("MULTIPLIER_JUMP_MIN_CONFIDENCE", 0.62) or 0.62)
+        jump_qg_imb = float(out.get("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", 4.0) or 4.0)
+        jump_bayes = float(out.get("MULTIPLIER_JUMP_BAYES_STRONG_PROB", 0.62) or 0.62)
+        jump_hurst_tr = float(out.get("MULTIPLIER_JUMP_HURST_TRENDING", 0.58) or 0.58)
+        jump_hurst_rev = float(out.get("MULTIPLIER_JUMP_HURST_REVERTING", 0.38) or 0.38)
+        jump_mi = float(out.get("MULTIPLIER_JUMP_MI_FLOW_MIN", 0.02) or 0.02)
+        jump_wavelet = float(out.get("MULTIPLIER_JUMP_WAVELET_SNR_MIN", 0.48) or 0.48)
 
         out["MULTIPLIER_TAKE_PROFIT"] = str(round(max(0.45, min(1.60, tp)), 2))
         out["MULTIPLIER_STOP_LOSS"] = str(round(max(0.45, min(1.35, sl)), 2))
@@ -651,6 +665,15 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
         out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.0014, min(0.0042, max_vel)), 6))
         out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(1.4, min(3.6, max_imb)), 4))
+        out["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(max(0.55, min(0.80, jump_conf)), 2))
+        out["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(max(2.0, min(8.0, jump_qg_imb)), 2))
+        out["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(max(0.55, min(0.80, jump_bayes)), 2))
+        out["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(max(0.50, min(0.72, jump_hurst_tr)), 2))
+        out["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(max(0.22, min(0.45, jump_hurst_rev)), 2))
+        if float(out["MULTIPLIER_JUMP_HURST_REVERTING"]) >= float(out["MULTIPLIER_JUMP_HURST_TRENDING"]) - 0.06:
+            out["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(float(out["MULTIPLIER_JUMP_HURST_TRENDING"]) - 0.06, 2))
+        out["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(max(0.0, min(0.12, jump_mi)), 3))
+        out["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(max(0.35, min(0.85, jump_wavelet)), 2))
 
     return out
 
@@ -680,6 +703,13 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
             p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0018, 0.0040), 6))
             p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+            p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.57, 0.68), 2))
+            p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 5.5), 2))
+            p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
+            p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.54, 0.66), 2))
+            p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.26, 0.40), 2))
+            p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.005, 0.05), 3))
+            p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.40, 0.65), 2))
             min_stake, _ = effective_stake_bounds(p)
             p["STAKE"] = str(round(random.uniform(min_stake, 6.0), 2))
             return normalize_candidate_params(p)
@@ -696,6 +726,13 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
             p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0014, 0.0039), 6))
             p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.4, 3.6), 4))
+            p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.70), 2))
+            p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 5.0), 2))
+            p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
+            p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.54, 0.66), 2))
+            p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.24, 0.38), 2))
+            p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.0, 0.045), 3))
+            p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.38, 0.62), 2))
             min_stake, _ = effective_stake_bounds(p)
             p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
             return normalize_candidate_params(p)
@@ -711,6 +748,13 @@ def inject_global_multiplier_search(params: dict) -> dict:
         p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 5.0), 4))
         p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0016, 0.0042), 6))
         p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.72), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 6.0), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.60, 0.74), 2))
+        p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.55, 0.68), 2))
+        p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.24, 0.38), 2))
+        p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.005, 0.05), 3))
+        p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.40, 0.68), 2))
         min_stake, _ = effective_stake_bounds(p)
         p["STAKE"] = str(round(random.uniform(min_stake, max(min_stake, 6.0)), 2))
         return normalize_candidate_params(p)
@@ -970,6 +1014,10 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
         inactivity_penalty += (10 - n_act) * 120.0
     if total_trades < 40:
         inactivity_penalty += (40 - total_trades) * 8.0
+    if total_trades == 0:
+        inactivity_penalty += 12000.0
+    if n_act == 0:
+        inactivity_penalty += 8000.0
     if total <= 0.50:
         inactivity_penalty += (0.50 - total) * 160.0
     if avg_trades_per_active_day < 1.0:
@@ -987,9 +1035,9 @@ def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
     )
 
     if n_act == 0:
-        score = -9999.0
+        score = -25000.0
     elif total <= 0.0 and n_pos == 0:
-        score = min(score, -5000.0)
+        score = min(score, -9000.0)
 
 
     return {

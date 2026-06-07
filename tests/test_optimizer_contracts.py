@@ -59,6 +59,13 @@ class OptimizerContractsTest(unittest.TestCase):
                 "RISE_FALL_BOOM_MAX_CUSUM": "8.5",
                 "RISE_FALL_BOOM_MAX_VELOCITY": "0.005",
                 "RISE_FALL_BOOM_MAX_IMBALANCE": "5.0",
+                "MULTIPLIER_JUMP_MIN_CONFIDENCE": "0.90",
+                "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": "0.5",
+                "MULTIPLIER_JUMP_BAYES_STRONG_PROB": "0.90",
+                "MULTIPLIER_JUMP_HURST_TRENDING": "0.90",
+                "MULTIPLIER_JUMP_HURST_REVERTING": "0.60",
+                "MULTIPLIER_JUMP_MI_FLOW_MIN": "0.30",
+                "MULTIPLIER_JUMP_WAVELET_SNR_MIN": "0.10",
             }
         )
 
@@ -67,6 +74,9 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
         self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "5")
         self.assertEqual(candidate["MULTIPLIER_MAX_HOLD_TICKS"], "18")
+        self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_CONFIDENCE"], "0.8")
+        self.assertEqual(candidate["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"], "2.0")
+        self.assertEqual(candidate["MULTIPLIER_JUMP_BAYES_STRONG_PROB"], "0.8")
 
     def test_monthly_candidate_viability_rejects_sparse_month(self) -> None:
         self.assertFalse(

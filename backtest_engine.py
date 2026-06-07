@@ -100,6 +100,13 @@ RISE_FALL_QUALITY_GATE = os.getenv("RISE_FALL_QUALITY_GATE", "true").lower() == 
 RISE_FALL_QG_MIN_ABS_IMBALANCE = float(os.getenv("RISE_FALL_QG_MIN_ABS_IMBALANCE", "6.0"))
 RISE_FALL_QG_BAYES_STRONG = float(os.getenv("RISE_FALL_QG_BAYES_STRONG", "0.70"))
 RISE_FALL_QG_HURST_MAX = float(os.getenv("RISE_FALL_QG_HURST_MAX", "0.50"))
+MULTIPLIER_JUMP_MIN_CONFIDENCE = float(os.getenv("MULTIPLIER_JUMP_MIN_CONFIDENCE", str(JUMP_MIN_CONFIDENCE)))
+MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE = float(os.getenv("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", "4.0"))
+MULTIPLIER_JUMP_BAYES_STRONG_PROB = float(os.getenv("MULTIPLIER_JUMP_BAYES_STRONG_PROB", "0.62"))
+MULTIPLIER_JUMP_HURST_TRENDING = float(os.getenv("MULTIPLIER_JUMP_HURST_TRENDING", "0.58"))
+MULTIPLIER_JUMP_HURST_REVERTING = float(os.getenv("MULTIPLIER_JUMP_HURST_REVERTING", "0.38"))
+MULTIPLIER_JUMP_MI_FLOW_MIN = float(os.getenv("MULTIPLIER_JUMP_MI_FLOW_MIN", "0.02"))
+MULTIPLIER_JUMP_WAVELET_SNR_MIN = float(os.getenv("MULTIPLIER_JUMP_WAVELET_SNR_MIN", "0.48"))
 MULTIPLIER_VALUE = int(os.getenv("MULTIPLIER_VALUE", "100"))
 MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower()
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
@@ -1313,12 +1320,17 @@ def _collect_day_outcomes(
                 quotes_window = prices[max(0, i - 39): i + 1].tolist()
                 jm_cfg = JumpMomentumConfig(
                     min_score=max(7, RISE_FALL_MIN_VOTES + 1),
-                    min_confidence=JUMP_MIN_CONFIDENCE,
+                    min_confidence=MULTIPLIER_JUMP_MIN_CONFIDENCE,
                     min_ticks=30,
                     quality_gate_enabled=RISE_FALL_QUALITY_GATE,
-                    qg_min_abs_imbalance=RISE_FALL_QG_MIN_ABS_IMBALANCE,
+                    qg_min_abs_imbalance=MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE,
                     qg_bayes_strong=RISE_FALL_QG_BAYES_STRONG,
                     qg_hurst_max=RISE_FALL_QG_HURST_MAX,
+                    bayesian_strong_prob=MULTIPLIER_JUMP_BAYES_STRONG_PROB,
+                    hurst_trending=MULTIPLIER_JUMP_HURST_TRENDING,
+                    hurst_reverting=MULTIPLIER_JUMP_HURST_REVERTING,
+                    mi_flow_min=MULTIPLIER_JUMP_MI_FLOW_MIN,
+                    wavelet_snr_min=MULTIPLIER_JUMP_WAVELET_SNR_MIN,
                 )
                 jm_signal, jm_score, jm_conf = generate_jump_momentum_snapshot_signal(
                     quotes_window,
