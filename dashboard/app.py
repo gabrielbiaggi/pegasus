@@ -1236,6 +1236,7 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
     """Read live optimizer worker progress files, preferring current monthly workers."""
     now = now if now is not None else _time.time()
     workers: list[dict] = []
+    optimizer_worker_re = re.compile(r"^(?:[A-Za-z]{3}_r\d+_w\d+|cross_[\w-]+|par_[\w-]+)$")
 
     paths = sorted(
         logs_dir.glob("backtest_worker_*.json"),
@@ -1246,6 +1247,8 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
     seen: set[str] = set()
     for path in paths:
         worker_id = path.stem.replace("backtest_worker_", "", 1)
+        if not optimizer_worker_re.match(worker_id):
+            continue
         if worker_id in seen:
             continue
         seen.add(worker_id)
@@ -1255,6 +1258,8 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
                 continue
             data = json.loads(path.read_text(encoding="utf-8"))
             mtime = stat.st_mtime
+            if not data.get("current_month"):
+                continue
             curr_idx = int(data.get("current_day_index", 0) or 0)
             total_days = int(data.get("total_days", 0) or 0)
             elapsed = float(data.get("elapsed_s", 0.0) or 0.0)
