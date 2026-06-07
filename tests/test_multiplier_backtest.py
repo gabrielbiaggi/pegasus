@@ -2,9 +2,38 @@ import unittest
 from unittest.mock import patch
 
 import backtest_engine
+import pandas as pd
 
 
 class MultiplierBacktestTest(unittest.TestCase):
+    def test_indicator_cache_stale_detection_flags_degenerate_sampled_frame(self) -> None:
+        df = pd.DataFrame(
+            {
+                "tick_imbalance": [-10.0] * 120,
+                "bayesian_prob_up": [0.5] * 120,
+                "mi_flow": [0.0] * 120,
+                "wavelet_energy_ratio": [0.5] * 120,
+                "cusum_score": [0.0] * 120,
+                "hurst_exponent": [float("nan")] * 120,
+            }
+        )
+        with patch.object(backtest_engine, "SAMPLE_EVERY", 60):
+            self.assertTrue(backtest_engine._indicator_cache_is_stale(df))
+
+    def test_indicator_cache_stale_detection_accepts_recomputed_frame(self) -> None:
+        df = pd.DataFrame(
+            {
+                "tick_imbalance": [-10.0] * 120,
+                "bayesian_prob_up": [0.03125] * 120,
+                "mi_flow": [0.0] * 120,
+                "wavelet_energy_ratio": [1e-12] * 120,
+                "cusum_score": [4.7] * 120,
+                "hurst_exponent": [0.49] * 120,
+            }
+        )
+        with patch.object(backtest_engine, "SAMPLE_EVERY", 60):
+            self.assertFalse(backtest_engine._indicator_cache_is_stale(df))
+
     def test_multiplier_profit_caps_at_take_profit(self) -> None:
         with patch.object(backtest_engine, "MULTIPLIER_VALUE", 100), patch.object(
             backtest_engine, "MULTIPLIER_TAKE_PROFIT", 0.50

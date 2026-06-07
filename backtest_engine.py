@@ -112,6 +112,7 @@ MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
 MULTIPLIER_STOP_LOSS = float(os.getenv("MULTIPLIER_STOP_LOSS", "1.00"))
 MULTIPLIER_MAX_HOLD_TICKS = int(os.getenv("MULTIPLIER_MAX_HOLD_TICKS", "30"))
+INDICATORS_CACHE_VERSION = "v2"
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
 HURST_MIN = float(os.getenv("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -516,6 +517,33 @@ def _load_day_df(day: _date, data_dir: Path) -> pd.DataFrame | None:
         pass
 
     return None
+
+
+def _indicator_cache_is_stale(df: pd.DataFrame | None) -> bool:
+    """Reject cached indicator frames that were produced by older broken sampling logic."""
+    if df is None or df.empty:
+        return True
+    required = {"tick_imbalance", "bayesian_prob_up", "mi_flow", "wavelet_energy_ratio", "cusum_score", "hurst_exponent"}
+    if not required.issubset(df.columns):
+        return True
+
+    probe = df.iloc[:: max(int(SAMPLE_EVERY), 1)].copy()
+    if probe.empty:
+        probe = df
+
+    bayes = pd.to_numeric(probe["bayesian_prob_up"], errors="coerce")
+    hurst = pd.to_numeric(probe["hurst_exponent"], errors="coerce")
+    mi = pd.to_numeric(probe["mi_flow"], errors="coerce")
+    wavelet = pd.to_numeric(probe["wavelet_energy_ratio"], errors="coerce")
+    cusum = pd.to_numeric(probe["cusum_score"], errors="coerce")
+
+    all_bayes_default = bool((bayes.fillna(0.5) == 0.5).all())
+    all_hurst_missing = bool(hurst.isna().all())
+    all_mi_zero = bool((mi.fillna(0.0) == 0.0).all())
+    all_wavelet_default = bool((wavelet.fillna(0.5) == 0.5).all())
+    all_cusum_zero = bool((cusum.fillna(0.0) == 0.0).all())
+
+    return all_bayes_default and all_hurst_missing and all_mi_zero and all_wavelet_default and all_cusum_zero
 
 
 # ── Estratégias de stake ─────────────────────────────────────────────────────────
@@ -1112,7 +1140,7 @@ def _collect_day_outcomes(
         except Exception:
             cache_dir = disk_dir
 
-    filename = f"indicators_{SYMBOL}_{day.isoformat()}_sample{SAMPLE_EVERY}.feather"
+    filename = f"indicators_{SYMBOL}_{day.isoformat()}_sample{SAMPLE_EVERY}_{INDICATORS_CACHE_VERSION}.feather"
     cache_path = cache_dir / filename
     disk_path = disk_dir / filename
 
@@ -1132,11 +1160,17 @@ def _collect_day_outcomes(
         if cache_path.exists():
             try:
                 day_indicators_df = pd.read_feather(cache_path)
+                if _indicator_cache_is_stale(day_indicators_df):
+                    print(f"  Cache {filename} com indicadores degenerados. Recalculando...", flush=True)
+                    day_indicators_df = None
             except Exception as e:
                 print(f"  Erro ao carregar cache {cache_path}: {e}. Recalculando...", flush=True)
                 if cache_path != disk_path and disk_path.exists():
                     try:
                         day_indicators_df = pd.read_feather(disk_path)
+                        if _indicator_cache_is_stale(day_indicators_df):
+                            day_indicators_df = None
+                            raise ValueError("cached indicators stale")
                         import shutil
                         shutil.copy2(disk_path, cache_path)
                     except Exception:
