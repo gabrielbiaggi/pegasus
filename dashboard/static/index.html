@@ -5871,12 +5871,15 @@
                                 var workerLabel = c.worker_id || ("#" + idx);
                                 var workerMonth = c.current_month || c.month || "";
                                 var stk = c.STAKE || "—";
-                                var score = c.CALM_ACCU_MIN_SCORE || "—";
-                                var pLoss = c.ENSEMBLE_MIN_PROB != null ? (c.ENSEMBLE_MIN_PROB * 100).toFixed(1) + "%" : "—";
-                                var tpBPlus = c.PCS_REGIME_B_PLUS_TP != null ? parseFloat(c.PCS_REGIME_B_PLUS_TP).toFixed(0) + "%" : "—";
-                                var tpBMinus = c.PCS_REGIME_B_MINUS_TP != null ? parseFloat(c.PCS_REGIME_B_MINUS_TP).toFixed(1) + "%" : "—";
-                                var hurst = c.ACCUMULATOR_MIN_HURST_EXPONENT || "—";
-                                var cusum = c.CALM_ACCU_MAX_ENTRY_CUSUM || "—";
+                                var votes = c.RISE_FALL_MIN_VOTES || "—";
+                                var direction = c.MULTIPLIER_DIRECTION || "signal";
+                                var mult = c.MULTIPLIER_VALUE || "—";
+                                var tpMult = c.MULTIPLIER_TAKE_PROFIT != null ? "$" + parseFloat(c.MULTIPLIER_TAKE_PROFIT).toFixed(2) : "—";
+                                var slMult = c.MULTIPLIER_STOP_LOSS != null ? "$" + parseFloat(c.MULTIPLIER_STOP_LOSS).toFixed(2) : "—";
+                                var holdMult = c.MULTIPLIER_MAX_HOLD_TICKS || "—";
+                                var boomCusum = c.RISE_FALL_BOOM_MAX_CUSUM || "—";
+                                var boomVel = c.RISE_FALL_BOOM_MAX_VELOCITY || "—";
+                                var heartbeat = c.last_update_ago_s != null ? c.last_update_ago_s + "s" : "—";
                                 
                                 var statusText = c.status || "Simulando...";
                                 var statusColor = "var(--green)";
@@ -5908,12 +5911,15 @@
                                         var dayText = (c.current_day_index != null && c.total_days != null)
                                             ? (c.current_day_index + "/" + c.total_days)
                                             : "";
+                                        var dayProgress = c.day_progress && c.day_progress.pct != null
+                                            ? " · tick " + Math.round(c.day_progress.pct) + "%"
+                                            : "";
                                         progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
                                             + '<div style="background:linear-gradient(90deg,var(--green),var(--cyan));height:100%;width:' + c.progress_pct + '%"></div>'
                                             + '</div>'
                                             + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
-                                            + '<span>' + (dayText ? dayText + " · " : "") + Math.round(c.progress_pct) + '%</span>'
-                                            + '<span>Faltam ~' + remS + 's</span>'
+                                            + '<span>' + (dayText ? dayText + " · " : "") + Math.round(c.progress_pct) + '%' + dayProgress + '</span>'
+                                            + '<span>~' + remS + 's · hb ' + heartbeat + '</span>'
                                             + '</div>';
                                     } else {
                                         var ageText = c.last_update_ago_s != null ? (c.last_update_ago_s + "s sem update") : "sem arquivo";
@@ -5961,9 +5967,9 @@
                                     + '<span style="color:' + statusColor + ';font-size:.6rem;font-weight:700;animation:' + animation + '">' + statusIcon + statusText.split(" (")[0] + '</span>'
                                     + '</div>'
                                     + '<div style="color:var(--muted)">'
-                                    + 'Stake: <span style="color:var(--text);font-weight:700">$' + stk + '</span> | CUSUM: <span style="color:var(--text)">' + cusum + '</span><br>'
-                                    + 'Hurst: <span style="color:var(--text)">' + hurst + '</span> | P(LOSS) IA: <span style="color:var(--yellow)">' + pLoss + '</span><br>'
-                                    + 'TP B+: <span style="color:var(--green)">' + tpBPlus + '</span> | TP B-: <span style="color:var(--green)">' + tpBMinus + '</span>'
+                                    + 'Stake: <span style="color:var(--text);font-weight:700">$' + stk + '</span> | Dir: <span style="color:var(--cyan)">' + direction + '</span> | Votos: <span style="color:var(--text)">' + votes + '/6</span><br>'
+                                    + 'Mult: <span style="color:var(--text)">' + mult + 'x</span> | TP: <span style="color:var(--green)">' + tpMult + '</span> | SL: <span style="color:var(--red)">' + slMult + '</span> | Hold: <span style="color:var(--text)">' + holdMult + 't</span><br>'
+                                    + 'CUSUM: <span style="color:var(--text)">' + boomCusum + '</span> | Vel: <span style="color:var(--text)">' + boomVel + '</span> | HB: <span style="color:var(--yellow)">' + heartbeat + '</span>'
                                     + '</div>'
                                     + '</div>'
                                     + progressHtml

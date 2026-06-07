@@ -1263,6 +1263,8 @@ def _collect_day_outcomes(
             }
             if t_global is not None:
                 state["elapsed_s"] = round(now - t_global, 1)
+            state["heartbeat_ts"] = now
+            state["heartbeat_ms"] = int(now * 1000)
             _write_state(out_path, state)
             t_last_progress = now
 
@@ -1282,6 +1284,7 @@ def _collect_day_outcomes(
             continue
             
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
+        selected_signal = None
         if CONTRACT_MODE in {"rise_fall", "multiplier"}:
             cusum_v = float(cusum_arr[i])
             velocity_v = float(velocity_arr[i])
@@ -1294,18 +1297,6 @@ def _collect_day_outcomes(
             if RISE_FALL_USE_ENSEMBLE and p_loss >= RISE_FALL_ENSEMBLE_MIN_PROB:
                 i += SAMPLE_EVERY
                 continue
-
-            is_boom = "BOOM" in SYMBOL.upper()
-            is_crash = "CRASH" in SYMBOL.upper()
-            
-            if is_crash:
-                if cusum_v < -RISE_FALL_BOOM_MAX_CUSUM or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE:
-                    i += SAMPLE_EVERY
-                    continue
-            else:
-                if cusum_v > RISE_FALL_BOOM_MAX_CUSUM or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE:
-                    i += SAMPLE_EVERY
-                    continue
 
             momentum_v = float(momentum_arr[i]) if "momentum_arr" in locals() else 0.0
             ema_diff_v = float(ema_diff_arr[i]) if "ema_diff_arr" in locals() else 0.0
@@ -1328,10 +1319,47 @@ def _collect_day_outcomes(
                 + int(ema_diff_v < 0.0)
                 + int(markov_dn_v > markov_up_v)
             )
-            actual_score = up_votes if is_crash else down_votes
+
+            is_crash = "CRASH" in SYMBOL.upper()
+            if CONTRACT_MODE == "multiplier":
+                if MULTIPLIER_DIRECTION == "up":
+                    selected_signal = "CALL"
+                    actual_score = up_votes
+                elif MULTIPLIER_DIRECTION == "down":
+                    selected_signal = "PUT"
+                    actual_score = down_votes
+                elif up_votes > down_votes:
+                    selected_signal = "CALL"
+                    actual_score = up_votes
+                else:
+                    selected_signal = "PUT"
+                    actual_score = down_votes
+            else:
+                selected_signal = "CALL" if is_crash else "PUT"
+                actual_score = up_votes if is_crash else down_votes
+
             if actual_score < RISE_FALL_MIN_VOTES:
                 i += SAMPLE_EVERY
                 continue
+
+            # Direction-aware spike filter. A MULTDOWN entry is blocked during
+            # upward shock risk; a MULTUP entry is blocked during downward shock risk.
+            if selected_signal == "CALL":
+                if (
+                    cusum_v < -RISE_FALL_BOOM_MAX_CUSUM
+                    or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY
+                    or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE
+                ):
+                    i += SAMPLE_EVERY
+                    continue
+            else:
+                if (
+                    cusum_v > RISE_FALL_BOOM_MAX_CUSUM
+                    or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY
+                    or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE
+                ):
+                    i += SAMPLE_EVERY
+                    continue
         else:
             row = indicators_map.get(i)
             if row is None:
@@ -1406,13 +1434,7 @@ def _collect_day_outcomes(
                 mult_direction = None
                 mult_returns = None
             elif CONTRACT_MODE == "multiplier":
-                is_crash = "CRASH" in SYMBOL.upper()
-                is_up = prices[entry_idx + 1] > prices[entry_idx] if entry_idx + 1 < len(prices) else False
-                signal = "CALL" if is_up else "PUT"
-                if "BOOM" in SYMBOL.upper():
-                    signal = "PUT"
-                if is_crash:
-                    signal = "CALL"
+                signal = selected_signal or "PUT"
                 mult_direction = _multiplier_direction_from_signal(signal)
                 base_price = prices[entry_idx]
                 mult_returns = [
