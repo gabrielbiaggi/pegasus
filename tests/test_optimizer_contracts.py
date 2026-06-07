@@ -21,10 +21,12 @@ class OptimizerContractsTest(unittest.TestCase):
 
         candidate = optimize_loop.inject_global_multiplier_search(params)
 
-        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal", "down"})
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {4, 5, 6})
+        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {5, 6})
         self.assertGreaterEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 2)
         self.assertLessEqual(float(candidate["STAKE"]), 8.0)
+        self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
+        self.assertLessEqual(int(candidate["MULTIPLIER_VALUE"]), 10)
 
     def test_boom1000_sparse_metrics_force_directional_probe(self) -> None:
         random.seed(11)
@@ -38,7 +40,33 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {4, 5, 6})
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {5, 6})
+
+    def test_normalize_boom1000_candidate_prunes_bad_regions(self) -> None:
+        candidate = optimize_loop.normalize_candidate_params(
+            {
+                "SYMBOL": "BOOM1000",
+                "CONTRACT_MODE": "multiplier",
+                "MULTIPLIER_DIRECTION": "down",
+                "MULTIPLIER_VALUE": "40",
+                "MULTIPLIER_TAKE_PROFIT": "3.0",
+                "MULTIPLIER_STOP_LOSS": "0.2",
+                "MULTIPLIER_MAX_HOLD_TICKS": "45",
+                "RISE_FALL_MIN_VOTES": "3",
+                "RISE_FALL_COOLDOWN_TICKS": "40",
+                "RISE_FALL_USE_ENSEMBLE": "false",
+                "RISE_FALL_ENSEMBLE_MIN_PROB": "0.10",
+                "RISE_FALL_BOOM_MAX_CUSUM": "8.5",
+                "RISE_FALL_BOOM_MAX_VELOCITY": "0.005",
+                "RISE_FALL_BOOM_MAX_IMBALANCE": "5.0",
+            }
+        )
+
+        self.assertEqual(candidate["MULTIPLIER_DIRECTION"], "signal")
+        self.assertEqual(candidate["MULTIPLIER_VALUE"], "10")
+        self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
+        self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "5")
+        self.assertEqual(candidate["MULTIPLIER_MAX_HOLD_TICKS"], "18")
 
     def test_monthly_candidate_viability_rejects_sparse_month(self) -> None:
         self.assertFalse(

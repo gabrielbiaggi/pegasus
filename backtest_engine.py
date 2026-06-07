@@ -2089,6 +2089,30 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
     else:
         m["score"] += live_avg * 3.0
 
+    direction = str(env_overrides.get("MULTIPLIER_DIRECTION", "signal")).strip().lower()
+    tp = float(env_overrides.get("MULTIPLIER_TAKE_PROFIT", 0.50) or 0.50)
+    sl = float(env_overrides.get("MULTIPLIER_STOP_LOSS", 1.00) or 1.00)
+    hold = int(float(env_overrides.get("MULTIPLIER_MAX_HOLD_TICKS", 30)) or 30)
+    votes = int(float(env_overrides.get("RISE_FALL_MIN_VOTES", 4)) or 4)
+    cooldown = int(float(env_overrides.get("RISE_FALL_COOLDOWN_TICKS", 3)) or 3)
+    use_ensemble = str(env_overrides.get("RISE_FALL_USE_ENSEMBLE", "false")).lower() == "true"
+    rr = (tp / sl) if sl > 0 else 99.0
+
+    if direction == "down":
+        m["score"] -= 180.0
+    if not use_ensemble:
+        m["score"] -= 120.0
+    if votes < 5:
+        m["score"] -= (5 - votes) * 80.0
+    if hold > 18:
+        m["score"] -= (hold - 18) * 18.0
+    if cooldown > 24:
+        m["score"] -= (cooldown - 24) * 10.0
+    if rr > 1.9:
+        m["score"] -= (rr - 1.9) * 180.0
+    elif rr < 0.55:
+        m["score"] -= (0.55 - rr) * 240.0
+
     m["summary"] = summary
     m["monthly_breakdown"] = {
         "Super-Frankenstein": compute_monthly_breakdown(results, "Super-Frankenstein"),

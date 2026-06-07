@@ -622,6 +622,36 @@ def normalize_candidate_params(params: dict | None) -> dict:
         except (TypeError, ValueError):
             out["RISE_FALL_MIN_VOTES"] = "4"
 
+    symbol = _norm_symbol(out.get("SYMBOL") or ACTIVE_SYMBOL)
+    contract_mode = _norm_contract_mode(out.get("CONTRACT_MODE") or "multiplier")
+    if contract_mode == "multiplier" and symbol == "BOOM1000":
+        out["MULTIPLIER_VALUE"] = str(max(5, min(10, int(float(out.get("MULTIPLIER_VALUE", 5))))))
+        direction = str(out.get("MULTIPLIER_DIRECTION", "signal")).strip().lower()
+        if direction not in {"signal", "up"}:
+            direction = "signal"
+        out["MULTIPLIER_DIRECTION"] = direction
+
+        tp = float(out.get("MULTIPLIER_TAKE_PROFIT", 0.75) or 0.75)
+        sl = float(out.get("MULTIPLIER_STOP_LOSS", 0.85) or 0.85)
+        hold = int(float(out.get("MULTIPLIER_MAX_HOLD_TICKS", 12)) or 12)
+        votes = int(float(out.get("RISE_FALL_MIN_VOTES", 5)) or 5)
+        cooldown = int(float(out.get("RISE_FALL_COOLDOWN_TICKS", 12)) or 12)
+        ens_prob = float(out.get("RISE_FALL_ENSEMBLE_MIN_PROB", 0.32) or 0.32)
+        max_cusum = float(out.get("RISE_FALL_BOOM_MAX_CUSUM", 3.8) or 3.8)
+        max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.0026) or 0.0026)
+        max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 2.2) or 2.2)
+
+        out["MULTIPLIER_TAKE_PROFIT"] = str(round(max(0.45, min(1.60, tp)), 2))
+        out["MULTIPLIER_STOP_LOSS"] = str(round(max(0.45, min(1.35, sl)), 2))
+        out["MULTIPLIER_MAX_HOLD_TICKS"] = str(max(4, min(18, hold)))
+        out["RISE_FALL_MIN_VOTES"] = str(max(5, min(6, votes)))
+        out["RISE_FALL_COOLDOWN_TICKS"] = str(max(6, min(24, cooldown)))
+        out["RISE_FALL_USE_ENSEMBLE"] = "true"
+        out["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(max(0.24, min(0.42, ens_prob)), 2))
+        out["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
+        out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.0014, min(0.0042, max_vel)), 6))
+        out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(1.4, min(3.6, max_imb)), 4))
+
     return out
 
 
@@ -633,47 +663,54 @@ def inject_global_multiplier_search(params: dict) -> dict:
 
     if contract_mode == "multiplier" and symbol == "BOOM1000":
         regime = random.choices(
-            ["spike_long", "balanced_probe", "rare_short"],
-            weights=[0.65, 0.25, 0.10],
+            ["spike_long", "balanced_probe", "trend_follow"],
+            weights=[0.58, 0.27, 0.15],
             k=1,
         )[0]
         if regime == "spike_long":
             p["MULTIPLIER_DIRECTION"] = "up"
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.45, 1.80), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.35, 1.40), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 24))
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
             p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 32))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 18))
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
-            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.42), 2))
-            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.0, 8.0), 4))
-            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0008, 0.0045), 6))
-            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.0, 4.0), 4))
+            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
+            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
+            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0018, 0.0040), 6))
+            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
             min_stake, _ = effective_stake_bounds(p)
             p["STAKE"] = str(round(random.uniform(min_stake, 6.0), 2))
             return normalize_candidate_params(p)
         if regime == "balanced_probe":
             p["MULTIPLIER_DIRECTION"] = "signal"
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.35, 1.25), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.45, 1.80), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 36))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([4, 5, 6]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(10, 40))
-            p["RISE_FALL_USE_ENSEMBLE"] = random.choice(["true", "false"])
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.50, 1.50), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.25), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 18))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 24))
+            p["RISE_FALL_USE_ENSEMBLE"] = "true"
+            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.24, 0.38), 2))
+            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
+            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0014, 0.0039), 6))
+            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.4, 3.6), 4))
             min_stake, _ = effective_stake_bounds(p)
             p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
             return normalize_candidate_params(p)
-        p["MULTIPLIER_DIRECTION"] = "down"
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
         p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
-        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.25, 0.90), 2))
-        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.25, 0.80), 2))
-        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(2, 12))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.65, 1.60), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.50, 1.20), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 16))
         p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
-        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(20, 55))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 20))
         p["RISE_FALL_USE_ENSEMBLE"] = "true"
-        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.35, 0.60), 2))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.28, 0.42), 2))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 5.0), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0016, 0.0042), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
         min_stake, _ = effective_stake_bounds(p)
         p["STAKE"] = str(round(random.uniform(min_stake, max(min_stake, 6.0)), 2))
         return normalize_candidate_params(p)
@@ -724,14 +761,34 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
             p["MULTIPLIER_DIRECTION"] = random.choice(["up", "signal"])
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.40, 1.50), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.35, 1.20), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 20))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([4, 5, 6]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 24))
+            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
+            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
+            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
+            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 18))
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
-            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.40), 2))
+            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.38), 2))
+            return normalize_candidate_params(p)
+
+        if contract_mode == "multiplier" and symbol == "BOOM1000" and -0.20 <= avg_d <= 0.20:
+            action = random.choice(["tp_sl_pair", "hold", "votes", "cooldown", "filters", "direction"])
+            if action == "tp_sl_pair":
+                p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.25), 2))
+                p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
+            elif action == "hold":
+                p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
+            elif action == "votes":
+                p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+                p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
+            elif action == "cooldown":
+                p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 20))
+            elif action == "filters":
+                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
+                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0016, 0.0040), 6))
+                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+            else:
+                p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
             return normalize_candidate_params(p)
         
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
@@ -763,12 +820,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 val = float(p["MULTIPLIER_TAKE_PROFIT"])
                 p["MULTIPLIER_TAKE_PROFIT"] = str(round(min(PARAM_SPACE["MULTIPLIER_TAKE_PROFIT"]["max"], val * random.choice([1.2, 1.5, 2.0])), 2))
             elif action == "mult_dir":
-                choices = PARAM_SPACE["MULTIPLIER_DIRECTION"]["choices"]
                 current = str(p.get("MULTIPLIER_DIRECTION", "signal"))
-                p["MULTIPLIER_DIRECTION"] = random.choice([c for c in choices if c != current])
+                p["MULTIPLIER_DIRECTION"] = "up" if current == "signal" else "signal"
             elif action == "exposure":
-                p["STAKE"] = str(round(random.uniform(0.35, 10.0), 2))
-                p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25, 30, 40, 50, 75]))
+                min_stake, _ = effective_stake_bounds(p)
+                p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
+                p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
             
             # Opcional: reduz o stake um pouco para proteger o capital
             if "STAKE" in p and random.random() < 0.3:
@@ -794,15 +851,13 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 val = int(p["RISE_FALL_MIN_VOTES"])
                 p["RISE_FALL_MIN_VOTES"] = str(max(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["min"], val - 1))
             elif action == "multiplier" and "MULTIPLIER_VALUE" in p:
-                val = int(p["MULTIPLIER_VALUE"])
-                p["MULTIPLIER_VALUE"] = str(min(PARAM_SPACE["MULTIPLIER_VALUE"]["max"], val + 10))
+                p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
             elif action == "mult_tp" and "MULTIPLIER_TAKE_PROFIT" in p:
                 val = float(p["MULTIPLIER_TAKE_PROFIT"])
                 p["MULTIPLIER_TAKE_PROFIT"] = str(round(min(PARAM_SPACE["MULTIPLIER_TAKE_PROFIT"]["max"], val + 0.10), 2))
             elif action == "mult_dir":
-                choices = PARAM_SPACE["MULTIPLIER_DIRECTION"]["choices"]
                 current = str(p.get("MULTIPLIER_DIRECTION", "signal"))
-                p["MULTIPLIER_DIRECTION"] = random.choice([c for c in choices if c != current])
+                p["MULTIPLIER_DIRECTION"] = "up" if current == "signal" else "signal"
             elif action == "filters":
                 # Afrouxa de leve os filtros se o número de trades for muito baixo
                 for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
@@ -810,7 +865,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                         val = float(p[f_key])
                         p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.15), 4))
             
-            return p
+            return normalize_candidate_params(p)
 
     # 3. Caso padrão (exploração puramente aleatória / perturbação de 1-4 parâmetros)
     eligible = [k for k in PARAM_SPACE if k not in FROZEN_PARAMS]
