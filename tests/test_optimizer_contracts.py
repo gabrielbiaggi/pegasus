@@ -73,7 +73,7 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(candidate["MULTIPLIER_DIRECTION"], "signal")
         self.assertEqual(candidate["MULTIPLIER_VALUE"], "10")
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "5")
+        self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "3")
         self.assertEqual(candidate["MULTIPLIER_MAX_HOLD_TICKS"], "18")
         self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_CONFIDENCE"], "0.8")
         self.assertEqual(candidate["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"], "2.0")

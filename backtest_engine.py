@@ -1410,7 +1410,10 @@ def _collect_day_outcomes(
                 selected_signal = "CALL" if is_crash else "PUT"
                 actual_score = up_votes if is_crash else down_votes
 
-            if actual_score < RISE_FALL_MIN_VOTES:
+            signal_vote_floor = RISE_FALL_MIN_VOTES
+            if CONTRACT_MODE == "multiplier":
+                signal_vote_floor = max(2, min(RISE_FALL_MIN_VOTES, MULTIPLIER_JUMP_MIN_SCORE))
+            if actual_score < signal_vote_floor:
                 i += SAMPLE_EVERY
                 continue
 

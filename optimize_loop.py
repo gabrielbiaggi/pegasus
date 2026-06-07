@@ -660,7 +660,7 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["MULTIPLIER_TAKE_PROFIT"] = str(round(max(0.45, min(1.60, tp)), 2))
         out["MULTIPLIER_STOP_LOSS"] = str(round(max(0.45, min(1.35, sl)), 2))
         out["MULTIPLIER_MAX_HOLD_TICKS"] = str(max(4, min(18, hold)))
-        out["RISE_FALL_MIN_VOTES"] = str(max(5, min(6, votes)))
+        out["RISE_FALL_MIN_VOTES"] = str(max(3, min(5, votes)))
         out["RISE_FALL_COOLDOWN_TICKS"] = str(max(6, min(24, cooldown)))
         out["RISE_FALL_USE_ENSEMBLE"] = "true"
         out["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(max(0.24, min(0.42, ens_prob)), 2))
@@ -699,7 +699,7 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
             p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
             p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
             p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 18))
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
             p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
@@ -723,7 +723,7 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.50, 1.50), 2))
             p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.25), 2))
             p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 18))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+            p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
             p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 24))
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
             p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.24, 0.38), 2))
@@ -746,7 +746,7 @@ def inject_global_multiplier_search(params: dict) -> dict:
         p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.65, 1.60), 2))
         p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.50, 1.20), 2))
         p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 16))
-        p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
         p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 20))
         p["RISE_FALL_USE_ENSEMBLE"] = "true"
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.28, 0.42), 2))
