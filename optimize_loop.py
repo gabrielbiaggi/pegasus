@@ -345,7 +345,7 @@ MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
 
 def parse_optimizer_workers(env: dict | None = None, default: int = 6) -> int:
     """Return a bounded optimizer worker count for memory-safe parallelism."""
-    env = env or os.environ
+    env = os.environ if env is None else env
     raw = env.get("PEGASUS_OPTIMIZER_WORKERS", str(default))
     try:
         value = int(str(raw).strip())
