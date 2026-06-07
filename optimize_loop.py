@@ -88,6 +88,7 @@ def _init_opt_db():
 
 def _save_opt_iteration(entry: dict, params: dict) -> None:
     db_path = Path("logs/results.db")
+    _init_opt_db()
     conn = sqlite3.connect(str(db_path))
     try:
         safe_params = sanitize_params_for_storage(params)
@@ -134,6 +135,7 @@ def _load_opt_history() -> list[dict]:
     db_path = Path("logs/results.db")
     if not db_path.exists():
         return []
+    _init_opt_db()
     history = []
     conn = sqlite3.connect(str(db_path))
     try:
@@ -179,6 +181,7 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
     db_path = Path("logs/results.db")
     if not db_path.exists():
         return None
+    _init_opt_db()
     target_context = optimizer_context()
     conn = sqlite3.connect(str(db_path))
     try:
@@ -228,6 +231,7 @@ def _load_top_champions() -> list[dict]:
     db_path = Path("logs/results.db")
     if not db_path.exists():
         return []
+    _init_opt_db()
     target_context = optimizer_context()
     champions = []
     conn = sqlite3.connect(str(db_path))
