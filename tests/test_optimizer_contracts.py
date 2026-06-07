@@ -22,7 +22,7 @@ class OptimizerContractsTest(unittest.TestCase):
         candidate = optimize_loop.inject_global_multiplier_search(params)
 
         self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {5, 6})
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {3, 4, 5})
         self.assertGreaterEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 2)
         self.assertLessEqual(float(candidate["STAKE"]), 8.0)
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
@@ -40,7 +40,7 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {5, 6})
+        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {3, 4, 5})
 
     def test_normalize_boom1000_candidate_prunes_bad_regions(self) -> None:
         candidate = optimize_loop.normalize_candidate_params(
