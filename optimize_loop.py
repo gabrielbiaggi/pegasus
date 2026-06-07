@@ -1634,6 +1634,35 @@ def main():
             elif space["type"] == "float_sci":
                 best_env[key] = f"{(space['min'] + space['max']) / 2:.2e}"
 
+    empty_metrics = {
+        "avg_daily_profit": 0.0,
+        "positive_days": 0,
+        "negative_days": 0,
+        "active_days": 0,
+        "total_days": 0,
+        "total_trades": 0,
+        "consistency_pct": 0.0,
+        "total_pnl": 0.0,
+        "score": 0.0,
+        "best_day_pnl": 0.0,
+        "worst_day_pnl": 0.0,
+        "roi_pct": 0.0,
+        "sharpe_ratio": 0.0,
+        "sortino_ratio": 0.0,
+        "max_drawdown": 0.0,
+    }
+    write_state(
+        0,
+        empty_metrics,
+        None,
+        [],
+        running=True,
+        evaluating_candidates=[],
+        monthly_champions={},
+        phase="boot:baseline",
+        crossover_results=[],
+    )
+
     # ── Baseline (parâmetros atuais) ─────────────────────────────────────────
     print(f"\n📊 Calculando baseline com parâmetros atuais...", flush=True)
     t0 = time.time()
