@@ -123,6 +123,25 @@ class OptimizerContractsTest(unittest.TestCase):
             )
         )
 
+    def test_build_monthly_champion_entry_marks_sparse_month_as_not_viable(self) -> None:
+        entry = optimize_loop.build_monthly_champion_entry(
+            {"SYMBOL": "BOOM1000", "CONTRACT_MODE": "multiplier", "STAKE": "5.0"},
+            {
+                "score": -25450.0,
+                "avg_daily_profit": 0.0,
+                "total_pnl": 0.0,
+                "active_days": 0,
+                "total_trades": 0,
+                "positive_days": 0,
+                "negative_days": 0,
+                "consistency_pct": 0.0,
+                "worst_day_pnl": 0.0,
+            },
+        )
+
+        self.assertFalse(entry["candidate_viable"])
+        self.assertFalse(entry["deployable"])
+
     def test_crossover_candidate_viability_rejects_single_month_concentration(self) -> None:
         self.assertFalse(
             optimize_loop.is_crossover_candidate_viable(

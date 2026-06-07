@@ -1798,18 +1798,33 @@ def main():
         champ_params.pop("START_DATE", None)
         champ_params.pop("END_DATE", None)
         champ_params = sanitize_params_for_storage(champ_params)
+        champion_viable = bool(is_monthly_candidate_viable(month_best_metrics))
 
-        monthly_champion_entry = build_monthly_champion_entry(champ_params, month_best_metrics)
-        monthly_champion_entry["month_name"] = m_name
-        monthly_champion_entry["month_key"] = m_key
-        monthly_champion_entry["eligible_for_crossover"] = bool(is_monthly_candidate_viable(month_best_metrics))
-        monthly_champions[m_key] = monthly_champion_entry
-        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                    evaluating_candidates=[],
-                    monthly_champions=monthly_champions,
-                    phase=f"monthly:{m_name}:champion")
-        print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
-        print(f"   Parâmetros seguros: {champ_params}", flush=True)
+        if champion_viable:
+            monthly_champion_entry = build_monthly_champion_entry(champ_params, month_best_metrics)
+            monthly_champion_entry["month_name"] = m_name
+            monthly_champion_entry["month_key"] = m_key
+            monthly_champion_entry["eligible_for_crossover"] = True
+            monthly_champions[m_key] = monthly_champion_entry
+            write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                        evaluating_candidates=[],
+                        monthly_champions=monthly_champions,
+                        phase=f"monthly:{m_name}:champion")
+            print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
+            print(f"   Parâmetros seguros: {champ_params}", flush=True)
+        else:
+            monthly_champions.pop(m_key, None)
+            write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                        evaluating_candidates=[],
+                        monthly_champions=monthly_champions,
+                        phase=f"monthly:{m_name}:no-viable-champion")
+            print(
+                f"   ⚠️  {m_name}: nenhum campeão viável neste ciclo "
+                f"(score={month_best_score:.4f}, avg_day=${float((month_best_metrics or {}).get('avg_daily_profit', 0.0) or 0.0):.2f}, "
+                f"trades={int((month_best_metrics or {}).get('total_trades', 0) or 0)}, "
+                f"ativos={int((month_best_metrics or {}).get('active_days', 0) or 0)}).",
+                flush=True,
+            )
 
     # ── Crossover & Comparação Cruzada ───────────────────────────────────────
     print(f"\n🔄 [Crossover] Iniciando validação cruzada dos campeões mensais...", flush=True)
