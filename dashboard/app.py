@@ -1247,8 +1247,6 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
     seen: set[str] = set()
     for path in paths:
         worker_id = path.stem.replace("backtest_worker_", "", 1)
-        if not optimizer_worker_re.match(worker_id):
-            continue
         if worker_id in seen:
             continue
         seen.add(worker_id)
@@ -1260,6 +1258,10 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
             mtime = stat.st_mtime
             if not data.get("current_month"):
                 continue
+            is_optimizer_v3 = bool(optimizer_worker_re.match(worker_id))
+            stale = (now - mtime) > 180
+            if not is_optimizer_v3 and (not include_stale or not stale):
+                continue
             curr_idx = int(data.get("current_day_index", 0) or 0)
             total_days = int(data.get("total_days", 0) or 0)
             elapsed = float(data.get("elapsed_s", 0.0) or 0.0)
@@ -1267,7 +1269,6 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
             est_remaining = None
             if curr_idx > 0 and total_days > curr_idx:
                 est_remaining = round((total_days - curr_idx) * (elapsed / curr_idx), 1)
-            stale = (now - mtime) > 180
             if stale and not include_stale:
                 continue
             month = data.get("current_month") or ""
