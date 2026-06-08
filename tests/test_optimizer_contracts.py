@@ -519,6 +519,43 @@ class OptimizerContractsTest(unittest.TestCase):
             self.assertFalse((logs / "backtest_worker_Fev_r0_w1.json").exists())
             self.assertTrue(state_path.exists())
 
+    def test_ensure_optimizer_db_healthy_rotates_malformed_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            db_path = logs / "results.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path.write_text("not a sqlite database")
+
+            ok = optimize_loop.ensure_optimizer_db_healthy(db_path)
+
+            self.assertTrue(ok)
+            self.assertTrue(db_path.exists())
+            backups = list(logs.glob("results.db.corrupt-*"))
+            self.assertTrue(backups)
+
+    def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
+        monthly_states = {
+            "2026-01": {
+                "best_env": {"SYMBOL": "1HZ25V", "CONTRACT_MODE": "rise_fall", "STAKE": "7.0"},
+                "best_metrics": {"score": -12.0, "avg_daily_profit": -0.2, "positive_days": 8, "active_days": 20},
+            },
+            "2026-02": {
+                "best_env": {"SYMBOL": "1HZ25V", "CONTRACT_MODE": "rise_fall", "STAKE": "9.0"},
+                "best_metrics": {"score": -8.0, "avg_daily_profit": 0.1, "positive_days": 9, "active_days": 18},
+            },
+        }
+
+        pool = optimize_loop.build_refinement_seed_pool(
+            monthly_states=monthly_states,
+            crossover_results=[],
+            best_env={"SYMBOL": "1HZ25V", "CONTRACT_MODE": "rise_fall", "STAKE": "5.0"},
+            best_data={"score": -20.0, "avg_daily_profit": -1.0},
+        )
+
+        self.assertGreaterEqual(len(pool), 3)
+        stakes = sorted({env["STAKE"] for env, _metrics in pool})
+        self.assertEqual(stakes, ["5.0", "7.0", "9.0"])
+
     def test_sanitize_metrics_for_state_removes_runtime_payloads(self) -> None:
         metrics = {
             "avg_daily_profit": 12.3,

@@ -46,9 +46,32 @@ LOG_PATH      = Path("logs/optimizer_v2.log")
 # ── Persistência de Otimização em Banco de Dados SQLite ───────────────────────
 import sqlite3
 
+
+def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
+    db_path = db_path or Path("logs/results.db")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if not db_path.exists():
+        return True
+    try:
+        conn = sqlite3.connect(str(db_path))
+        res = conn.execute("PRAGMA integrity_check").fetchone()
+        conn.close()
+        return bool(res and res[0] == "ok")
+    except Exception as exc:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        backup = db_path.with_name(f"{db_path.name}.corrupt-{stamp}")
+        try:
+            shutil.move(str(db_path), str(backup))
+        except Exception as move_exc:
+            print(f"[WARN] ensure_optimizer_db_healthy backup error: {move_exc}", flush=True)
+        print(f"[WARN] optimizer DB corrompido, rotacionado para {backup.name}: {exc}", flush=True)
+        sqlite3.connect(str(db_path)).close()
+        return True
+
 def _init_opt_db():
     db_path = Path("logs/results.db")
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_optimizer_db_healthy(db_path)
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -128,6 +151,8 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
         conn.commit()
     except Exception as e:
         print(f"[WARN] _save_opt_iteration error: {e}", flush=True)
+        if "malformed" in str(e).lower():
+            ensure_optimizer_db_healthy(db_path)
     finally:
         conn.close()
 
@@ -173,6 +198,8 @@ def _load_opt_history() -> list[dict]:
         history.reverse()
     except Exception as e:
         print(f"[WARN] _load_opt_history error: {e}", flush=True)
+        if "malformed" in str(e).lower():
+            ensure_optimizer_db_healthy(db_path)
     finally:
         conn.close()
     return history
@@ -223,6 +250,8 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
             return best_data, params
     except Exception as e:
         print(f"[WARN] _load_best_opt_run error: {e}", flush=True)
+        if "malformed" in str(e).lower():
+            ensure_optimizer_db_healthy(db_path)
     finally:
         conn.close()
     return None
@@ -250,6 +279,8 @@ def _load_top_champions() -> list[dict]:
                 pass
     except Exception as e:
         print(f"[WARN] _load_top_champions error: {e}", flush=True)
+        if "malformed" in str(e).lower():
+            ensure_optimizer_db_healthy(db_path)
     finally:
         conn.close()
     return champions
@@ -1652,6 +1683,33 @@ def build_dashboard_history_entry(
     }
 
 
+def build_refinement_seed_pool(
+    monthly_states: dict,
+    crossover_results: list[dict],
+    best_env: dict,
+    best_data: dict,
+) -> list[tuple[dict, dict]]:
+    pool: list[tuple[dict, dict]] = []
+    seen: set[str] = set()
+
+    def _add(env: dict | None, metrics: dict | None) -> None:
+        if not env:
+            return
+        clean_env = sanitize_env_for_worker(env.copy())
+        key = json.dumps(sanitize_params_for_storage(clean_env), sort_keys=True)
+        if key in seen:
+            return
+        seen.add(key)
+        pool.append((clean_env, metrics or {}))
+
+    _add(best_env, best_data)
+    for row in sorted(crossover_results or [], key=lambda item: float(item.get("score", -999999.0) or -999999.0), reverse=True)[:10]:
+        _add(row.get("params") or {}, row)
+    for month_state in (monthly_states or {}).values():
+        _add(month_state.get("best_env") or {}, month_state.get("best_metrics") or {})
+    return pool
+
+
 def reset_optimizer_runtime_state(
     logs_dir: Path | None = None,
     state_path: Path | None = None,
@@ -2459,66 +2517,56 @@ def main():
         print(f"{r['champ_name']:<12} | {pnls_str}", flush=True)
     print(f"{'-'*85}", flush=True)
 
-    if not crossover_results:
-        print("   ⚠️  Nenhum campeão passou pela validação cruzada; mantendo bot offline e reiniciando busca.", flush=True)
-        write_state(iteration - 1, baseline_metrics, best_data, history,
-                    evaluating_candidates=[],
-                    monthly_champions=monthly_champions,
-                    optimizer_run_id=optimizer_run_id)
-        return
-
     deployable_crossovers = [r for r in crossover_results if is_live_deployable(r) and is_crossover_candidate_viable(r)]
-    if not deployable_crossovers:
-        print("\n⏸️ Nenhum campeão da validação cruzada passou o gate live; mantendo melhor anterior e reiniciando busca.", flush=True)
+    supreme_winner = deployable_crossovers[0] if deployable_crossovers else (crossover_results[0] if crossover_results else None)
+
+    if supreme_winner:
+        print(f"\n👑 Âncora atual da busca: Campeão de {supreme_winner['champ_name']}", flush=True)
+        print(f"   Métricas Globais: Score={supreme_winner['score']:.4f} | Lucro/Dia=${supreme_winner['avg_daily_profit']:.2f}/dia", flush=True)
+        best_env = supreme_winner["params"].copy()
+        best_env.pop("START_DATE", None)
+        best_env.pop("END_DATE", None)
+        best_score = supreme_winner["score"]
+        best_pos = supreme_winner["positive_days"]
+        best_avg = supreme_winner["avg_daily_profit"]
+        best_data = {
+            "score": supreme_winner["score"],
+            "avg_daily_profit": supreme_winner["avg_daily_profit"],
+            "total_pnl": supreme_winner["total_pnl"],
+            "consistency_pct": supreme_winner["consistency_pct"],
+            "positive_days": supreme_winner["positive_days"],
+            "active_days": supreme_winner["active_days"],
+            "worst_day_pnl": supreme_winner.get("worst_day_pnl", 0.0),
+            "max_drawdown": supreme_winner.get("max_drawdown", 0.0),
+            "iteration": 9999,
+            "monthly_breakdown": supreme_winner.get("monthly_breakdown", {}),
+            "phase": (
+                f"supreme:{supreme_winner['champ_name']}"
+                if supreme_winner in deployable_crossovers
+                else f"crossover-anchor:{supreme_winner['champ_name']}"
+            ),
+        }
         write_state(dashboard_result_seq, baseline_metrics, best_data, history,
                     evaluating_candidates=[],
                     monthly_champions=monthly_champions,
-                    phase="crossover:rejected",
+                    phase=best_data["phase"],
                     crossover_results=crossover_results,
                     optimizer_run_id=optimizer_run_id)
-        return
-
-    supreme_winner = deployable_crossovers[0]
-    print(f"\n👑 Vencedor Supremo Selecionado: Campeão de {supreme_winner['champ_name']}", flush=True)
-    print(f"   Métricas Globais: Score={supreme_winner['score']:.4f} | Lucro/Dia=${supreme_winner['avg_daily_profit']:.2f}/dia", flush=True)
-
-    best_env = supreme_winner["params"].copy()
-    if "START_DATE" in best_env:
-        del best_env["START_DATE"]
-    if "END_DATE" in best_env:
-        del best_env["END_DATE"]
-
-    best_score = supreme_winner["score"]
-    best_pos = supreme_winner["positive_days"]
-    best_avg = supreme_winner["avg_daily_profit"]
-    best_data = {
-        "score": supreme_winner["score"],
-        "avg_daily_profit": supreme_winner["avg_daily_profit"],
-        "total_pnl": supreme_winner["total_pnl"],
-        "consistency_pct": supreme_winner["consistency_pct"],
-        "positive_days": supreme_winner["positive_days"],
-        "active_days": supreme_winner["active_days"],
-        "worst_day_pnl": supreme_winner.get("worst_day_pnl", 0.0),
-        "max_drawdown": supreme_winner.get("max_drawdown", 0.0),
-        "iteration": 9999,
-        "monthly_breakdown": supreme_winner.get("monthly_breakdown", {}),
-        "phase": f"supreme:{supreme_winner['champ_name']}",
-    }
-    write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                evaluating_candidates=[],
-                monthly_champions=monthly_champions,
-                phase=f"supreme:{supreme_winner['champ_name']}",
-                crossover_results=crossover_results,
-                optimizer_run_id=optimizer_run_id)
-
-    # Faz deploy do vencedor supremo no bot ao vivo
-    if is_live_deployable(best_data):
-        print(f"\n🚀 Fazendo deploy do Vencedor Supremo no bot ao vivo...", flush=True)
-        ok = try_deploy_winner(best_env, f"Supreme Winner from month {supreme_winner['champ_name']}: score={supreme_winner['score']:.4f} avg_day=${supreme_winner['avg_daily_profit']:.2f}/dia", force=True)
-        if ok:
-            print(f"✅ Vencedor Supremo ativo com sucesso no servidor!", flush=True)
+        if supreme_winner in deployable_crossovers and is_live_deployable(best_data):
+            print(f"\n🚀 Fazendo deploy do Vencedor Supremo no bot ao vivo...", flush=True)
+            ok = try_deploy_winner(best_env, f"Supreme Winner from month {supreme_winner['champ_name']}: score={supreme_winner['score']:.4f} avg_day=${supreme_winner['avg_daily_profit']:.2f}/dia", force=True)
+            if ok:
+                print(f"✅ Vencedor Supremo ativo com sucesso no servidor!", flush=True)
+        else:
+            print("\n⏸️ Nenhum crossover passa gate live; mantendo busca contínua sem reiniciar a arena.", flush=True)
     else:
-        print("\n⏸️ Vencedor Supremo ainda não passa gate live; sem deploy ao bot.", flush=True)
+        print("\n⏸️ Nenhum campeão de crossover ainda; mantendo busca contínua sem reiniciar a arena.", flush=True)
+        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
+                    evaluating_candidates=[],
+                    monthly_champions=monthly_champions,
+                    phase="crossover:pending",
+                    crossover_results=crossover_results,
+                    optimizer_run_id=optimizer_run_id)
 
     # ── Loop infinito de refinamento contínuo ─────────────────────────────────
     print(f"\n{'-'*70}", flush=True)
@@ -2527,7 +2575,7 @@ def main():
     print(f"{'-'*70}\n", flush=True)
 
     iteration = 10000
-    champion_pool = [(best_env, best_data)]
+    champion_pool = build_refinement_seed_pool(monthly_states, crossover_results, best_env, best_data)
 
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         while True:
@@ -2653,15 +2701,23 @@ def main():
 
 
 if __name__ == "__main__":
-    cycle = 1
-    while True:
+    try:
+        print("\n♾️  OPTIMIZER SEARCH PASS — processo contínuo sem auto-restart lógico", flush=True)
+        main()
+    except KeyboardInterrupt:
+        write_state(
+            0,
+            {},
+            {},
+            [],
+            running=False,
+            evaluating_candidates=[],
+            phase="stopped",
+        )
+        raise
+    except SystemExit as exc:
+        print(f"\n[ERROR] optimizer requested exit: {exc}", flush=True)
         try:
-            print(f"\n♾️  OPTIMIZER SEARCH PASS #{cycle} — busca contínua até campeão validado", flush=True)
-            main()
-            cycle += 1
-            print("\n🔁 Ciclo mensal sem campeão refinável; mantendo estado e continuando busca...", flush=True)
-            time.sleep(0.2)
-        except KeyboardInterrupt:
             write_state(
                 0,
                 {},
@@ -2669,38 +2725,23 @@ if __name__ == "__main__":
                 [],
                 running=False,
                 evaluating_candidates=[],
-                phase="stopped",
+                phase="error:system-exit",
             )
-            raise
-        except SystemExit as exc:
-            print(f"\n[ERROR] optimizer requested exit: {exc}", flush=True)
-            try:
-                write_state(
-                    0,
-                    {},
-                    {},
-                    [],
-                    running=False,
-                    evaluating_candidates=[],
-                    phase="error:system-exit",
-                )
-            except Exception:
-                pass
-            time.sleep(5.0)
-            cycle += 1
-        except Exception as exc:
-            print(f"\n[ERROR] optimizer crashed: {exc}", flush=True)
-            try:
-                write_state(
-                    0,
-                    {},
-                    {},
-                    [],
-                    running=False,
-                    evaluating_candidates=[],
-                    phase=f"error:{type(exc).__name__}",
-                )
-            except Exception:
-                pass
-            time.sleep(2.0)
-            cycle += 1
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        print(f"\n[ERROR] optimizer crashed: {exc}", flush=True)
+        try:
+            write_state(
+                0,
+                {},
+                {},
+                [],
+                running=False,
+                evaluating_candidates=[],
+                phase=f"error:{type(exc).__name__}",
+            )
+        except Exception:
+            pass
+        raise
