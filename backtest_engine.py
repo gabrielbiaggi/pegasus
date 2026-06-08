@@ -863,10 +863,8 @@ def _replay_strategy(
                 is_win_trade = is_win
                 risk.martingale_payout_rate = RISE_FALL_MIN_PAYOUT_PCT
             elif CONTRACT_MODE == "multiplier":
-                current_tp_pct = 0.0
+                current_tp_pct = max(0.01, MULTIPLIER_TAKE_PROFIT / max(risk.fixed_stake, 0.01))
                 is_win_trade = False
-                risk.use_martingale = False
-                risk.use_soros = False
             # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
             elif is_super_frank:
                 is_absolute_calm = False
@@ -1013,6 +1011,7 @@ def _replay_strategy(
             risk._pending_stake_deduction = stake
             
             if CONTRACT_MODE == "multiplier":
+                risk.martingale_payout_rate = max(0.01, MULTIPLIER_TAKE_PROFIT / max(stake, 0.01))
                 profit = _simulate_multiplier_profit(
                     stake,
                     str(mult_direction or "MULTDOWN"),

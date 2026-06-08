@@ -27,6 +27,8 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertLessEqual(float(candidate["STAKE"]), 8.0)
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
         self.assertLessEqual(int(candidate["MULTIPLIER_VALUE"]), 10)
+        self.assertIn(candidate["FRANKENSTEIN_USE_SOROS"], {"true", "false"})
+        self.assertIn(candidate["FRANKENSTEIN_USE_MARTINGALE"], {"true", "false"})
 
     def test_boom1000_sparse_metrics_force_directional_probe(self) -> None:
         random.seed(11)
@@ -254,6 +256,32 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(safe["STAKE"], "5.0")
         self.assertEqual(safe["MIN_STAKE"], "5.0")
         self.assertEqual(safe["MAX_STAKE"], "35.0")
+
+    def test_multiplier_progression_knobs_are_searchable(self) -> None:
+        self.assertNotIn("FRANKENSTEIN_USE_SOROS", optimize_loop.FROZEN_PARAMS)
+        self.assertNotIn("FRANKENSTEIN_SOROS_STEPS", optimize_loop.FROZEN_PARAMS)
+        self.assertNotIn("FRANKENSTEIN_USE_MARTINGALE", optimize_loop.FROZEN_PARAMS)
+        self.assertNotIn("FRANKENSTEIN_MAX_GALES", optimize_loop.FROZEN_PARAMS)
+
+    def test_translate_frankenstein_params_preserves_multiplier_progressions(self) -> None:
+        translated = optimize_loop.translate_frankenstein_params(
+            {
+                "SYMBOL": "BOOM1000",
+                "CONTRACT_MODE": "multiplier",
+                "STAKE": "5",
+                "MULTIPLIER_TAKE_PROFIT": "0.50",
+                "FRANKENSTEIN_USE_SOROS": "true",
+                "FRANKENSTEIN_SOROS_STEPS": "2",
+                "FRANKENSTEIN_USE_MARTINGALE": "true",
+                "FRANKENSTEIN_MAX_GALES": "1",
+            }
+        )
+
+        self.assertEqual(translated["USE_SOROS"], "true")
+        self.assertEqual(translated["SOROS_MAX_STEPS"], "2")
+        self.assertEqual(translated["USE_MARTINGALE"], "true")
+        self.assertEqual(translated["MARTINGALE_MAX_GALES"], "1")
+        self.assertEqual(translated["MARTINGALE_PAYOUT_RATE"], "0.1")
 
     def test_optimizer_context_rejects_old_market_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})

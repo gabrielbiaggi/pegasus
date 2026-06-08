@@ -405,13 +405,6 @@ PARAM_SPACE = {
 }
 
 FROZEN_PARAMS = {
-    # Multipliers no BOOM1000 nao usam Soros/Martingale no bot real; manter
-    # esses knobs fora da exploracao evita iteracoes sem efeito operacional.
-    "FRANKENSTEIN_USE_SOROS",
-    "FRANKENSTEIN_SOROS_STEPS",
-    "FRANKENSTEIN_USE_MARTINGALE",
-    "FRANKENSTEIN_MAX_GALES",
-    "FRANKENSTEIN_MODE",
     "RISE_FALL_MIN_PAYOUT_PCT",
 }
 
@@ -504,6 +497,20 @@ def _is_safe_strategy_param(key: str) -> bool:
         or key in SAFE_PARAM_EXACT
         or any(key.startswith(prefix) for prefix in SAFE_PARAM_PREFIXES)
     )
+
+
+def multiplier_progression_payout_rate(env_vars: dict | None = None) -> float:
+    env_vars = env_vars or {}
+    try:
+        stake = float(env_vars.get("STAKE", 5.0) or 5.0)
+    except (TypeError, ValueError):
+        stake = 5.0
+    stake = max(0.35, stake)
+    try:
+        tp_abs = float(env_vars.get("MULTIPLIER_TAKE_PROFIT", 0.50) or 0.50)
+    except (TypeError, ValueError):
+        tp_abs = 0.50
+    return round(max(0.01, min(3.0, tp_abs / stake)), 4)
 
 
 def sanitize_params_for_storage(params: dict) -> dict:
@@ -639,6 +646,21 @@ def normalize_candidate_params(params: dict | None) -> dict:
     symbol = _norm_symbol(out.get("SYMBOL") or ACTIVE_SYMBOL)
     contract_mode = _norm_contract_mode(out.get("CONTRACT_MODE") or "multiplier")
     if contract_mode == "multiplier" and symbol == "BOOM1000":
+        out["FRANKENSTEIN_USE_SOROS"] = str(out.get("FRANKENSTEIN_USE_SOROS", "true")).lower()
+        out["FRANKENSTEIN_SOROS_STEPS"] = str(
+            max(0, min(3, int(float(out.get("FRANKENSTEIN_SOROS_STEPS", 2)) or 2)))
+        )
+        out["FRANKENSTEIN_USE_MARTINGALE"] = str(
+            out.get("FRANKENSTEIN_USE_MARTINGALE", "true")
+        ).lower()
+        out["FRANKENSTEIN_MAX_GALES"] = str(
+            max(0, min(2, int(float(out.get("FRANKENSTEIN_MAX_GALES", 1)) or 1)))
+        )
+        out["FRANKENSTEIN_MODE"] = (
+            "dynamic_10"
+            if str(out.get("FRANKENSTEIN_MODE", "flat")).strip().lower() == "dynamic_10"
+            else "flat"
+        )
         out["MULTIPLIER_VALUE"] = str(max(5, min(10, int(float(out.get("MULTIPLIER_VALUE", 5))))))
         direction = str(out.get("MULTIPLIER_DIRECTION", "signal")).strip().lower()
         if direction not in {"signal", "up"}:
@@ -712,6 +734,11 @@ def inject_global_multiplier_search(params: dict) -> dict:
             k=1,
         )[0]
         if regime == "spike_long":
+            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             p["MULTIPLIER_DIRECTION"] = "up"
             p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
             p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
@@ -742,6 +769,11 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["STAKE"] = str(round(random.uniform(min_stake, 6.0), 2))
             return normalize_candidate_params(p)
         if regime == "balanced_probe":
+            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             p["MULTIPLIER_DIRECTION"] = "signal"
             p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
             p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.50, 1.50), 2))
@@ -771,6 +803,11 @@ def inject_global_multiplier_search(params: dict) -> dict:
             min_stake, _ = effective_stake_bounds(p)
             p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
             return normalize_candidate_params(p)
+        p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+        p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+        p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
         p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
         p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
         p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.65, 1.60), 2))
@@ -846,6 +883,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
+            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             p["MULTIPLIER_DIRECTION"] = random.choice(["up", "signal"])
             p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
             p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
@@ -858,7 +900,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             return normalize_candidate_params(p)
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and -0.20 <= avg_d <= 0.20:
-            action = random.choice(["tp_sl_pair", "hold", "votes", "cooldown", "filters", "direction"])
+            action = random.choice(["tp_sl_pair", "hold", "votes", "cooldown", "filters", "direction", "progression"])
             if action == "tp_sl_pair":
                 p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.25), 2))
                 p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
@@ -873,6 +915,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
                 p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.016, 0.070), 6))
                 p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 11.0), 4))
+            elif action == "progression":
+                p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             else:
                 p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
             return normalize_candidate_params(p)
@@ -880,7 +928,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
-            action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_tp", "mult_value", "mult_dir", "exposure"])
+            action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_tp", "mult_value", "mult_dir", "exposure", "progression"])
             if action == "votes" and "RISE_FALL_MIN_VOTES" in p:
                 val = int(p["RISE_FALL_MIN_VOTES"])
                 p["RISE_FALL_MIN_VOTES"] = str(min(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["max"], val + 1))
@@ -912,6 +960,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 min_stake, _ = effective_stake_bounds(p)
                 p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
                 p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
+            elif action == "progression":
+                p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             
             # Opcional: reduz o stake um pouco para proteger o capital
             if "STAKE" in p and random.random() < 0.3:
@@ -923,7 +977,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
-            action = random.choice(["stake", "votes", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters"])
+            action = random.choice(["stake", "votes", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters", "progression"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
                 factor = 50.0 / max(1.0, avg_d)
@@ -950,6 +1004,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                     if f_key in p:
                         val = float(p[f_key])
                         p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.15), 4))
+            elif action == "progression":
+                p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+                p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+                p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
             
             return normalize_candidate_params(p)
 
@@ -1456,14 +1516,12 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
     symbol_upper = ACTIVE_SYMBOL.upper()
     out["CONTRACT_MODE"] = "multiplier"
     out["SYMBOL"] = symbol_upper
-    out["USE_MARTINGALE"] = "false"
-    out["USE_SOROS"] = "false"
-    out["MARTINGALE_PAYOUT_RATE"] = "1.0"
     out.setdefault("MULTIPLIER_VALUE", "100")
     out.setdefault("MULTIPLIER_DIRECTION", "signal")
     out.setdefault("MULTIPLIER_TAKE_PROFIT", "0.50")
     out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
     out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
+    out["MARTINGALE_PAYOUT_RATE"] = str(multiplier_progression_payout_rate(out))
     
     return out
 
