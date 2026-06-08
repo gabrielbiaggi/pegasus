@@ -412,7 +412,7 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual(env["STAKE"], "15.0")
         self.assertEqual(env["START_DATE"], "2026-01-01")
-        self.assertEqual(env["END_DATE"], "2026-06-04")
+        self.assertEqual(env["END_DATE"], "2026-05-31")
         self.assertNotIn("_optimizer_context", env)
         self.assertTrue(all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()))
 
@@ -492,7 +492,7 @@ class OptimizerContractsTest(unittest.TestCase):
         saved = [{"worker_id": f"Fev_r4_w{i}", "status": "Simulando..."} for i in range(6)]
         workers = [
             {"worker_id": "Fev_r4_w0", "status": "Simulando...", "progress_pct": 96.4},
-            {"worker_id": "cross_Junho", "status": "Simulando...", "progress_pct": 48.4},
+            {"worker_id": "cross_Maio", "status": "Simulando...", "progress_pct": 48.4},
             {"worker_id": "cross_Maio", "status": "Simulando...", "progress_pct": 54.8},
             {"worker_id": "par_0_Jan", "status": "Finalizado", "progress_pct": 100.0},
         ]

@@ -36,7 +36,7 @@ import backtest_engine
 
 # ── Configuração ──────────────────────────────────────────────────────────────
 START_DATE    = "2026-01-01"
-END_DATE      = "2026-06-04"
+END_DATE      = "2026-05-31"
 START_BALANCE = "50.0"       # NUNCA mude: banca base real do usuário
 
 ENV_PATH      = Path(".env")
@@ -1331,8 +1331,8 @@ def build_dashboard_history_entry(
 def build_crossover_env(champ_info: dict) -> dict[str, str]:
     """Build a clean worker env for cross-month validation."""
     env_test = sanitize_env_for_worker((champ_info.get("params") or {}).copy())
-    env_test["START_DATE"] = "2026-01-01"
-    env_test["END_DATE"] = "2026-06-04"
+    env_test["START_DATE"] = START_DATE
+    env_test["END_DATE"] = END_DATE
     return env_test
 
 
@@ -1578,6 +1578,19 @@ def split_range_into_months(start_date_str: str, end_date_str: str) -> list[dict
     return ranges
 
 
+def optimization_months() -> list[dict]:
+    """Return the active optimization months for the configured range."""
+    return split_range_into_months(START_DATE, END_DATE)
+
+
+def month_for_worker(months: list[dict], round_idx: int, worker_idx: int) -> dict:
+    """Distribute workers across months in a fair round-robin schedule."""
+    if not months:
+        raise ValueError("months cannot be empty")
+    month_idx = ((round_idx * N_WORKERS) + worker_idx) % len(months)
+    return months[month_idx]
+
+
 def run_backtest_parallel(env_vars: dict, start_date_str: str, end_date_str: str, max_workers: int = 9) -> dict | None:
     monthly_ranges = split_range_into_months(start_date_str, end_date_str)
     
@@ -1775,100 +1788,132 @@ def main():
 
     print(f"\n⚡ [Otimizador] Iniciando Otimização Evolutiva Mês a Mês...", flush=True)
 
-    months = [
-        {"name": "Janeiro", "start": "2026-01-01", "end": "2026-01-31"},
-        {"name": "Fevereiro", "start": "2026-02-01", "end": "2026-02-28"},
-        {"name": "Março", "start": "2026-03-01", "end": "2026-03-31"},
-        {"name": "Abril", "start": "2026-04-01", "end": "2026-04-30"},
-        {"name": "Maio", "start": "2026-05-01", "end": "2026-05-31"},
-        {"name": "Junho", "start": "2026-06-01", "end": "2026-06-04"},
-    ]
+    months = optimization_months()
+    monthly_states = {}
+    for m_info in months:
+        m_key = m_info["start"][:7]
+        seed_env = best_env.copy()
+        seed_env["START_DATE"] = m_info["start"]
+        seed_env["END_DATE"] = m_info["end"]
+        monthly_states[m_key] = {
+            "info": m_info,
+            "best_score": -999999.0,
+            "best_env": seed_env,
+            "best_metrics": None,
+        }
 
-    monthly_champions = {}
     dashboard_result_seq = max(iteration, 1)
+    rounds_per_month = int(os.getenv("PEGASUS_OPTIMIZER_ROUNDS_PER_MONTH", "10"))
+    total_rounds = max(1, rounds_per_month)
+    month_label = f"{months[0]['name'][:3]}-{months[-1]['name'][:3]}" if months else "mensal"
 
-    # Executamos a busca para cada mês individualmente
+    print("\n📚 Meses ativos na arena paralela:", flush=True)
+    for m_info in months:
+        print(f"   • {m_info['name']} ({m_info['start']} a {m_info['end']})", flush=True)
+
+    with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
+        for r in range(total_rounds):
+            candidates = []
+            candidates_ui = []
+            candidate_month_keys = []
+            for w in range(N_WORKERS):
+                m_info = month_for_worker(months, r, w)
+                m_key = m_info["start"][:7]
+                month_state = monthly_states[m_key]
+                cand = rand_params(month_state["best_env"], month_state["best_metrics"])
+                cand["START_DATE"] = m_info["start"]
+                cand["END_DATE"] = m_info["end"]
+                worker_id = f"{m_info['name'][:3]}_r{r}_w{w}"
+                candidates.append((cand, worker_id))
+                candidate_month_keys.append(m_key)
+                candidates_ui.append({
+                    **sanitize_params_for_storage(cand),
+                    "worker_id": worker_id,
+                    "current_month": m_info["name"],
+                    "status": "Simulando...",
+                })
+
+            write_state(
+                dashboard_result_seq,
+                baseline_metrics,
+                best_data,
+                history,
+                evaluating_candidates=candidates_ui,
+                monthly_champions=monthly_champions,
+                phase=f"monthly:{month_label}:round:{r}",
+            )
+
+            futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                m_key = candidate_month_keys[idx]
+                m_info = monthly_states[m_key]["info"]
+                month_state = monthly_states[m_key]
+                try:
+                    res = fut.result()
+                    candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
+                    if res:
+                        dashboard_result_seq += 1
+                        is_month_best = bool(res["score"] > month_state["best_score"])
+                        candidates_ui[idx].update({
+                            "result_score": round(float(res.get("score", 0.0) or 0.0), 4),
+                            "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
+                            "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
+                            "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
+                            "result_trades": int(res.get("total_trades", 0) or 0),
+                            "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
+                        })
+                        history.append(
+                            build_dashboard_history_entry(
+                                dashboard_result_seq,
+                                res,
+                                f"monthly:{m_info['name']}",
+                                is_month_best,
+                            )
+                        )
+                        _save_opt_iteration(
+                            _history_entry(dashboard_result_seq, res, 0.0, False),
+                            res.get("_env", {}),
+                        )
+                        if len(history) > 500:
+                            history = history[-500:]
+
+                        if is_month_best:
+                            month_state["best_score"] = res["score"]
+                            month_best_env = res["_env"].copy()
+                            month_best_env["START_DATE"] = m_info["start"]
+                            month_best_env["END_DATE"] = m_info["end"]
+                            month_state["best_env"] = month_best_env
+                            month_state["best_metrics"] = res
+                            print(
+                                f"   ✨ Mês {m_info['name']} (rodada {r}): "
+                                f"Novo melhor score = {month_state['best_score']:.4f} | "
+                                f"Lucro/Dia = ${res['avg_daily_profit']:.2f}/dia",
+                                flush=True,
+                            )
+                    else:
+                        print(f"   [Mês {m_info['name']}] worker {idx} retornou vazio", flush=True)
+                except Exception as e:
+                    candidates_ui[idx]["status"] = "Erro"
+                    print(f"   [Mês {m_info['name']}] erro no worker {idx}: {e}", flush=True)
+                finally:
+                    write_state(
+                        dashboard_result_seq,
+                        baseline_metrics,
+                        best_data,
+                        history,
+                        evaluating_candidates=candidates_ui,
+                        monthly_champions=monthly_champions,
+                        phase=f"monthly:{month_label}:round:{r}",
+                    )
+
     for m_info in months:
         m_name = m_info["name"]
-        m_start = m_info["start"]
-        m_end = m_info["end"]
-        m_key = m_start[:7]
-        print(f"\n📅 Otimizando para o mês: {m_name} ({m_start} a {m_end})...", flush=True)
-
-        month_best_score = -999999.0
-        month_best_env = best_env.copy()
-        month_best_env["START_DATE"] = m_start
-        month_best_env["END_DATE"] = m_end
-        month_best_metrics = None
-
-        # Mantem 9 workers simultaneos, mas aprofunda a busca mensal em mais
-        # rodadas. Mais candidatos por mes melhora a chance de escapar de
-        # vizinhancas ruins sem aumentar RAM ao mesmo tempo.
-        rounds_per_month = int(os.getenv("PEGASUS_OPTIMIZER_ROUNDS_PER_MONTH", "10"))
-        ITERS_PER_MONTH = max(N_WORKERS, N_WORKERS * max(1, rounds_per_month))
-        with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
-            for r in range(max(1, ITERS_PER_MONTH // N_WORKERS)):
-                candidates = []
-                candidates_ui = []
-                for w in range(N_WORKERS):
-                    cand = rand_params(month_best_env, month_best_metrics)
-                    cand["START_DATE"] = m_start
-                    cand["END_DATE"] = m_end
-                    worker_id = f"{m_name[:3]}_r{r}_w{w}"
-                    candidates.append((cand, worker_id))
-                    candidates_ui.append({
-                        **sanitize_params_for_storage(cand),
-                        "worker_id": worker_id,
-                        "current_month": m_name,
-                        "status": "Simulando...",
-                    })
-                write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                            evaluating_candidates=candidates_ui,
-                            monthly_champions=monthly_champions,
-                            phase=f"monthly:{m_name}:round:{r}")
-
-                futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
-
-                for fut in as_completed(futures):
-                    idx = futures[fut]
-                    try:
-                        res = fut.result()
-                        candidates_ui[idx]["status"] = "Finalizado" if res else "Falha"
-                        if res:
-                            dashboard_result_seq += 1
-                            candidates_ui[idx].update({
-                                "result_score": round(float(res.get("score", 0.0) or 0.0), 4),
-                                "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
-                                "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
-                                "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
-                                "result_trades": int(res.get("total_trades", 0) or 0),
-                                "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
-                            })
-                            history.append(
-                                build_dashboard_history_entry(
-                                    dashboard_result_seq,
-                                    res,
-                                    f"monthly:{m_name}",
-                                    bool(res["score"] > month_best_score),
-                                )
-                            )
-                            if len(history) > 500:
-                                history = history[-500:]
-                        if res and res["score"] > month_best_score:
-                            month_best_score = res["score"]
-                            month_best_env = res["_env"].copy()
-                            month_best_env["START_DATE"] = m_start
-                            month_best_env["END_DATE"] = m_end
-                            month_best_metrics = res
-                            print(f"   ✨ Mês {m_name} (rodada {r}): Novo melhor score = {month_best_score:.4f} | Lucro/Dia = ${res['avg_daily_profit']:.2f}/dia", flush=True)
-                    except Exception as e:
-                        candidates_ui[idx]["status"] = "Erro"
-                        print(f"   [Mês {m_name}] erro no worker {idx}: {e}", flush=True)
-                    finally:
-                        write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                                    evaluating_candidates=candidates_ui,
-                                    monthly_champions=monthly_champions,
-                                    phase=f"monthly:{m_name}:round:{r}")
+        m_key = m_info["start"][:7]
+        month_state = monthly_states[m_key]
+        month_best_env = month_state["best_env"].copy()
+        month_best_metrics = month_state["best_metrics"]
+        month_best_score = month_state["best_score"]
 
         champ_params = month_best_env.copy()
         champ_params.pop("START_DATE", None)
@@ -1882,18 +1927,28 @@ def main():
             monthly_champion_entry["month_key"] = m_key
             monthly_champion_entry["eligible_for_crossover"] = True
             monthly_champions[m_key] = monthly_champion_entry
-            write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                        evaluating_candidates=[],
-                        monthly_champions=monthly_champions,
-                        phase=f"monthly:{m_name}:champion")
+            write_state(
+                dashboard_result_seq,
+                baseline_metrics,
+                best_data,
+                history,
+                evaluating_candidates=[],
+                monthly_champions=monthly_champions,
+                phase=f"monthly:{m_name}:champion",
+            )
             print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
             print(f"   Parâmetros seguros: {champ_params}", flush=True)
         else:
             monthly_champions.pop(m_key, None)
-            write_state(dashboard_result_seq, baseline_metrics, best_data, history,
-                        evaluating_candidates=[],
-                        monthly_champions=monthly_champions,
-                        phase=f"monthly:{m_name}:no-viable-champion")
+            write_state(
+                dashboard_result_seq,
+                baseline_metrics,
+                best_data,
+                history,
+                evaluating_candidates=[],
+                monthly_champions=monthly_champions,
+                phase=f"monthly:{m_name}:no-viable-champion",
+            )
             print(
                 f"   ⚠️  {m_name}: nenhum campeão viável neste ciclo "
                 f"(score={month_best_score:.4f}, avg_day=${float((month_best_metrics or {}).get('avg_daily_profit', 0.0) or 0.0):.2f}, "
@@ -1919,7 +1974,7 @@ def main():
             candidates_ui.append({
                 **sanitize_params_for_storage(env_test),
                 "worker_id": f"cross_{champ_name}",
-                "current_month": "Jan-Jun",
+                "current_month": "Jan-Mai",
                 "status": "Simulando...",
                 "champ_name": champ_name,
             })
@@ -1974,6 +2029,10 @@ def main():
                             False,
                         )
                     )
+                    _save_opt_iteration(
+                        _history_entry(dashboard_result_seq, res, 0.0, False),
+                        res.get("_env", {}),
+                    )
                     if len(history) > 500:
                         history = history[-500:]
             except Exception as e:
@@ -1988,7 +2047,7 @@ def main():
 
     crossover_results = sorted(crossover_results, key=lambda x: x["score"], reverse=True)
 
-    print(f"\n📋 Tabela Comparativa de Validação Cruzada (Período Jan-Jun Completo):", flush=True)
+    print(f"\n📋 Tabela Comparativa de Validação Cruzada (Período Jan-Mai Completo):", flush=True)
     print(f"{'-'*90}", flush=True)
     print(f"{'Campeão de':<12} | {'Score Global':<12} | {'Lucro/Dia':<10} | {'PnL Total':<10} | {'Consistência':<12} | {'Dias Pos':<8}", flush=True)
     print(f"{'-'*90}", flush=True)
@@ -1998,7 +2057,8 @@ def main():
 
     print(f"\n📊 Detalhamento Mensal de cada Campeão (PnL por Mês):", flush=True)
     print(f"{'-'*85}", flush=True)
-    print(f"{'Campeão de':<12} | {'Jan':<9} | {'Fev':<9} | {'Mar':<9} | {'Abr':<9} | {'Mai':<9} | {'Jun':<9}", flush=True)
+    month_headers = " | ".join(f"{m['name'][:3]:<9}" for m in months)
+    print(f"{'Campeão de':<12} | {month_headers}", flush=True)
     print(f"{'-'*85}", flush=True)
     for r in crossover_results:
         breakdown = r["monthly_breakdown"].get("Super-Frankenstein", {})
