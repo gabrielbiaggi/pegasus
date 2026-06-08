@@ -249,7 +249,12 @@ class OptimizerContractsTest(unittest.TestCase):
             "FRANKENSTEIN_USE_SOROS": "true",
         }
 
-        safe = optimize_loop.sanitize_params_for_storage(params)
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "", "OPTIMIZER_TARGET_CONTRACT_MODE": ""},
+            clear=False,
+        ):
+            safe = optimize_loop.sanitize_params_for_storage(params)
 
         self.assertNotIn("DERIV_TOKEN", safe)
         self.assertNotIn("DERIV_PAT", safe)
@@ -282,18 +287,23 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertNotIn("FRANKENSTEIN_MAX_GALES", optimize_loop.FROZEN_PARAMS)
 
     def test_translate_frankenstein_params_preserves_multiplier_progressions(self) -> None:
-        translated = optimize_loop.translate_frankenstein_params(
-            {
-                "SYMBOL": "BOOM1000",
-                "CONTRACT_MODE": "multiplier",
-                "STAKE": "5",
-                "MULTIPLIER_TAKE_PROFIT": "0.50",
-                "FRANKENSTEIN_USE_SOROS": "true",
-                "FRANKENSTEIN_SOROS_STEPS": "2",
-                "FRANKENSTEIN_USE_MARTINGALE": "true",
-                "FRANKENSTEIN_MAX_GALES": "1",
-            }
-        )
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "", "OPTIMIZER_TARGET_CONTRACT_MODE": ""},
+            clear=False,
+        ):
+            translated = optimize_loop.translate_frankenstein_params(
+                {
+                    "SYMBOL": "BOOM1000",
+                    "CONTRACT_MODE": "multiplier",
+                    "STAKE": "5",
+                    "MULTIPLIER_TAKE_PROFIT": "0.50",
+                    "FRANKENSTEIN_USE_SOROS": "true",
+                    "FRANKENSTEIN_SOROS_STEPS": "2",
+                    "FRANKENSTEIN_USE_MARTINGALE": "true",
+                    "FRANKENSTEIN_MAX_GALES": "1",
+                }
+            )
 
         self.assertEqual(translated["USE_SOROS"], "true")
         self.assertEqual(translated["SOROS_MAX_STEPS"], "2")
@@ -330,16 +340,21 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertFalse(optimize_loop.params_match_context(old_champion, current))
 
     def test_optimizer_context_accepts_current_boom_multiplier_champion(self) -> None:
-        current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})
-        champion = {
-            "_optimizer_context": {
-                "symbol": "BOOM1000",
-                "contract_mode": "multiplier",
-            },
-            "STAKE": "13.0",
-        }
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "", "OPTIMIZER_TARGET_CONTRACT_MODE": ""},
+            clear=False,
+        ):
+            current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000", "CONTRACT_MODE": "multiplier"})
+            champion = {
+                "_optimizer_context": {
+                    "symbol": "BOOM1000",
+                    "contract_mode": "multiplier",
+                },
+                "STAKE": "13.0",
+            }
 
-        self.assertTrue(optimize_loop.params_match_context(champion, current))
+            self.assertTrue(optimize_loop.params_match_context(champion, current))
 
     def test_optimizer_context_can_follow_explicit_target_market(self) -> None:
         with patch.dict(
