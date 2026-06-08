@@ -43,6 +43,12 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertGreaterEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 3)
         self.assertGreaterEqual(int(candidate["RISE_FALL_COOLDOWN_TICKS"]), 6)
 
+    def test_optimizer_db_path_can_be_overridden_by_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "custom-results.db"
+            with patch.dict(os.environ, {"PEGASUS_OPTIMIZER_DB_PATH": str(db_path)}, clear=False):
+                self.assertEqual(optimize_loop._optimizer_db_path(), db_path)
+
     def test_boom1000_global_search_biases_toward_spike_families(self) -> None:
         random.seed(7)
         params = {
@@ -585,6 +591,27 @@ class OptimizerContractsTest(unittest.TestCase):
             self.assertTrue(db_path.exists())
             backups = list(logs.glob("results.db.corrupt-*"))
             self.assertTrue(backups)
+
+    def test_history_entry_carries_viability_flags(self) -> None:
+        entry = optimize_loop._history_entry(
+            77,
+            {
+                "avg_daily_profit": 1.2,
+                "total_pnl": 12.0,
+                "positive_days": 8,
+                "negative_days": 2,
+                "active_days": 10,
+                "total_trades": 80,
+                "consistency_pct": 80.0,
+                "worst_day_pnl": -5.0,
+                "score": 123.4,
+            },
+            1.0,
+            True,
+        )
+
+        self.assertTrue(entry["candidate_viable"])
+        self.assertFalse(entry["deployable"])
 
     def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
         monthly_states = {

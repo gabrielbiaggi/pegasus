@@ -5449,6 +5449,15 @@
                     var totalDays = bl ? (bl.active_days || bl.total_days || 144) : 144;
                     var minPositiveDays = 5; 
                     var maxDailyProfit = 120.0;
+                    function optimizerAvgDay(it) {
+                        return it && it.avg_daily != null ? it.avg_daily : (it && it.avg_daily_profit != null ? it.avg_daily_profit : (it && it.pnl != null ? it.pnl / totalDays : 0));
+                    }
+                    function optimizerCandidateViable(it) {
+                        if (!it) return false;
+                        if (it.candidate_viable !== undefined) return !!it.candidate_viable;
+                        var avg = optimizerAvgDay(it);
+                        return avg > 0 && avg <= maxDailyProfit && (it.positive_days || 0) >= minPositiveDays;
+                    }
 
                     // ── Encontra o Melhor Válido e o Último Testado na lista em Tempo Real ──
                     var highestValidProfit = _baselineAvgDay;
@@ -5457,48 +5466,26 @@
                     var highestObservedIt = null;
                     for (var i = 0; i < iters_all.length; i++) {
                         var it = iters_all[i];
-                        var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / totalDays : 0);
+                        var sfDay = optimizerAvgDay(it);
                         if (sfDay > highestObservedProfit) {
                             highestObservedProfit = sfDay;
                             highestObservedIt = it;
                         }
-                        // Validação dinâmica: lucro > 0, <= $120.00/dia e >= minPositiveDays
-                        var pnlOk = sfDay > 0 && sfDay <= maxDailyProfit && (it.positive_days || 0) >= minPositiveDays;
+                        var pnlOk = optimizerCandidateViable(it);
                         if (pnlOk && sfDay > highestValidProfit) {
                             highestValidProfit = sfDay;
                             highestValidIt = it;
                         }
                     }
 
-                    // activeBest será o melhor válido da lista, ou o melhor geral (campeão histórico), ou fallback ao baseline
-                    var activeBest = bl;
-                    var maxVal = -999999;
-                    if (bl) {
-                        maxVal = bl.avg_daily_profit || 0;
-                        activeBest = bl;
-                    }
+                    var activeBest = highestValidIt || ((best && optimizerCandidateViable(best)) ? best : null);
+                    var bestIsValid = !!activeBest;
                     if (highestValidIt) {
                         var hVal = highestValidIt.avg_daily_profit !== undefined ? highestValidIt.avg_daily_profit : (highestValidIt.avg_daily !== undefined ? highestValidIt.avg_daily : 0);
-                        if (hVal > maxVal) {
-                            maxVal = hVal;
-                            activeBest = highestValidIt;
-                        }
-                    } else if (highestObservedIt) {
-                        var oVal = highestObservedIt.avg_daily_profit !== undefined ? highestObservedIt.avg_daily_profit : (highestObservedIt.avg_daily !== undefined ? highestObservedIt.avg_daily : 0);
-                        if (oVal > maxVal) {
-                            maxVal = oVal;
-                            activeBest = highestObservedIt;
-                        }
                     }
-                    if (best) {
-                        var bVal = best.avg_daily_profit !== undefined ? best.avg_daily_profit : (best.avg_daily !== undefined ? best.avg_daily : 0);
-                        if (bVal > maxVal) {
-                            maxVal = bVal;
-                            activeBest = best;
-                        }
-                    }
-                    if (activeBest) {
-                        var bestAvgDay = activeBest.avg_daily_profit !== undefined ? activeBest.avg_daily_profit : (activeBest.avg_daily !== undefined ? activeBest.avg_daily : 0);
+                    if (activeBest || best || highestObservedIt || bl) {
+                        var displayBest = activeBest || best || highestObservedIt || bl;
+                        var bestAvgDay = bestIsValid ? optimizerAvgDay(activeBest) : 0;
                         var brDaily = document.getElementById("opt-best-daily");
                         var brPos   = document.getElementById("opt-best-pos");
                         var brImp   = document.getElementById("opt-improvement");
@@ -5514,14 +5501,16 @@
                                 brDaily.style.color = "var(--cyan)";
                             } else {
                                 brDaily.textContent = "$" + bestAvgDay.toFixed(2) + "/dia";
-                                brDaily.style.color = bestAvgDay > _baselineAvgDay ? "var(--green)" : "var(--yellow)";
+                                brDaily.style.color = bestIsValid && bestAvgDay > 0 ? "var(--green)" : "var(--red)";
                             }
                         }
                         if (brPos) {
-                            var itNum = activeBest.iteration !== undefined ? activeBest.iteration : 0;
-                            var posD = activeBest.positive_days !== undefined ? activeBest.positive_days : "—";
+                            var itNum = displayBest && displayBest.iteration !== undefined ? displayBest.iteration : 0;
+                            var posD = displayBest && displayBest.positive_days !== undefined ? displayBest.positive_days : "—";
                             if (runtime.zero_trade_best) {
                                 brPos.textContent = (runtime.active_workers || 0) + "/" + (runtime.worker_slots || 0) + " workers | " + (d.phase || "sem fase");
+                            } else if (!bestIsValid) {
+                                brPos.textContent = "nenhum campeao valido no momento";
                             } else {
                                 brPos.textContent = "dias positivos: " + posD + " (it#" + itNum + ")";
                             }
@@ -5531,7 +5520,7 @@
                                 brCons.textContent = (runtime.avg_progress_pct || 0).toFixed(0) + "%";
                                 brCons.style.color = "var(--cyan)";
                             } else {
-                                var cons = activeBest.consistency_pct || 0;
+                                var cons = bestIsValid && activeBest ? (activeBest.consistency_pct || 0) : 0;
                                 brCons.textContent = cons.toFixed(0) + "%";
                                 brCons.style.color = cons >= 90 ? "var(--green)" : cons >= 60 ? "var(--yellow)" : "var(--red)";
                             }
@@ -5540,36 +5529,39 @@
                             if (runtime.zero_trade_best) {
                                 brImp.textContent = "loop #" + (d.current_iteration || 0);
                                 brImp.style.color = "var(--cyan)";
+                            } else if (!bestIsValid) {
+                                brImp.textContent = "$0.00/dia";
+                                brImp.style.color = "var(--red)";
                             } else {
                                 var imp = bestAvgDay - _baselineAvgDay;
                                 brImp.textContent = (imp >= 0 ? "+" : "") + "$" + imp.toFixed(2) + "/dia";
-                                brImp.style.color = imp >= 0 ? "var(--green)" : "var(--red)";
+                                brImp.style.color = imp >= 0 && bestAvgDay > 0 ? "var(--green)" : "var(--red)";
                             }
                         }
                         
                         // Atualiza os novos cards de métricas quant avançadas
                         if (brSharpe) {
-                            var sh = activeBest.sharpe != null ? activeBest.sharpe : (activeBest.sharpe_ratio != null ? activeBest.sharpe_ratio : 0);
+                            var sh = displayBest.sharpe != null ? displayBest.sharpe : (displayBest.sharpe_ratio != null ? displayBest.sharpe_ratio : 0);
                             if (sh > 20.0) sh = 20.0;
                             brSharpe.textContent = sh.toFixed(2);
                         }
                         if (brSortino) {
-                            var so = activeBest.sortino != null ? activeBest.sortino : (activeBest.sortino_ratio != null ? activeBest.sortino_ratio : 0);
+                            var so = displayBest.sortino != null ? displayBest.sortino : (displayBest.sortino_ratio != null ? displayBest.sortino_ratio : 0);
                             if (so > 20.0) so = 20.0;
                             brSortino.textContent = so.toFixed(2);
                         }
                         if (brDrawdown) {
-                            var dd = activeBest.drawdown != null ? activeBest.drawdown : (activeBest.max_drawdown != null ? activeBest.max_drawdown : 0);
+                            var dd = displayBest.drawdown != null ? displayBest.drawdown : (displayBest.max_drawdown != null ? displayBest.max_drawdown : 0);
                             brDrawdown.textContent = "$" + dd.toFixed(2);
                         }
                         var brBestDay = document.getElementById("opt-best-day");
                         var brWorstDay = document.getElementById("opt-worst-day");
                         if (brBestDay) {
-                            var bd = activeBest.best_day_pnl;
+                            var bd = displayBest.best_day_pnl;
                             brBestDay.textContent = (bd != null && bd !== undefined) ? "$" + bd.toFixed(2) : "—";
                         }
                         if (brWorstDay) {
-                            var wd = activeBest.worst_day_pnl;
+                            var wd = displayBest.worst_day_pnl;
                             brWorstDay.textContent = (wd != null && wd !== undefined) ? "$" + wd.toFixed(2) : "—";
                         }
 
@@ -5589,15 +5581,15 @@
                             metaBaseline.textContent = "Baseline: $" + (_baselineAvgDay != null ? _baselineAvgDay.toFixed(2) : "0.00") + "/dia";
                         }
                         if (metaCur) {
-                            var champIt = activeBest && activeBest.iteration !== undefined ? activeBest.iteration : (best && best.iteration !== undefined ? best.iteration : 0);
-                            metaCur.textContent = "🏆 Campeão: it#" + champIt + " ($" + bestAvgDay.toFixed(2) + "/dia)";
+                            var champIt = bestIsValid && activeBest && activeBest.iteration !== undefined ? activeBest.iteration : 0;
+                            metaCur.textContent = bestIsValid ? ("🏆 Campeão: it#" + champIt + " ($" + bestAvgDay.toFixed(2) + "/dia)") : "🏆 Campeão: nenhum válido";
                         }
                         
                         // ── Live Bot (métricas secundárias baseadas no activeBest ou best geral) ──
                         var liveDaily = document.getElementById("opt-live-daily");
                         var livePos   = document.getElementById("opt-live-pos");
-                        var liveAvg   = activeBest.live_avg_daily || (best ? best.live_avg_daily : null);
-                        var livePosD  = activeBest.live_positive_days || (best ? best.live_positive_days : null);
+                        var liveAvg   = displayBest.live_avg_daily || (best ? best.live_avg_daily : null);
+                        var livePosD  = displayBest.live_positive_days || (best ? best.live_positive_days : null);
                         if (liveDaily && liveAvg != null) {
                             liveDaily.textContent = "$" + parseFloat(liveAvg).toFixed(2) + "/dia";
                             liveDaily.style.color = liveAvg > 0 ? "#60a5fa" : "#f87171";
@@ -5630,7 +5622,7 @@
                             var hasData = false;
                             
                             var bl_sf = (d.baseline && d.baseline.monthly_breakdown) ? d.baseline.monthly_breakdown["Super-Frankenstein"] : null;
-                            var best_sf = (activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Super-Frankenstein"] : null;
+                            var best_sf = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Super-Frankenstein"] : null;
                             var best_live = (activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Pegasus Live Sniper (9% TP)"] : null;
                             
                             if (bl_sf || best_sf) {
@@ -5758,7 +5750,7 @@
                     var lastStatus = document.getElementById("opt-last-status");
 
                     if (lastIt) {
-                        var lastSfDay = lastIt.avg_daily != null ? lastIt.avg_daily : (lastIt.pnl != null ? lastIt.pnl / totalDays : null);
+                        var lastSfDay = optimizerAvgDay(lastIt);
                         if (lastDaily) {
                             lastDaily.textContent = lastSfDay != null ? "$" + lastSfDay.toFixed(2) + "/dia" : "—";
                             lastDaily.style.color = "var(--text)";
@@ -5769,10 +5761,8 @@
                         if (lastStatus) {
                             if (lastSfDay > maxDailyProfit) {
                                 lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
-                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) >= minPositiveDays) {
+                            } else if (optimizerCandidateViable(lastIt)) {
                                 lastStatus.innerHTML = '<span style="color:var(--green);font-weight:700;font-size:.65rem">✅ VÁLIDO (consist: ' + (lastIt.consistency_pct || 0).toFixed(0) + '%)</span>';
-                            } else if (lastSfDay > 0 && (lastIt.positive_days || 0) < minPositiveDays) {
-                                lastStatus.innerHTML = '<span style="color:#f59e0b;font-weight:700;font-size:.65rem">⚠️ DIAS INSUFICIENTES (' + (lastIt.positive_days || 0) + '/' + minPositiveDays + ')</span>';
                             } else {
                                 lastStatus.innerHTML = '<span style="color:#ef4444;font-weight:700;font-size:.65rem">❌ NEGATIVO / INVÁLIDO</span>';
                             }
@@ -5815,7 +5805,7 @@
                             
                             var iters = iters_all.slice().reverse().slice(0, 200);
                             tbody.innerHTML = iters.map(function(it) {
-                                var sfDay   = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / totalDays : null);
+                                var sfDay   = optimizerAvgDay(it);
                                 var liveDay = it.live_avg_daily != null ? it.live_avg_daily : null;
                                 var posD    = it.positive_days != null ? it.positive_days : "—";
                                 var consist = it.consistency_pct != null ? it.consistency_pct.toFixed(0) + "%" : "—";
@@ -5825,7 +5815,7 @@
                                 var ddStr = it.drawdown != null ? "$" + it.drawdown.toFixed(2) : "—";
                                 var timeStr = it.elapsed_s != null ? it.elapsed_s.toFixed(0) + "s" : "—";
                                 var rowBg   = it.is_best ? "background:rgba(16,185,129,0.1);border-left:3px solid var(--green);" : "";
-                                var sfColor = sfDay != null && sfDay > (_baselineAvgDay || 0) ? "color:var(--green)" : "color:var(--red)";
+                                var sfColor = sfDay != null && sfDay > 0 ? "color:var(--green)" : "color:var(--red)";
                                 var sfStr   = sfDay != null ? "$" + sfDay.toFixed(2) : "—";
                                 var liveStr = liveDay != null ? "$" + liveDay.toFixed(2) : "—";
                                 var liveCol = liveDay != null && liveDay > 0 ? "color:#60a5fa" : "color:#f87171";
@@ -5835,10 +5825,8 @@
                                     badge = '<span style="background:rgba(16,185,129,.15);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700">🏆 NOVO RECORDE</span>';
                                 } else if (sfDay > maxDailyProfit) {
                                     badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
-                                } else if (sfDay > 0 && (it.positive_days || 0) >= minPositiveDays) {
+                                } else if (optimizerCandidateViable(it)) {
                                     badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
-                                } else if (sfDay > 0 && (it.positive_days || 0) < minPositiveDays) {
-                                    badge = '<span style="background:rgba(245,158,11,.07);color:#f59e0b;padding:2px 8px;border-radius:12px;font-size:.65rem">⚠️ DIAS INSUFICIENTES (' + (it.positive_days || 0) + '/' + minPositiveDays + ')</span>';
                                 } else {
                                     badge = '<span style="background:rgba(239,68,68,.07);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ NEGATIVO</span>';
                                 }

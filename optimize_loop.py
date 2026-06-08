@@ -47,8 +47,13 @@ LOG_PATH      = Path("logs/optimizer_v2.log")
 import sqlite3
 
 
+def _optimizer_db_path() -> Path:
+    raw = os.environ.get("PEGASUS_OPTIMIZER_DB_PATH", "").strip()
+    return Path(raw) if raw else Path("logs/results.db")
+
+
 def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
-    db_path = db_path or Path("logs/results.db")
+    db_path = db_path or _optimizer_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     sidecars = [db_path.with_name(f"{db_path.name}-wal"), db_path.with_name(f"{db_path.name}-shm")]
     if not db_path.exists():
@@ -76,7 +81,7 @@ def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
         return True
 
 def _init_opt_db():
-    db_path = Path("logs/results.db")
+    db_path = _optimizer_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     ensure_optimizer_db_healthy(db_path)
     conn = sqlite3.connect(str(db_path))
@@ -117,7 +122,7 @@ def _init_opt_db():
         conn.close()
 
 def _save_opt_iteration(entry: dict, params: dict) -> None:
-    db_path = Path("logs/results.db")
+    db_path = _optimizer_db_path()
     _init_opt_db()
     conn = sqlite3.connect(str(db_path))
     try:
@@ -164,7 +169,7 @@ def _save_opt_iteration(entry: dict, params: dict) -> None:
         conn.close()
 
 def _load_opt_history() -> list[dict]:
-    db_path = Path("logs/results.db")
+    db_path = _optimizer_db_path()
     if not db_path.exists():
         return []
     _init_opt_db()
@@ -200,6 +205,15 @@ def _load_opt_history() -> list[dict]:
                 "live_drawdown": r["live_drawdown"] if "live_drawdown" in r.keys() else None,
                 "best_day_pnl": r["best_day_pnl"] if "best_day_pnl" in r.keys() else None,
                 "worst_day_pnl": r["worst_day_pnl"] if "worst_day_pnl" in r.keys() else None,
+                "candidate_viable": is_monthly_candidate_viable({
+                    "avg_daily_profit": r["avg_daily"],
+                    "total_pnl": r["pnl"],
+                    "active_days": (r["positive_days"] or 0) + (r["negative_days"] or 0),
+                    "total_trades": 0,
+                    "positive_days": r["positive_days"],
+                    "consistency_pct": r["consistency_pct"],
+                    "worst_day_pnl": r["worst_day_pnl"],
+                }),
                 "ts": time.time(),
             })
         history.reverse()
@@ -212,7 +226,7 @@ def _load_opt_history() -> list[dict]:
     return history
 
 def _load_best_opt_run() -> tuple[dict, dict] | None:
-    db_path = Path("logs/results.db")
+    db_path = _optimizer_db_path()
     if not db_path.exists():
         return None
     _init_opt_db()
@@ -254,6 +268,8 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
                 "worst_day_pnl": r["worst_day_pnl"] if "worst_day_pnl" in r.keys() else None,
                 "reason": "Recuperado do Banco de Dados",
             }
+            best_data["candidate_viable"] = is_monthly_candidate_viable(best_data)
+            best_data["deployable"] = is_live_deployable(best_data)
             return best_data, params
     except Exception as e:
         print(f"[WARN] _load_best_opt_run error: {e}", flush=True)
@@ -264,7 +280,7 @@ def _load_best_opt_run() -> tuple[dict, dict] | None:
     return None
 
 def _load_top_champions() -> list[dict]:
-    db_path = Path("logs/results.db")
+    db_path = _optimizer_db_path()
     if not db_path.exists():
         return []
     _init_opt_db()
@@ -294,6 +310,7 @@ def _load_top_champions() -> list[dict]:
 
 
 def _history_entry(iteration_num: int, metrics: dict, elapsed_s: float, is_best: bool) -> dict:
+    candidate_viable = is_monthly_candidate_viable(metrics)
     return {
         "iteration": iteration_num,
         "avg_daily": metrics.get("avg_daily_profit", 0.0),
@@ -303,11 +320,14 @@ def _history_entry(iteration_num: int, metrics: dict, elapsed_s: float, is_best:
         "score": metrics.get("score", 0.0),
         "pnl": metrics.get("total_pnl", 0.0),
         "roi": metrics.get("roi_pct", 0.0),
+        "total_trades": int(metrics.get("total_trades", 0) or 0),
         "sharpe": metrics.get("sharpe_ratio", 0.0),
         "sortino": metrics.get("sortino_ratio", 0.0),
         "drawdown": metrics.get("max_drawdown", 0.0),
         "elapsed_s": round(elapsed_s, 1),
         "is_best": is_best,
+        "candidate_viable": candidate_viable,
+        "deployable": is_live_deployable(metrics),
         "live_avg_daily": metrics.get("live_avg_daily"),
         "live_positive_days": metrics.get("live_positive_days"),
         "live_total_pnl": metrics.get("live_total_pnl"),
@@ -1693,6 +1713,7 @@ def build_dashboard_history_entry(
     elapsed_s: float = 0.0,
 ) -> dict:
     """Compact optimizer result row for the live dashboard tables."""
+    candidate_viable = is_monthly_candidate_viable(metrics)
     return {
         "iteration": iteration_num,
         "phase": phase,
@@ -1703,6 +1724,7 @@ def build_dashboard_history_entry(
         "score": round(float(metrics.get("score", 0.0) or 0.0), 4),
         "positive_days": int(metrics.get("positive_days", 0) or 0),
         "active_days": int(metrics.get("active_days", 0) or 0),
+        "total_trades": int(metrics.get("total_trades", 0) or 0),
         "consistency_pct": round(float(metrics.get("consistency_pct", 0.0) or 0.0), 1),
         "drawdown": round(float(metrics.get("max_drawdown", metrics.get("drawdown", 0.0)) or 0.0), 2),
         "max_drawdown": round(float(metrics.get("max_drawdown", metrics.get("drawdown", 0.0)) or 0.0), 2),
@@ -1710,6 +1732,8 @@ def build_dashboard_history_entry(
         "sortino": round(float(metrics.get("sortino", metrics.get("sortino_ratio", 0.0)) or 0.0), 4),
         "elapsed_s": round(float(elapsed_s or 0.0), 2),
         "is_best": bool(is_best),
+        "candidate_viable": candidate_viable,
+        "deployable": is_live_deployable(metrics),
     }
 
 
@@ -2221,6 +2245,8 @@ def main():
         best_pos   = baseline_metrics["positive_days"]
         best_avg   = baseline_metrics["avg_daily_profit"]
         best_data  = {**baseline_metrics, "iteration": 0}
+        best_data["candidate_viable"] = is_monthly_candidate_viable(best_data)
+        best_data["deployable"] = is_live_deployable(best_data)
 
     write_state(
         iteration - 1,
@@ -2566,6 +2592,7 @@ def main():
             "consistency_pct": supreme_winner["consistency_pct"],
             "positive_days": supreme_winner["positive_days"],
             "active_days": supreme_winner["active_days"],
+            "total_trades": supreme_winner.get("total_trades", 0),
             "worst_day_pnl": supreme_winner.get("worst_day_pnl", 0.0),
             "max_drawdown": supreme_winner.get("max_drawdown", 0.0),
             "iteration": 9999,
@@ -2576,6 +2603,9 @@ def main():
                 else f"crossover-anchor:{supreme_winner['champ_name']}"
             ),
         }
+        best_data["candidate_viable"] = is_monthly_candidate_viable(best_data)
+        best_data["deployable"] = is_live_deployable(best_data)
+        best_data["crossover_viable"] = is_crossover_candidate_viable(supreme_winner)
         write_state(dashboard_result_seq, baseline_metrics, best_data, history,
                     evaluating_candidates=[],
                     monthly_champions=monthly_champions,
