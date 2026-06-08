@@ -96,7 +96,10 @@ $SSH "$SERVER" "
         cp logs/results.db logs/.deploy-backups/results-$(date +%Y%m%d_%H%M%S).db
         git checkout -- logs/results.db
     fi
-    git pull --ff-only '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
+    if ! git pull --ff-only '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'; then
+        echo '  ℹ️  ff-only falhou, tentando rebase limpo sobre deploy/main'
+        git rebase '$DEPLOY_REMOTE'/'$DEPLOY_BRANCH'
+    fi
     systemctl start pegasus-optimizer.service pegasus-dashboard.service
 "
 echo "  ✅ Pull OK via ${DEPLOY_REMOTE}/${DEPLOY_BRANCH}"

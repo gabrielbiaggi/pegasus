@@ -2655,10 +2655,10 @@
                         </div>
                         <!-- Records -->
                         <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🏆 Recordes</div>
+                            <div style="font-size:.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🔁 Iterações</div>
                             <div id="opt-record-count" style="font-size:1.5rem;font-weight:700;color:#a78bfa">—</div>
-                            <div style="font-size:.72rem;color:var(--muted)">resultados positivos válidos</div>
-                            <div id="opt-iter-count" style="font-size:.65rem;color:var(--dim);margin-top:4px">— iterações concluídas</div>
+                            <div style="font-size:.72rem;color:var(--muted)">iterações concluídas</div>
+                            <div id="opt-iter-count" style="font-size:.65rem;color:var(--dim);margin-top:4px">— resultados positivos válidos</div>
                             <div id="opt-last-update" style="font-size:.65rem;color:var(--dim);margin-top:4px">Atualizado: —</div>
                         </div>
                         <!-- Workers -->
@@ -5781,8 +5781,8 @@
                     var iwk = document.getElementById("opt-workers");
                     
                     var positiveRows = iters_all.filter(function(x){ return optimizerCandidateViable(x); });
-                    if (ict) ict.textContent = (d.current_iteration || 0) + " iterações concluídas";
-                    if (irc) irc.textContent = positiveRows.length;
+                    if (irc) irc.textContent = (d.current_iteration || 0);
+                    if (ict) ict.textContent = positiveRows.length + " resultados positivos válidos";
                     if (iwk) {
                         var activeWorkersCount = parseInt(d.worker_cards_count || 0, 10);
                         var workerSlotsCount = parseInt(d.worker_slots_count || d.n_workers || 1, 10);

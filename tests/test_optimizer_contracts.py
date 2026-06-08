@@ -644,6 +644,34 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(configs["Super-Frankenstein"]["score"], 4)
         self.assertEqual(configs["Pegasus Live Sniper (9% TP)"]["score"], 4)
 
+    def test_apply_config_does_not_leak_previous_rise_fall_flags(self) -> None:
+        base_use_ensemble = backtest_engine.RISE_FALL_USE_ENSEMBLE
+        base_min_votes = backtest_engine.RISE_FALL_MIN_VOTES
+
+        with patch.dict(
+            os.environ,
+            {},
+            clear=True,
+        ):
+            backtest_engine.apply_config(
+                {
+                    "CONTRACT_MODE": "rise_fall",
+                    "RISE_FALL_USE_ENSEMBLE": "true",
+                    "RISE_FALL_MIN_VOTES": "6",
+                }
+            )
+            self.assertTrue(backtest_engine.RISE_FALL_USE_ENSEMBLE)
+            self.assertEqual(backtest_engine.RISE_FALL_MIN_VOTES, 6)
+
+            backtest_engine.apply_config(
+                {
+                    "CONTRACT_MODE": "rise_fall",
+                }
+            )
+
+        self.assertEqual(backtest_engine.RISE_FALL_USE_ENSEMBLE, base_use_ensemble)
+        self.assertEqual(backtest_engine.RISE_FALL_MIN_VOTES, base_min_votes)
+
     def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
         monthly_states = {
             "2026-01": {

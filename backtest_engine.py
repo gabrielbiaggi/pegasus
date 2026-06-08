@@ -40,6 +40,7 @@ from strategy import (
 )
 
 load_dotenv()
+_CONFIG_BASE_ENV = dict(os.environ)
 
 # ── Credenciais Deriv para download automático de ticks ───────────────────────
 TOKEN = os.getenv("DERIV_PAT") or os.getenv("DERIV_TOKEN") or ""
@@ -1985,12 +1986,19 @@ def apply_config(env_overrides: dict):
     global MULTIPLIER_VALUE, MULTIPLIER_DIRECTION, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
-    os.environ.update(env_overrides)
-    if os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
+    effective_env = dict(_CONFIG_BASE_ENV)
+    effective_env.update({
+        str(k): str(v)
+        for k, v in (env_overrides or {}).items()
+        if v is not None
+    })
+    os.environ.update(effective_env)
+
+    if effective_env.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true":
         import logging
         logging.getLogger("Pegasus").setLevel(logging.ERROR)
         
-    new_symbol = os.environ.get("SYMBOL", "1HZ25V")
+    new_symbol = effective_env.get("SYMBOL", "1HZ25V")
     if new_symbol != SYMBOL:
         SYMBOL = new_symbol
         _max_csv_range = None
@@ -1998,44 +2006,44 @@ def apply_config(env_overrides: dict):
         _indicators_df_cache.clear()
         _indicators_list_cache.clear()
     
-    STAKE = float(os.environ.get("STAKE", "5"))
-    MAX_STAKE = float(os.environ.get("MAX_STAKE", "10"))
-    GROWTH_RATE = float(os.environ.get("ACCUMULATOR_GROWTH_RATE", "0.03"))
-    TP_PCT = float(os.environ.get("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30")) / 100.0
-    MAX_HOLD = int(os.environ.get("ACCUMULATOR_MAX_HOLD_TICKS", "80"))
-    SOROS_STEPS = int(os.environ.get("SOROS_MAX_STEPS", "3"))
-    SOROS_COOLDOWN = int(os.environ.get("ACCUMULATOR_COOLDOWN_TICKS", "5"))
-    STOP_GAIN = float(os.environ.get("STOP_GAIN_PCT", "100.0")) / 100.0
-    TRAILING_S = float(os.getenv("DAILY_TRAILING_START", "30.0")) / 100.0
-    TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
+    STAKE = float(effective_env.get("STAKE", "5"))
+    MAX_STAKE = float(effective_env.get("MAX_STAKE", "10"))
+    GROWTH_RATE = float(effective_env.get("ACCUMULATOR_GROWTH_RATE", "0.03"))
+    TP_PCT = float(effective_env.get("ACCUMULATOR_TAKE_PROFIT_PERCENT", "30")) / 100.0
+    MAX_HOLD = int(effective_env.get("ACCUMULATOR_MAX_HOLD_TICKS", "80"))
+    SOROS_STEPS = int(effective_env.get("SOROS_MAX_STEPS", "3"))
+    SOROS_COOLDOWN = int(effective_env.get("ACCUMULATOR_COOLDOWN_TICKS", "5"))
+    STOP_GAIN = float(effective_env.get("STOP_GAIN_PCT", "100.0")) / 100.0
+    TRAILING_S = float(effective_env.get("DAILY_TRAILING_START", "30.0")) / 100.0
+    TRAILING_L = float(effective_env.get("DAILY_TRAILING_LOCK", "5.0")) / 100.0
 
-    CONTRACT_MODE = os.environ.get("CONTRACT_MODE", "calm_accu").strip().lower()
-    RISE_FALL_DURATION_TICKS = int(os.environ.get("RISE_FALL_DURATION_TICKS", "5"))
-    RISE_FALL_MIN_PAYOUT_PCT = float(os.environ.get("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
-    RISE_FALL_COOLDOWN_TICKS = int(os.environ.get("RISE_FALL_COOLDOWN_TICKS", "3"))
-    RISE_FALL_MAX_CUSUM = float(os.environ.get("RISE_FALL_MAX_CUSUM", os.environ.get("RISE_FALL_BOOM_MAX_CUSUM", "8.0")))
-    RISE_FALL_MAX_VELOCITY = float(os.environ.get("RISE_FALL_MAX_VELOCITY", os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001")))
-    RISE_FALL_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_MAX_IMBALANCE", os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5")))
-    RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
-    RISE_FALL_MIN_VOTES = max(1, min(6, int(os.environ.get("RISE_FALL_MIN_VOTES", "4"))))
-    RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
-    RISE_FALL_ENSEMBLE_MIN_PROB = float(os.environ.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
-    MULTIPLIER_VALUE = int(os.environ.get("MULTIPLIER_VALUE", "100"))
-    MULTIPLIER_DIRECTION = os.environ.get("MULTIPLIER_DIRECTION", "signal").strip().lower()
-    MULTIPLIER_TAKE_PROFIT = float(os.environ.get("MULTIPLIER_TAKE_PROFIT", "0.50"))
-    MULTIPLIER_STOP_LOSS = float(os.environ.get("MULTIPLIER_STOP_LOSS", "1.00"))
-    MULTIPLIER_MAX_HOLD_TICKS = int(os.environ.get("MULTIPLIER_MAX_HOLD_TICKS", "30"))
+    CONTRACT_MODE = effective_env.get("CONTRACT_MODE", "calm_accu").strip().lower()
+    RISE_FALL_DURATION_TICKS = int(effective_env.get("RISE_FALL_DURATION_TICKS", "5"))
+    RISE_FALL_MIN_PAYOUT_PCT = float(effective_env.get("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
+    RISE_FALL_COOLDOWN_TICKS = int(effective_env.get("RISE_FALL_COOLDOWN_TICKS", "3"))
+    RISE_FALL_MAX_CUSUM = float(effective_env.get("RISE_FALL_MAX_CUSUM", effective_env.get("RISE_FALL_BOOM_MAX_CUSUM", "8.0")))
+    RISE_FALL_MAX_VELOCITY = float(effective_env.get("RISE_FALL_MAX_VELOCITY", effective_env.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001")))
+    RISE_FALL_MAX_IMBALANCE = float(effective_env.get("RISE_FALL_MAX_IMBALANCE", effective_env.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5")))
+    RISE_FALL_BOOM_ONLY_PUT = effective_env.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
+    RISE_FALL_MIN_VOTES = max(1, min(6, int(effective_env.get("RISE_FALL_MIN_VOTES", "4"))))
+    RISE_FALL_USE_ENSEMBLE = effective_env.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
+    RISE_FALL_ENSEMBLE_MIN_PROB = float(effective_env.get("RISE_FALL_ENSEMBLE_MIN_PROB", "0.52"))
+    MULTIPLIER_VALUE = int(effective_env.get("MULTIPLIER_VALUE", "100"))
+    MULTIPLIER_DIRECTION = effective_env.get("MULTIPLIER_DIRECTION", "signal").strip().lower()
+    MULTIPLIER_TAKE_PROFIT = float(effective_env.get("MULTIPLIER_TAKE_PROFIT", "0.50"))
+    MULTIPLIER_STOP_LOSS = float(effective_env.get("MULTIPLIER_STOP_LOSS", "1.00"))
+    MULTIPLIER_MAX_HOLD_TICKS = int(effective_env.get("MULTIPLIER_MAX_HOLD_TICKS", "30"))
 
-    CUSUM_MAX = float(os.environ.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
-    HURST_MIN = float(os.environ.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
-    CALM_THRESH = float(os.environ.get("CALM_ACCU_THRESHOLD", "1.5e-6"))
-    TICK_COUNT = int(os.environ.get("TICK_COUNT", "100"))
-    CALM_MIN_SCORE = int(os.environ.get("CALM_ACCU_MIN_SCORE", "20"))
-    ENSEMBLE_MIN_PROB = float(os.environ.get("ENSEMBLE_MIN_PROB", "0.30"))
-    SAMPLE_EVERY = max(1, int(os.environ.get("BACKTEST_SAMPLE_EVERY", "60")))
+    CUSUM_MAX = float(effective_env.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
+    HURST_MIN = float(effective_env.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
+    CALM_THRESH = float(effective_env.get("CALM_ACCU_THRESHOLD", "1.5e-6"))
+    TICK_COUNT = int(effective_env.get("TICK_COUNT", "100"))
+    CALM_MIN_SCORE = int(effective_env.get("CALM_ACCU_MIN_SCORE", "20"))
+    ENSEMBLE_MIN_PROB = float(effective_env.get("ENSEMBLE_MIN_PROB", "0.30"))
+    SAMPLE_EVERY = max(1, int(effective_env.get("BACKTEST_SAMPLE_EVERY", "60")))
     optimizer_fast_sampling = (
-        os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true"
-        and os.environ.get("PEGASUS_OPTIMIZER_FULL_TICK", "false").lower() != "true"
+        effective_env.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true"
+        and effective_env.get("PEGASUS_OPTIMIZER_FULL_TICK", "false").lower() != "true"
     )
     if CONTRACT_MODE == "rise_fall":
         SAMPLE_EVERY = 1
@@ -2050,7 +2058,7 @@ def apply_config(env_overrides: dict):
             WIN_TICKS = _j
             break
             
-    _blocked_raw = os.environ.get("BLOCKED_UTC_HOURS", "5,6,7,8,9")
+    _blocked_raw = effective_env.get("BLOCKED_UTC_HOURS", "5,6,7,8,9")
     BLOCKED_HOURS = set()
     for _h in _blocked_raw.split(","):
         _h = _h.strip()
