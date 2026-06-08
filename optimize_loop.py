@@ -294,18 +294,13 @@ def _read_stress_config() -> bool:
         return False
 
 # ── Carrega Símbolo Ativo e Volatilidade Mediana no escopo global ──────────────
-_env_for_vol = {}
-if Path(".env").exists():
-    try:
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                _env_for_vol[k.strip()] = v.strip()
-    except Exception:
-        pass
-            
-ACTIVE_SYMBOL = _env_for_vol.get("SYMBOL", "1HZ100V")
+DEFAULT_OPTIMIZER_SYMBOL = "1HZ25V"
+DEFAULT_OPTIMIZER_CONTRACT_MODE = "rise_fall"
+LEGACY_RISE_FALL_FILTER_KEYS = {
+    "RISE_FALL_BOOM_MAX_CUSUM": "RISE_FALL_MAX_CUSUM",
+    "RISE_FALL_BOOM_MAX_VELOCITY": "RISE_FALL_MAX_VELOCITY",
+    "RISE_FALL_BOOM_MAX_IMBALANCE": "RISE_FALL_MAX_IMBALANCE",
+}
 
 def get_median_volatility(symbol: str) -> float:
     symbol_upper = symbol.upper()
@@ -341,8 +336,6 @@ def get_median_volatility(symbol: str) -> float:
     print(f"[Optimizer] Usando volatilidade mediana padrão para {symbol_upper}: {fallback:.2e}", flush=True)
     return fallback
 
-MEDIAN_VOL = get_median_volatility(ACTIVE_SYMBOL)
-
 def parse_optimizer_workers(env: dict | None = None, default: int = 6) -> int:
     """Return a bounded optimizer worker count for memory-safe parallelism."""
     env = os.environ if env is None else env
@@ -368,10 +361,15 @@ PARAM_SPACE = {
     "RISE_FALL_MIN_VOTES":          {"type": "int",   "min": 1,   "max": 6,    "step": 1},
     # Payout minimo de Rise/Fall: busca entre 0.0040 e 0.0080
     "RISE_FALL_MIN_PAYOUT_PCT":     {"type": "float", "min": 0.0040, "max": 0.0080, "step": 0.0005},
-    # Filtros do BOOM1000: expande para regimes muito calmos e regimes de spike.
-    "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 0.5, "max": 12.0, "step": 0.25},
-    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.0010, "max": 0.0800, "step": 0.0010},
-    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.1, "max": 12.0, "step": 0.1},
+    # Filtros direcionais do mercado alvo em rise/fall.
+    "RISE_FALL_MAX_CUSUM":          {"type": "float", "min": 0.5, "max": 12.0, "step": 0.25},
+    "RISE_FALL_MAX_VELOCITY":       {"type": "float", "min": 0.0010, "max": 0.0800, "step": 0.0010},
+    "RISE_FALL_MAX_IMBALANCE":      {"type": "float", "min": 0.1, "max": 12.0, "step": 0.1},
+    "RISE_FALL_DURATION_TICKS":     {"type": "int",   "min": 3,   "max": 15,   "step": 1},
+    "JUMP_MIN_CONFIDENCE":          {"type": "float", "min": 0.50, "max": 0.85, "step": 0.01},
+    "RISE_FALL_QG_MIN_ABS_IMBALANCE": {"type": "float", "min": 1.0, "max": 10.0, "step": 0.25},
+    "RISE_FALL_QG_BAYES_STRONG":    {"type": "float", "min": 0.50, "max": 0.85, "step": 0.01},
+    "RISE_FALL_QG_HURST_MAX":       {"type": "float", "min": 0.35, "max": 0.75, "step": 0.01},
     "MULTIPLIER_JUMP_MIN_CONFIDENCE": {"type": "float", "min": 0.55, "max": 0.85, "step": 0.01},
     "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": {"type": "float", "min": 2.0, "max": 8.0, "step": 0.25},
     "MULTIPLIER_JUMP_BAYES_STRONG_PROB": {"type": "float", "min": 0.55, "max": 0.80, "step": 0.01},
@@ -468,20 +466,31 @@ def _norm_contract_mode(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _normalize_legacy_rise_fall_keys(params: dict | None) -> dict:
+    out = dict(params or {})
+    for legacy_key, current_key in LEGACY_RISE_FALL_FILTER_KEYS.items():
+        if legacy_key in out and current_key not in out:
+            out[current_key] = out[legacy_key]
+        out.pop(legacy_key, None)
+    return out
+
+
 def optimizer_context(env_vars: dict | None = None) -> dict:
     """Contexto real usado pelo optimizer para comparar campeões equivalentes."""
-    env_vars = env_vars or {}
+    env_vars = _normalize_legacy_rise_fall_keys(env_vars)
     symbol = _norm_symbol(
         env_vars.get("OPTIMIZER_TARGET_SYMBOL")
         or os.environ.get("OPTIMIZER_TARGET_SYMBOL")
         or env_vars.get("SYMBOL")
-        or ACTIVE_SYMBOL
+        or os.environ.get("SYMBOL")
+        or DEFAULT_OPTIMIZER_SYMBOL
     )
     contract_mode = _norm_contract_mode(
         env_vars.get("OPTIMIZER_TARGET_CONTRACT_MODE")
         or os.environ.get("OPTIMIZER_TARGET_CONTRACT_MODE")
         or env_vars.get("CONTRACT_MODE")
-        or "multiplier"
+        or os.environ.get("CONTRACT_MODE")
+        or DEFAULT_OPTIMIZER_CONTRACT_MODE
     )
     return {"contract_mode": contract_mode, "symbol": symbol}
 
@@ -575,10 +584,11 @@ def load_env(path: Path = ENV_PATH) -> dict:
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip()
-    return env
+    return _normalize_legacy_rise_fall_keys(env)
 
 
 def save_env(env_vars: dict, path: Path = ENV_PATH) -> None:
+    env_vars = _normalize_legacy_rise_fall_keys(env_vars)
     if not path.exists():
         path.write_text("\n".join(f"{k}={v}" for k, v in env_vars.items()) + "\n")
         return
@@ -641,7 +651,7 @@ def effective_stake_bounds(env_vars: dict | None = None) -> tuple[float, float]:
 def normalize_candidate_params(params: dict | None) -> dict:
     if not params:
         return {}
-    out = dict(params)
+    out = _normalize_legacy_rise_fall_keys(params)
     min_stake, max_stake = effective_stake_bounds(out)
     out["MIN_STAKE"] = str(min_stake)
     out["MAX_STAKE"] = str(max_stake)
@@ -659,8 +669,9 @@ def normalize_candidate_params(params: dict | None) -> dict:
         except (TypeError, ValueError):
             out["RISE_FALL_MIN_VOTES"] = "4"
 
-    symbol = _norm_symbol(out.get("SYMBOL") or ACTIVE_SYMBOL)
-    contract_mode = _norm_contract_mode(out.get("CONTRACT_MODE") or "multiplier")
+    target_ctx = optimizer_context(out)
+    symbol = target_ctx["symbol"]
+    contract_mode = target_ctx["contract_mode"]
     if contract_mode == "multiplier" and symbol == "BOOM1000":
         out["FRANKENSTEIN_USE_SOROS"] = str(out.get("FRANKENSTEIN_USE_SOROS", "true")).lower()
         out["FRANKENSTEIN_SOROS_STEPS"] = str(
@@ -691,9 +702,9 @@ def normalize_candidate_params(params: dict | None) -> dict:
         ens_prob = float(out.get("RISE_FALL_ENSEMBLE_MIN_PROB", 0.32) or 0.32)
         model_prob = float(out.get("ENSEMBLE_MIN_PROB", 0.28) or 0.28)
         xgb_bypass = float(out.get("PCS_XGB_BYPASS_LIMIT", 0.24) or 0.24)
-        max_cusum = float(out.get("RISE_FALL_BOOM_MAX_CUSUM", 3.8) or 3.8)
-        max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.035) or 0.035)
-        max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 8.0) or 8.0)
+        max_cusum = float(out.get("RISE_FALL_MAX_CUSUM", 3.8) or 3.8)
+        max_vel = float(out.get("RISE_FALL_MAX_VELOCITY", 0.035) or 0.035)
+        max_imb = float(out.get("RISE_FALL_MAX_IMBALANCE", 8.0) or 8.0)
         tick_count = int(float(out.get("TICK_COUNT", 100)) or 100)
         jump_conf = float(out.get("MULTIPLIER_JUMP_MIN_CONFIDENCE", 0.62) or 0.62)
         jump_qg_imb = float(out.get("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", 4.0) or 4.0)
@@ -720,9 +731,9 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["ENSEMBLE_MIN_PROB"] = str(round(max(0.12, min(0.42, model_prob)), 2))
         out["PCS_XGB_BYPASS_LIMIT"] = str(round(max(0.12, min(0.40, xgb_bypass)), 2))
         out["TICK_COUNT"] = str(max(70, min(160, tick_count)))
-        out["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
-        out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.010, min(0.080, max_vel)), 6))
-        out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(4.0, min(12.0, max_imb)), 4))
+        out["RISE_FALL_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
+        out["RISE_FALL_MAX_VELOCITY"] = str(round(max(0.010, min(0.080, max_vel)), 6))
+        out["RISE_FALL_MAX_IMBALANCE"] = str(round(max(4.0, min(12.0, max_imb)), 4))
         out["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(max(0.55, min(0.80, jump_conf)), 2))
         out["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(max(2.0, min(8.0, jump_qg_imb)), 2))
         out["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(max(0.55, min(0.80, jump_bayes)), 2))
@@ -740,7 +751,144 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(max(0.5, min(4.0, cont_min_imb)), 2))
         out["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(max(0.01, min(0.12, cont_markov_edge)), 2))
 
+    if contract_mode == "rise_fall":
+        for key in (
+            "MULTIPLIER_VALUE",
+            "MULTIPLIER_DIRECTION",
+            "MULTIPLIER_TAKE_PROFIT",
+            "MULTIPLIER_STOP_LOSS",
+            "MULTIPLIER_MAX_HOLD_TICKS",
+            "MULTIPLIER_JUMP_MIN_CONFIDENCE",
+            "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE",
+            "MULTIPLIER_JUMP_BAYES_STRONG_PROB",
+            "MULTIPLIER_JUMP_MIN_SCORE",
+            "MULTIPLIER_JUMP_HURST_TRENDING",
+            "MULTIPLIER_JUMP_HURST_REVERTING",
+            "MULTIPLIER_JUMP_MI_FLOW_MIN",
+            "MULTIPLIER_JUMP_WAVELET_SNR_MIN",
+            "MULTIPLIER_CONTINUATION_MIN_SCORE",
+            "MULTIPLIER_CONTINUATION_MIN_CONFIDENCE",
+            "MULTIPLIER_CONTINUATION_MIN_UP_TICKS",
+            "MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS",
+            "MULTIPLIER_CONTINUATION_MIN_IMBALANCE",
+            "MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE",
+        ):
+            out.pop(key, None)
+        duration = int(float(out.get("RISE_FALL_DURATION_TICKS", 5)) or 5)
+        jump_conf = float(out.get("JUMP_MIN_CONFIDENCE", 0.60) or 0.60)
+        max_cusum = float(out.get("RISE_FALL_MAX_CUSUM", 8.0) or 8.0)
+        max_vel = float(out.get("RISE_FALL_MAX_VELOCITY", 0.0017) or 0.0017)
+        max_imb = float(out.get("RISE_FALL_MAX_IMBALANCE", 1.65) or 1.65)
+        qg_imb = float(out.get("RISE_FALL_QG_MIN_ABS_IMBALANCE", 6.0) or 6.0)
+        qg_bayes = float(out.get("RISE_FALL_QG_BAYES_STRONG", 0.70) or 0.70)
+        qg_hurst = float(out.get("RISE_FALL_QG_HURST_MAX", 0.50) or 0.50)
+        out["RISE_FALL_DURATION_TICKS"] = str(max(3, min(15, duration)))
+        out["JUMP_MIN_CONFIDENCE"] = str(round(max(0.50, min(0.85, jump_conf)), 2))
+        out["RISE_FALL_MAX_CUSUM"] = str(round(max(0.5, min(12.0, max_cusum)), 4))
+        out["RISE_FALL_MAX_VELOCITY"] = str(round(max(0.001, min(0.08, max_vel)), 6))
+        out["RISE_FALL_MAX_IMBALANCE"] = str(round(max(0.1, min(12.0, max_imb)), 4))
+        out["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(max(1.0, min(10.0, qg_imb)), 2))
+        out["RISE_FALL_QG_BAYES_STRONG"] = str(round(max(0.50, min(0.85, qg_bayes)), 2))
+        out["RISE_FALL_QG_HURST_MAX"] = str(round(max(0.35, min(0.75, qg_hurst)), 2))
+
     return out
+
+
+def _sample_rise_fall_profile(params: dict, profile: str | None = None) -> dict:
+    p = params.copy()
+    profile = profile or random.choice(["balanced", "tight_reversal", "momentum_drive", "dense_probe"])
+    p["RISE_FALL_USE_ENSEMBLE"] = "true"
+    p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+    p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+    p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+
+    if profile == "tight_reversal":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(4, 18))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 7))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.60, 0.78), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(3.0, 8.0), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.62, 0.80), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.38, 0.55), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(0.8, 4.0), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0010, 0.0200), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.4, 4.0), 4))
+    elif profile == "momentum_drive":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(1, 10))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(5, 12))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.52, 0.70), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(1.0, 5.5), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.54, 0.72), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.46, 0.68), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.0, 8.0), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0020, 0.0500), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.8, 7.5), 4))
+    elif profile == "dense_probe":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([1, 2, 3]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(1, 6))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 9))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.62), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(1.0, 3.5), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.50, 0.62), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.45, 0.72), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.0, 10.0), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0040, 0.0800), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(1.0, 10.0), 4))
+    else:
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4, 5]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(2, 12))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(4, 10))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.72), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 6.0), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.56, 0.76), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.42, 0.60), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(1.0, 6.0), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0015, 0.0300), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.5, 5.0), 4))
+
+    p["RISE_FALL_MIN_PAYOUT_PCT"] = str(round(random.uniform(0.0040, 0.0080), 4))
+    p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.08, 0.48), 2))
+    p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.42), 2))
+    p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.40), 2))
+    p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+    min_stake, _ = effective_stake_bounds(p)
+    p["STAKE"] = str(round(random.uniform(min_stake, 18.0), 2))
+    return normalize_candidate_params(p)
+
+
+def _mutate_rise_fall_cluster(params: dict, focus: str | None = None) -> dict:
+    p = params.copy()
+    focus = focus or random.choice(["entry_gate", "risk_stack", "regime", "density"])
+    if focus == "entry_gate":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([1, 2, 3, 4, 5, 6]))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 15))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.82), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(1.0, 9.0), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.50, 0.82), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.38, 0.72), 2))
+    elif focus == "risk_stack":
+        p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+        p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+        p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+        min_stake, _ = effective_stake_bounds(p)
+        p["STAKE"] = str(round(random.uniform(min_stake, 18.0), 2))
+    elif focus == "regime":
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(0.5, 12.0), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0010, 0.0800), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.1, 12.0), 4))
+    else:
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(1, 20))
+        p["RISE_FALL_MIN_PAYOUT_PCT"] = str(round(random.uniform(0.0040, 0.0080), 4))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.05, 0.50), 2))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.42), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.40), 2))
+        p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+    return normalize_candidate_params(p)
 
 
 def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict:
@@ -767,9 +915,9 @@ def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict
         p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.28), 2))
         p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.26), 2))
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.32), 2))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 3.8), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.040), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 8.0), 4))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.2, 3.8), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.040), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 8.0), 4))
         p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.66), 2))
         p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 4.5), 2))
         p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.68), 2))
@@ -792,9 +940,9 @@ def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict
         p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.34), 2))
         p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.18, 0.32), 2))
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.22, 0.40), 2))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.8, 5.2), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.018, 0.075), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 12.0), 4))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.8, 5.2), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.018, 0.075), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 12.0), 4))
         p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.72), 2))
         p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 6.5), 2))
         p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.74), 2))
@@ -817,9 +965,9 @@ def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict
         p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.15, 0.32), 2))
         p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.16, 0.30), 2))
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.36), 2))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.6), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.014, 0.055), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 9.5), 4))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.6), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.014, 0.055), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 9.5), 4))
         p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.68), 2))
         p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 5.0), 2))
         p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.70), 2))
@@ -842,9 +990,9 @@ def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict
         p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.38), 2))
         p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.34), 2))
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.42), 2))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.080), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.080), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
         p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.74), 2))
         p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 7.0), 2))
         p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.76), 2))
@@ -907,9 +1055,9 @@ def _mutate_multiplier_cluster(params: dict, focus: str | None = None) -> dict:
     else:
         p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up", "down"])
         p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.010, 0.080), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.010, 0.080), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
         p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(3, 24))
         p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(3, 24))
 
@@ -919,8 +1067,17 @@ def _mutate_multiplier_cluster(params: dict, focus: str | None = None) -> dict:
 def inject_global_multiplier_search(params: dict) -> dict:
     """Build a broad multiplier candidate instead of only local hill-climbing."""
     p = params.copy()
-    symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
-    contract_mode = _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier")
+    target_ctx = optimizer_context(p)
+    symbol = target_ctx["symbol"]
+    contract_mode = target_ctx["contract_mode"]
+
+    if contract_mode == "rise_fall":
+        profile = random.choices(
+            ["balanced", "tight_reversal", "momentum_drive", "dense_probe"],
+            weights=[0.34, 0.24, 0.22, 0.20],
+            k=1,
+        )[0]
+        return _sample_rise_fall_profile(p, profile)
 
     if contract_mode == "multiplier" and symbol == "BOOM1000":
         profile = random.choices(
@@ -934,9 +1091,9 @@ def inject_global_multiplier_search(params: dict) -> dict:
         "STAKE",
         "RISE_FALL_MIN_VOTES",
         "RISE_FALL_COOLDOWN_TICKS",
-        "RISE_FALL_BOOM_MAX_CUSUM",
-        "RISE_FALL_BOOM_MAX_VELOCITY",
-        "RISE_FALL_BOOM_MAX_IMBALANCE",
+        "RISE_FALL_MAX_CUSUM",
+        "RISE_FALL_MAX_VELOCITY",
+        "RISE_FALL_MAX_IMBALANCE",
         "RISE_FALL_USE_ENSEMBLE",
         "RISE_FALL_ENSEMBLE_MIN_PROB",
         "ENSEMBLE_MIN_PROB",
@@ -974,13 +1131,26 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         neg_days = metrics.get("negative_days", 0) or metrics.get("busted", 0) or 0
         consist = metrics.get("consistency_pct", 0.0)
         total_trades = int(metrics.get("total_trades", 0) or 0)
-        contract_mode = _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier")
-        symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
+        target_ctx = optimizer_context(p)
+        contract_mode = target_ctx["contract_mode"]
+        symbol = target_ctx["symbol"]
+
+        if contract_mode == "rise_fall" and total_trades < 40:
+            return _sample_rise_fall_profile(
+                p,
+                random.choice(["balanced", "tight_reversal", "momentum_drive", "dense_probe"]),
+            )
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
             return _sample_multiplier_profile(
                 p,
                 random.choice(["micro_pullback", "balanced_signal", "trend_carry", "reversal_probe"]),
+            )
+
+        if contract_mode == "rise_fall" and -0.20 <= avg_d <= 0.20:
+            return _mutate_rise_fall_cluster(
+                p,
+                random.choice(["entry_gate", "risk_stack", "regime", "density"]),
             )
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and -0.20 <= avg_d <= 0.20:
@@ -992,6 +1162,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
+            if contract_mode == "rise_fall":
+                return _mutate_rise_fall_cluster(
+                    p,
+                    random.choice(["entry_gate", "risk_stack", "regime", "density"]),
+                )
             if contract_mode == "multiplier" and symbol == "BOOM1000":
                 return _mutate_multiplier_cluster(
                     p,
@@ -1001,15 +1176,15 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
             if action == "votes" and "RISE_FALL_MIN_VOTES" in p:
                 val = int(p["RISE_FALL_MIN_VOTES"])
                 p["RISE_FALL_MIN_VOTES"] = str(min(PARAM_SPACE["RISE_FALL_MIN_VOTES"]["max"], val + 1))
-            if action == "cusum" and "RISE_FALL_BOOM_MAX_CUSUM" in p:
-                val = float(p["RISE_FALL_BOOM_MAX_CUSUM"])
-                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_CUSUM"]["min"], val * 0.85), 4))
-            elif action == "velocity" and "RISE_FALL_BOOM_MAX_VELOCITY" in p:
-                val = float(p["RISE_FALL_BOOM_MAX_VELOCITY"])
-                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_VELOCITY"]["min"], val * 0.80), 6))
-            elif action == "imbalance" and "RISE_FALL_BOOM_MAX_IMBALANCE" in p:
-                val = float(p["RISE_FALL_BOOM_MAX_IMBALANCE"])
-                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(PARAM_SPACE["RISE_FALL_BOOM_MAX_IMBALANCE"]["min"], val * 0.85), 4))
+            if action == "cusum" and "RISE_FALL_MAX_CUSUM" in p:
+                val = float(p["RISE_FALL_MAX_CUSUM"])
+                p["RISE_FALL_MAX_CUSUM"] = str(round(max(PARAM_SPACE["RISE_FALL_MAX_CUSUM"]["min"], val * 0.85), 4))
+            elif action == "velocity" and "RISE_FALL_MAX_VELOCITY" in p:
+                val = float(p["RISE_FALL_MAX_VELOCITY"])
+                p["RISE_FALL_MAX_VELOCITY"] = str(round(max(PARAM_SPACE["RISE_FALL_MAX_VELOCITY"]["min"], val * 0.80), 6))
+            elif action == "imbalance" and "RISE_FALL_MAX_IMBALANCE" in p:
+                val = float(p["RISE_FALL_MAX_IMBALANCE"])
+                p["RISE_FALL_MAX_IMBALANCE"] = str(round(max(PARAM_SPACE["RISE_FALL_MAX_IMBALANCE"]["min"], val * 0.85), 4))
             elif action == "cooldown" and "RISE_FALL_COOLDOWN_TICKS" in p:
                 val = int(p["RISE_FALL_COOLDOWN_TICKS"])
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(min(PARAM_SPACE["RISE_FALL_COOLDOWN_TICKS"]["max"], val + random.choice([1, 2, 3, 5])))
@@ -1046,6 +1221,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
+            if contract_mode == "rise_fall":
+                return _mutate_rise_fall_cluster(
+                    p,
+                    random.choice(["entry_gate", "risk_stack", "regime", "density"]),
+                )
             if contract_mode == "multiplier" and symbol == "BOOM1000":
                 return _mutate_multiplier_cluster(
                     p,
@@ -1074,7 +1254,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 p["MULTIPLIER_DIRECTION"] = "up" if current == "signal" else "signal"
             elif action == "filters":
                 # Afrouxa de leve os filtros se o número de trades for muito baixo
-                for f_key in ["RISE_FALL_BOOM_MAX_CUSUM", "RISE_FALL_BOOM_MAX_VELOCITY", "RISE_FALL_BOOM_MAX_IMBALANCE"]:
+                for f_key in ["RISE_FALL_MAX_CUSUM", "RISE_FALL_MAX_VELOCITY", "RISE_FALL_MAX_IMBALANCE"]:
                     if f_key in p:
                         val = float(p[f_key])
                         p[f_key] = str(round(min(PARAM_SPACE[f_key]["max"], val * 1.15), 4))
@@ -1089,7 +1269,10 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
 
     # 3. Caso padrão (exploração puramente aleatória / perturbação de 1-4 parâmetros)
     eligible = [k for k in PARAM_SPACE if k not in FROZEN_PARAMS]
-    if _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier") == "multiplier" and _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL) == "BOOM1000" and random.random() < 0.55:
+    target_ctx = optimizer_context(p)
+    if target_ctx["contract_mode"] == "rise_fall":
+        eligible = [k for k in eligible if not k.startswith("MULTIPLIER_")]
+    if target_ctx["contract_mode"] == "multiplier" and target_ctx["symbol"] == "BOOM1000" and random.random() < 0.55:
         return _mutate_multiplier_cluster(p)
     num = random.randint(1, min(4, len(eligible)))
     keys = random.sample(eligible, num)
@@ -1314,7 +1497,8 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
                 evaluating_candidates: list | None = None,
                 monthly_champions: dict | None = None,
                 phase: str | None = None,
-                crossover_results: list | None = None) -> None:
+                crossover_results: list | None = None,
+                optimizer_run_id: str | None = None) -> None:
     """Grava estado para o dashboard ler (thread-safe)."""
     try:
         existing_candidates = None
@@ -1327,6 +1511,8 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
                     existing_candidates = old_data.get("evaluating_candidates")
                 if monthly_champions is None:
                     existing_champions = old_data.get("monthly_champions")
+                if optimizer_run_id is None:
+                    optimizer_run_id = old_data.get("optimizer_run_id")
             except Exception:
                 pass
                 
@@ -1346,6 +1532,7 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
             "end_date":          END_DATE,
             "n_workers":         N_WORKERS,
             "optimizer_context": optimizer_context(),
+            "optimizer_run_id":  optimizer_run_id,
         }
         if phase is not None:
             payload["phase"] = phase
@@ -1463,6 +1650,41 @@ def build_dashboard_history_entry(
         "elapsed_s": round(float(elapsed_s or 0.0), 2),
         "is_best": bool(is_best),
     }
+
+
+def reset_optimizer_runtime_state(
+    logs_dir: Path | None = None,
+    state_path: Path | None = None,
+    context: dict | None = None,
+) -> str:
+    logs_dir = logs_dir or Path("logs")
+    state_path = state_path or STATE_PATH
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    run_id = f"run-{int(time.time() * 1000)}-{os.getpid()}"
+    for path in logs_dir.glob("backtest_worker_*.json"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            print(f"[WARN] reset_optimizer_runtime_state unlink {path.name}: {exc}", flush=True)
+    payload = {
+        "running": True,
+        "current_iteration": 0,
+        "baseline": {},
+        "best": None,
+        "iterations": [],
+        "evaluating_candidates": [],
+        "monthly_champions": {},
+        "crossover_results": [],
+        "phase": "boot:baseline",
+        "last_update": time.time(),
+        "n_workers": N_WORKERS,
+        "optimizer_context": context or optimizer_context(),
+        "optimizer_run_id": run_id,
+    }
+    state_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return run_id
 
 
 def build_crossover_env(champ_info: dict) -> dict[str, str]:
@@ -1782,6 +2004,12 @@ def main():
 
     best_env = load_env()
     original_env = best_env.copy()
+    optimizer_run_id = reset_optimizer_runtime_state(
+        logs_dir=Path("logs"),
+        state_path=STATE_PATH,
+        context=optimizer_context(best_env),
+    )
+    best_env["PEGASUS_OPTIMIZER_RUN_ID"] = optimizer_run_id
 
     # Preenche parâmetros faltando com valores intermediários
     for key, space in PARAM_SPACE.items():
@@ -1821,6 +2049,7 @@ def main():
             monthly_champions={},
             phase="boot:baseline",
             crossover_results=[],
+            optimizer_run_id=optimizer_run_id,
         )
         _boot_state_written = True
 
@@ -1905,7 +2134,14 @@ def main():
         best_avg   = baseline_metrics["avg_daily_profit"]
         best_data  = {**baseline_metrics, "iteration": 0}
 
-    write_state(iteration - 1, baseline_metrics, best_data, history, monthly_champions=monthly_champions)
+    write_state(
+        iteration - 1,
+        baseline_metrics,
+        best_data,
+        history,
+        monthly_champions=monthly_champions,
+        optimizer_run_id=optimizer_run_id,
+    )
 
     # Garante que o bot ao vivo está online no startup (se não estiver em Modo Ultra-Estresse e não foi sincronizado agora)
     is_stress = _read_stress_config()
@@ -1967,6 +2203,7 @@ def main():
                 cand = rand_params(month_state["best_env"], month_state["best_metrics"])
                 cand["START_DATE"] = m_info["start"]
                 cand["END_DATE"] = m_info["end"]
+                cand["PEGASUS_OPTIMIZER_RUN_ID"] = optimizer_run_id
                 worker_id = f"{m_info['name'][:3]}_r{r}_w{w}"
                 candidates.append((cand, worker_id))
                 candidate_month_keys.append(m_key)
@@ -1985,6 +2222,7 @@ def main():
                 evaluating_candidates=candidates_ui,
                 monthly_champions=monthly_champions,
                 phase=f"monthly:{month_label}:round:{r}",
+                optimizer_run_id=optimizer_run_id,
             )
 
             futures = {pool.submit(_run_one, c): idx for idx, c in enumerate(candidates)}
@@ -2049,6 +2287,7 @@ def main():
                         evaluating_candidates=candidates_ui,
                         monthly_champions=monthly_champions,
                         phase=f"monthly:{month_label}:round:{r}",
+                        optimizer_run_id=optimizer_run_id,
                     )
 
     for m_info in months:
@@ -2079,6 +2318,7 @@ def main():
                 evaluating_candidates=[],
                 monthly_champions=monthly_champions,
                 phase=f"monthly:{m_name}:champion",
+                optimizer_run_id=optimizer_run_id,
             )
             print(f"🏆 Campeão Mensal de {m_name} encontrado! Score: {month_best_score:.4f}", flush=True)
             print(f"   Parâmetros seguros: {champ_params}", flush=True)
@@ -2092,6 +2332,7 @@ def main():
                 evaluating_candidates=[],
                 monthly_champions=monthly_champions,
                 phase=f"monthly:{m_name}:no-viable-champion",
+                optimizer_run_id=optimizer_run_id,
             )
             print(
                 f"   ⚠️  {m_name}: nenhum campeão viável neste ciclo "
@@ -2114,6 +2355,7 @@ def main():
                 print(f"   ⏭️  Pulando campeão de {champ_name}: densidade operacional insuficiente para crossover.", flush=True)
                 continue
             env_test = build_crossover_env(champ_info)
+            env_test["PEGASUS_OPTIMIZER_RUN_ID"] = optimizer_run_id
             jobs.append((env_test, champ_name))
             candidates_ui.append({
                 **sanitize_params_for_storage(env_test),
@@ -2127,7 +2369,8 @@ def main():
                     evaluating_candidates=candidates_ui,
                     monthly_champions=monthly_champions,
                     phase="crossover",
-                    crossover_results=crossover_results)
+                    crossover_results=crossover_results,
+                    optimizer_run_id=optimizer_run_id)
 
         futures = {
             pool.submit(_run_one, (job[0], f"cross_{job[1]}")): idx
@@ -2187,7 +2430,8 @@ def main():
                             evaluating_candidates=candidates_ui,
                             monthly_champions=monthly_champions,
                             phase="crossover",
-                            crossover_results=crossover_results)
+                            crossover_results=crossover_results,
+                            optimizer_run_id=optimizer_run_id)
 
     crossover_results = sorted(crossover_results, key=lambda x: x["score"], reverse=True)
 
@@ -2219,7 +2463,8 @@ def main():
         print("   ⚠️  Nenhum campeão passou pela validação cruzada; mantendo bot offline e reiniciando busca.", flush=True)
         write_state(iteration - 1, baseline_metrics, best_data, history,
                     evaluating_candidates=[],
-                    monthly_champions=monthly_champions)
+                    monthly_champions=monthly_champions,
+                    optimizer_run_id=optimizer_run_id)
         return
 
     deployable_crossovers = [r for r in crossover_results if is_live_deployable(r) and is_crossover_candidate_viable(r)]
@@ -2229,7 +2474,8 @@ def main():
                     evaluating_candidates=[],
                     monthly_champions=monthly_champions,
                     phase="crossover:rejected",
-                    crossover_results=crossover_results)
+                    crossover_results=crossover_results,
+                    optimizer_run_id=optimizer_run_id)
         return
 
     supreme_winner = deployable_crossovers[0]
@@ -2262,7 +2508,8 @@ def main():
                 evaluating_candidates=[],
                 monthly_champions=monthly_champions,
                 phase=f"supreme:{supreme_winner['champ_name']}",
-                crossover_results=crossover_results)
+                crossover_results=crossover_results,
+                optimizer_run_id=optimizer_run_id)
 
     # Faz deploy do vencedor supremo no bot ao vivo
     if is_live_deployable(best_data):
@@ -2299,6 +2546,7 @@ def main():
             for i in range(N_WORKERS):
                 base_env, base_metrics = random.choice(champion_pool)
                 cand = rand_params(base_env, base_metrics)
+                cand["PEGASUS_OPTIMIZER_RUN_ID"] = optimizer_run_id
                 worker_id = f"ref_{i}"
                 candidates.append((cand, worker_id))
                 candidates_ui.append({
@@ -2310,7 +2558,8 @@ def main():
             print(f"🔄 Iteração de Refinamento {iteration}–{iteration + N_WORKERS - 1}...", flush=True)
             write_state(iteration, baseline_metrics, best_data, history,
                         evaluating_candidates=candidates_ui,
-                        monthly_champions=monthly_champions)
+                        monthly_champions=monthly_champions,
+                        optimizer_run_id=optimizer_run_id)
 
             t0 = time.time()
             futures = {pool.submit(_run_one, c): i for i, c in enumerate(candidates)}
@@ -2323,14 +2572,16 @@ def main():
                     if not m:
                         write_state(iteration + idx, baseline_metrics, best_data, history,
                                     evaluating_candidates=candidates_ui,
-                                    monthly_champions=monthly_champions)
+                                    monthly_champions=monthly_champions,
+                                    optimizer_run_id=optimizer_run_id)
                         continue
                 except Exception as e:
                     candidates_ui[idx]["status"] = "Erro"
                     print(f"   [worker {idx}] erro: {e}", flush=True)
                     write_state(iteration + idx, baseline_metrics, best_data, history,
                                 evaluating_candidates=candidates_ui,
-                                monthly_champions=monthly_champions)
+                                monthly_champions=monthly_champions,
+                                optimizer_run_id=optimizer_run_id)
                     continue
 
                 active = m.get("active_days", 0) or 0
@@ -2394,7 +2645,8 @@ def main():
 
                 write_state(iteration + idx, baseline_metrics, best_data, history,
                             evaluating_candidates=candidates_ui,
-                            monthly_champions=monthly_champions)
+                            monthly_champions=monthly_champions,
+                            optimizer_run_id=optimizer_run_id)
 
             iteration += N_WORKERS
             time.sleep(0.5)

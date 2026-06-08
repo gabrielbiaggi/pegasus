@@ -70,9 +70,9 @@ class OptimizerContractsTest(unittest.TestCase):
                 "RISE_FALL_COOLDOWN_TICKS": "40",
                 "RISE_FALL_USE_ENSEMBLE": "false",
                 "RISE_FALL_ENSEMBLE_MIN_PROB": "0.10",
-                "RISE_FALL_BOOM_MAX_CUSUM": "8.5",
-                "RISE_FALL_BOOM_MAX_VELOCITY": "0.005",
-                "RISE_FALL_BOOM_MAX_IMBALANCE": "5.0",
+                "RISE_FALL_MAX_CUSUM": "8.5",
+                "RISE_FALL_MAX_VELOCITY": "0.005",
+                "RISE_FALL_MAX_IMBALANCE": "5.0",
                 "MULTIPLIER_JUMP_MIN_CONFIDENCE": "0.90",
                 "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": "0.5",
                 "MULTIPLIER_JUMP_BAYES_STRONG_PROB": "0.90",
@@ -367,6 +367,22 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(current["symbol"], "1HZ25V")
         self.assertEqual(current["contract_mode"], "rise_fall")
 
+    def test_optimizer_context_follows_primary_env_when_target_override_is_empty(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SYMBOL": "1HZ25V",
+                "CONTRACT_MODE": "rise_fall",
+                "OPTIMIZER_TARGET_SYMBOL": "",
+                "OPTIMIZER_TARGET_CONTRACT_MODE": "",
+            },
+            clear=False,
+        ):
+            current = optimize_loop.optimizer_context({})
+
+        self.assertEqual(current["symbol"], "1HZ25V")
+        self.assertEqual(current["contract_mode"], "rise_fall")
+
     def test_live_deploy_gate_rejects_negative_multiplier_candidate(self) -> None:
         self.assertFalse(
             optimize_loop.is_live_deployable(
@@ -453,6 +469,55 @@ class OptimizerContractsTest(unittest.TestCase):
             workers = dashboard_app._read_optimizer_workers(logs, now=time.time(), include_stale=False)
 
         self.assertEqual([worker["worker_id"] for worker in workers], ["Jan_r0_w0"])
+
+    def test_read_optimizer_workers_filters_by_current_run_id_and_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "backtest_worker_Jan_r0_w0.json").write_text(json.dumps({
+                "current_day_index": 6,
+                "total_days": 31,
+                "elapsed_s": 12,
+                "current_month": "Janeiro",
+                "optimizer_run_id": "run-new",
+                "optimizer_context": {"symbol": "1HZ25V", "contract_mode": "rise_fall"},
+            }))
+            (logs / "backtest_worker_Fev_r0_w1.json").write_text(json.dumps({
+                "current_day_index": 6,
+                "total_days": 28,
+                "elapsed_s": 12,
+                "current_month": "Fevereiro",
+                "optimizer_run_id": "run-old",
+                "optimizer_context": {"symbol": "BOOM1000", "contract_mode": "multiplier"},
+            }))
+
+            workers = dashboard_app._read_optimizer_workers(
+                logs,
+                now=time.time(),
+                include_stale=False,
+                run_id="run-new",
+                optimizer_context={"symbol": "1HZ25V", "contract_mode": "rise_fall"},
+            )
+
+        self.assertEqual([worker["worker_id"] for worker in workers], ["Jan_r0_w0"])
+
+    def test_reset_optimizer_runtime_state_removes_stale_worker_progress_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "backtest_worker_Jan_r0_w0.json").write_text("{}")
+            (logs / "backtest_worker_Fev_r0_w1.json").write_text("{}")
+            state_path = logs / "optimizer_state.json"
+            state_path.write_text(json.dumps({"phase": "old"}))
+
+            run_id = optimize_loop.reset_optimizer_runtime_state(
+                logs_dir=logs,
+                state_path=state_path,
+                context={"symbol": "1HZ25V", "contract_mode": "rise_fall"},
+            )
+
+            self.assertTrue(run_id)
+            self.assertFalse((logs / "backtest_worker_Jan_r0_w0.json").exists())
+            self.assertFalse((logs / "backtest_worker_Fev_r0_w1.json").exists())
+            self.assertTrue(state_path.exists())
 
     def test_sanitize_metrics_for_state_removes_runtime_payloads(self) -> None:
         metrics = {

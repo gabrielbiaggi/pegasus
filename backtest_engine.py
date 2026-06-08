@@ -4,8 +4,8 @@ Backtest engine real — código idêntico ao bot, amostragem a cada 60 ticks.
 Uso: backtest_engine.py START_DATE END_DATE START_BALANCE OUTPUT_JSON
 
 Processa dia a dia, salva resultados incrementalmente no OUTPUT_JSON.
-Usa arquivos data/ticks_BOOM1000_YYYY-MM-DD.csv quando disponíveis,
-senão filtra data/ticks_BOOM1000_max.csv por data.
+Usa arquivos data/ticks_<SYMBOL>_YYYY-MM-DD.csv quando disponíveis,
+senão filtra data/ticks_<SYMBOL>_max.csv por data.
 """
 
 import asyncio
@@ -49,7 +49,7 @@ if not APP_ID.isdigit():
 WS_URL = f"wss://api.derivws.com/trading/v1/options/ws/public?app_id={APP_ID}"
 
 # ── Símbolo Ativo e Auxiliares de Volatilidade ──────────────────────────────────
-SYMBOL = os.getenv("SYMBOL", "BOOM1000")
+SYMBOL = os.getenv("SYMBOL", "1HZ25V")
 
 def get_symbol_median_volatility(sym: str) -> float:
     sym_upper = sym.upper()
@@ -90,9 +90,9 @@ CONTRACT_MODE = os.getenv("CONTRACT_MODE", "calm_accu").strip().lower()
 RISE_FALL_DURATION_TICKS = int(os.getenv("RISE_FALL_DURATION_TICKS", "5"))
 RISE_FALL_MIN_PAYOUT_PCT = float(os.getenv("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
 RISE_FALL_COOLDOWN_TICKS = int(os.getenv("RISE_FALL_COOLDOWN_TICKS", "3"))
-RISE_FALL_BOOM_MAX_CUSUM = float(os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
-RISE_FALL_BOOM_MAX_VELOCITY = float(os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
-RISE_FALL_BOOM_MAX_IMBALANCE = float(os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
+RISE_FALL_MAX_CUSUM = float(os.getenv("RISE_FALL_MAX_CUSUM", os.getenv("RISE_FALL_BOOM_MAX_CUSUM", "8.0")))
+RISE_FALL_MAX_VELOCITY = float(os.getenv("RISE_FALL_MAX_VELOCITY", os.getenv("RISE_FALL_BOOM_MAX_VELOCITY", "0.001")))
+RISE_FALL_MAX_IMBALANCE = float(os.getenv("RISE_FALL_MAX_IMBALANCE", os.getenv("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5")))
 RISE_FALL_BOOM_ONLY_PUT = os.getenv("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
 RISE_FALL_MIN_VOTES = max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
 RISE_FALL_USE_ENSEMBLE = os.getenv("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
@@ -329,7 +329,7 @@ def _get_max_csv_range(data_dir: Path) -> tuple[_date, _date] | None:
 def _ensure_day_ticks(day: _date, data_dir: Path, state: dict | None = None) -> bool:
     """
     Garante que ticks do dia existem.
-    1. Checa arquivo diário (ticks_BOOM1000_YYYY-MM-DD.csv)
+    1. Checa arquivo diário (ticks_<SYMBOL>_YYYY-MM-DD.csv)
     2. Checa se existem ticks no PostgreSQL (shadow_ticks / shadow_ticks_accumulator)
     3. Checa se max.csv cobre o dia (cache do range de epochs)
     4. Tenta baixar da Deriv se TOKEN disponível
@@ -944,17 +944,17 @@ def _replay_strategy(
                 
                 if is_boom or is_crash:
                     _cusum_limit = (
-                        RISE_FALL_BOOM_MAX_CUSUM
+                        RISE_FALL_MAX_CUSUM
                         if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else CUSUM_MAX
                     )
                     _velocity_limit = (
-                        RISE_FALL_BOOM_MAX_VELOCITY
+                        RISE_FALL_MAX_VELOCITY
                         if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else 0.0002
                     )
                     _imbalance_limit = (
-                        RISE_FALL_BOOM_MAX_IMBALANCE
+                        RISE_FALL_MAX_IMBALANCE
                         if CONTRACT_MODE in {"rise_fall", "jump_rise_fall", "multiplier"}
                         else 1.0
                     )
@@ -1512,24 +1512,24 @@ def _collect_day_outcomes(
                 boom_multiplier_pullback = (
                     CONTRACT_MODE == "multiplier"
                     and "BOOM" in SYMBOL.upper()
-                    and imbalance_v <= -RISE_FALL_BOOM_MAX_IMBALANCE
+                    and imbalance_v <= -RISE_FALL_MAX_IMBALANCE
                     and cusum_v >= 0.0
                 )
                 if (
                     not boom_multiplier_pullback
                     and (
-                        cusum_v < -RISE_FALL_BOOM_MAX_CUSUM
-                        or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY
-                        or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE
+                        cusum_v < -RISE_FALL_MAX_CUSUM
+                        or velocity_v < -RISE_FALL_MAX_VELOCITY
+                        or imbalance_v < -RISE_FALL_MAX_IMBALANCE
                     )
                 ):
                     i += SAMPLE_EVERY
                     continue
             else:
                 if (
-                    cusum_v > RISE_FALL_BOOM_MAX_CUSUM
-                    or velocity_v > RISE_FALL_BOOM_MAX_VELOCITY
-                    or imbalance_v > RISE_FALL_BOOM_MAX_IMBALANCE
+                    cusum_v > RISE_FALL_MAX_CUSUM
+                    or velocity_v > RISE_FALL_MAX_VELOCITY
+                    or imbalance_v > RISE_FALL_MAX_IMBALANCE
                 ):
                     i += SAMPLE_EVERY
                     continue
@@ -1946,7 +1946,7 @@ def apply_config(env_overrides: dict):
     global CUSUM_MAX, HURST_MIN, CALM_THRESH, TICK_COUNT, CALM_MIN_SCORE, ENSEMBLE_MIN_PROB, BLOCKED_HOURS, WIN_TICKS
     global STRATEGY_CONFIGS, STRATEGY_NAMES, accu_cfg, SAMPLE_EVERY
     global CONTRACT_MODE, RISE_FALL_DURATION_TICKS, RISE_FALL_MIN_PAYOUT_PCT, RISE_FALL_COOLDOWN_TICKS
-    global RISE_FALL_BOOM_MAX_CUSUM, RISE_FALL_BOOM_MAX_VELOCITY, RISE_FALL_BOOM_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT, RISE_FALL_MIN_VOTES
+    global RISE_FALL_MAX_CUSUM, RISE_FALL_MAX_VELOCITY, RISE_FALL_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT, RISE_FALL_MIN_VOTES
     global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
     global MULTIPLIER_VALUE, MULTIPLIER_DIRECTION, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
@@ -1956,7 +1956,7 @@ def apply_config(env_overrides: dict):
         import logging
         logging.getLogger("Pegasus").setLevel(logging.ERROR)
         
-    new_symbol = os.environ.get("SYMBOL", "BOOM1000")
+    new_symbol = os.environ.get("SYMBOL", "1HZ25V")
     if new_symbol != SYMBOL:
         SYMBOL = new_symbol
         _max_csv_range = None
@@ -1979,9 +1979,9 @@ def apply_config(env_overrides: dict):
     RISE_FALL_DURATION_TICKS = int(os.environ.get("RISE_FALL_DURATION_TICKS", "5"))
     RISE_FALL_MIN_PAYOUT_PCT = float(os.environ.get("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
     RISE_FALL_COOLDOWN_TICKS = int(os.environ.get("RISE_FALL_COOLDOWN_TICKS", "3"))
-    RISE_FALL_BOOM_MAX_CUSUM = float(os.environ.get("RISE_FALL_BOOM_MAX_CUSUM", "8.0"))
-    RISE_FALL_BOOM_MAX_VELOCITY = float(os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001"))
-    RISE_FALL_BOOM_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5"))
+    RISE_FALL_MAX_CUSUM = float(os.environ.get("RISE_FALL_MAX_CUSUM", os.environ.get("RISE_FALL_BOOM_MAX_CUSUM", "8.0")))
+    RISE_FALL_MAX_VELOCITY = float(os.environ.get("RISE_FALL_MAX_VELOCITY", os.environ.get("RISE_FALL_BOOM_MAX_VELOCITY", "0.001")))
+    RISE_FALL_MAX_IMBALANCE = float(os.environ.get("RISE_FALL_MAX_IMBALANCE", os.environ.get("RISE_FALL_BOOM_MAX_IMBALANCE", "1.5")))
     RISE_FALL_BOOM_ONLY_PUT = os.environ.get("RISE_FALL_BOOM_ONLY_PUT", "true").lower() == "true"
     RISE_FALL_MIN_VOTES = max(1, min(6, int(os.environ.get("RISE_FALL_MIN_VOTES", "4"))))
     RISE_FALL_USE_ENSEMBLE = os.environ.get("RISE_FALL_USE_ENSEMBLE", "false").lower() == "true"
@@ -2121,7 +2121,12 @@ def run_backtest_direct(
                     "total_days": total_days,
                     "elapsed_s": time.time() - t_start,
                     "current_day": day.isoformat(),
-                    "current_month": m_name
+                    "current_month": m_name,
+                    "optimizer_run_id": os.environ.get("PEGASUS_OPTIMIZER_RUN_ID", ""),
+                    "optimizer_context": {
+                        "symbol": os.environ.get("SYMBOL", SYMBOL),
+                        "contract_mode": os.environ.get("CONTRACT_MODE", CONTRACT_MODE),
+                    },
                 }), encoding="utf-8")
             except Exception:
                 pass

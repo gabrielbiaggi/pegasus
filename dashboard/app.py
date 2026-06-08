@@ -1232,7 +1232,13 @@ def _read_stress_config() -> bool:
         return False
 
 
-def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_stale: bool = True) -> list[dict]:
+def _read_optimizer_workers(
+    logs_dir: Path,
+    now: float | None = None,
+    include_stale: bool = True,
+    run_id: str | None = None,
+    optimizer_context: dict | None = None,
+) -> list[dict]:
     """Read live optimizer worker progress files, preferring current monthly workers."""
     now = now if now is not None else _time.time()
     workers: list[dict] = []
@@ -1258,6 +1264,15 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
             mtime = stat.st_mtime
             if not data.get("current_month"):
                 continue
+            if run_id and str(data.get("optimizer_run_id") or "") != str(run_id):
+                continue
+            if optimizer_context:
+                worker_ctx = data.get("optimizer_context") or {}
+                if (
+                    str(worker_ctx.get("symbol") or "").upper() != str(optimizer_context.get("symbol") or "").upper()
+                    or str(worker_ctx.get("contract_mode") or "").lower() != str(optimizer_context.get("contract_mode") or "").lower()
+                ):
+                    continue
             is_optimizer_v3 = bool(optimizer_worker_re.match(worker_id))
             stale = (now - mtime) > 180
             if not is_optimizer_v3 and (not include_stale or not stale):
@@ -1287,6 +1302,8 @@ def _read_optimizer_workers(logs_dir: Path, now: float | None = None, include_st
                 "day_progress": data.get("day_progress"),
                 "heartbeat_ts": data.get("heartbeat_ts"),
                 "heartbeat_ms": data.get("heartbeat_ms"),
+                "optimizer_run_id": data.get("optimizer_run_id"),
+                "optimizer_context": data.get("optimizer_context"),
                 "source_file": path.name,
                 "last_update_ago_s": int(now - mtime),
                 "stale": stale,
@@ -1517,7 +1534,15 @@ def optimizer_status(response: Response):
             data["last_update_ago_s"] = int(_t.time() - mtime)
             data["ultra_stress"] = _read_stress_config()
             data["deployed_iteration"] = deployed_iteration_val
-            workers = _read_optimizer_workers(BASE / "logs", now=_t.time(), include_stale=False)
+            state_run_id = data.get("optimizer_run_id")
+            state_context = data.get("optimizer_context")
+            workers = _read_optimizer_workers(
+                BASE / "logs",
+                now=_t.time(),
+                include_stale=False,
+                run_id=state_run_id,
+                optimizer_context=state_context,
+            )
             data["optimizer_workers"] = workers
             n_workers = int(data.get("n_workers") or len(workers) or 1)
 
