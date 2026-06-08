@@ -611,13 +611,13 @@ def _calc_win_ticks(tp_pct: float) -> int:
 
 
 def _generate_strategy_configs() -> list[dict]:
+    directional_score = (
+        max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
+        if os.getenv("CONTRACT_MODE", "").strip().lower() in {"rise_fall", "multiplier"}
+        else 25
+    )
     # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
     if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
-        directional_score = (
-            max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
-            if os.getenv("CONTRACT_MODE", "").strip().lower() in {"rise_fall", "multiplier"}
-            else 25
-        )
         return [
             {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": directional_score, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
             {
@@ -637,15 +637,15 @@ def _generate_strategy_configs() -> list[dict]:
     
     # 1. Mantém os 9 Sniperes base como referência crucial
     base_configs = [
-        {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
-        {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
-        {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-        {"name": "Conservador 3% TP", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Conservador Flat $10", "tp": 0.03, "score": 25, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-        {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": 25, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": 25, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
-        {"name": "Super-Frankenstein", "tp": 0.30, "score": 25, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
+        {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
+        {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
+        {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+        {"name": "Conservador 3% TP", "tp": 0.03, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Conservador Flat $10", "tp": 0.03, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
+        {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": directional_score, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
+        {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": directional_score, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
+        {"name": "Super-Frankenstein", "tp": 0.30, "score": directional_score, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
     ]
     configs.extend(base_configs)
 
@@ -674,7 +674,7 @@ def _generate_strategy_configs() -> list[dict]:
                     configs.append({
                         "name": name,
                         "tp": tp,
-                        "score": 25,
+                        "score": directional_score,
                         "mode": mode,
                         "use_soros": use_soros,
                         "soros_steps": soros_steps,

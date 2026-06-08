@@ -628,6 +628,22 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual(backtest_engine.SAMPLE_EVERY, 1)
 
+    def test_rise_fall_manual_backtest_uses_directional_score_floor(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CONTRACT_MODE": "rise_fall",
+                "PEGASUS_OPTIMIZER_RUN": "false",
+                "RISE_FALL_MIN_VOTES": "4",
+            },
+            clear=False,
+        ):
+            backtest_engine.apply_config(dict(os.environ))
+
+        configs = {c["name"]: c for c in backtest_engine.STRATEGY_CONFIGS}
+        self.assertEqual(configs["Super-Frankenstein"]["score"], 4)
+        self.assertEqual(configs["Pegasus Live Sniper (9% TP)"]["score"], 4)
+
     def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
         monthly_states = {
             "2026-01": {
