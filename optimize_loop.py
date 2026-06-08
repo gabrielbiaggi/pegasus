@@ -790,6 +790,7 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(max(0.01, min(0.12, cont_markov_edge)), 2))
 
     if contract_mode == "rise_fall":
+        out["RISE_FALL_USE_ENSEMBLE"] = "true"
         for key in (
             "MULTIPLIER_VALUE",
             "MULTIPLIER_DIRECTION",
@@ -820,7 +821,10 @@ def normalize_candidate_params(params: dict | None) -> dict:
         qg_imb = float(out.get("RISE_FALL_QG_MIN_ABS_IMBALANCE", 6.0) or 6.0)
         qg_bayes = float(out.get("RISE_FALL_QG_BAYES_STRONG", 0.70) or 0.70)
         qg_hurst = float(out.get("RISE_FALL_QG_HURST_MAX", 0.50) or 0.50)
+        cooldown = int(float(out.get("RISE_FALL_COOLDOWN_TICKS", 8)) or 8)
         out["RISE_FALL_DURATION_TICKS"] = str(max(3, min(15, duration)))
+        out["RISE_FALL_MIN_VOTES"] = str(max(3, min(6, int(float(out.get("RISE_FALL_MIN_VOTES", 4)) or 4))))
+        out["RISE_FALL_COOLDOWN_TICKS"] = str(max(6, min(20, cooldown)))
         out["JUMP_MIN_CONFIDENCE"] = str(round(max(0.50, min(0.85, jump_conf)), 2))
         out["RISE_FALL_MAX_CUSUM"] = str(round(max(0.5, min(12.0, max_cusum)), 4))
         out["RISE_FALL_MAX_VELOCITY"] = str(round(max(0.001, min(0.08, max_vel)), 6))
@@ -834,7 +838,7 @@ def normalize_candidate_params(params: dict | None) -> dict:
 
 def _sample_rise_fall_profile(params: dict, profile: str | None = None) -> dict:
     p = params.copy()
-    profile = profile or random.choice(["balanced", "tight_reversal", "momentum_drive", "dense_probe"])
+    profile = profile or random.choice(["strict_selective", "contextual_swing", "tight_reversal", "balanced"])
     p["RISE_FALL_USE_ENSEMBLE"] = "true"
     p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
     p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
@@ -842,7 +846,37 @@ def _sample_rise_fall_profile(params: dict, profile: str | None = None) -> dict:
     p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
     p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
 
-    if profile == "tight_reversal":
+    if profile == "strict_selective":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(10, 20))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(4, 6))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.62, 0.74), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.8, 4.2), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.62, 0.72), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.42, 0.48), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.0, 3.5), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0080, 0.0140), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(2.0, 3.5), 4))
+        p["TICK_COUNT"] = str(random.choice(list(range(90, 121, 5))))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.20), 2))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.16, 0.24), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.22), 2))
+    elif profile == "contextual_swing":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 14))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(7, 10))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.62), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(4.5, 6.5), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.54, 0.62), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.40, 0.46), 2))
+        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(1.4, 2.4), 4))
+        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0100, 0.0160), 6))
+        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.7, 1.6), 4))
+        p["TICK_COUNT"] = str(random.choice(list(range(140, 161, 5))))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.20), 2))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.16, 0.24), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.22), 2))
+    elif profile == "tight_reversal":
         p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5, 6]))
         p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(4, 18))
         p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 7))
@@ -864,20 +898,9 @@ def _sample_rise_fall_profile(params: dict, profile: str | None = None) -> dict:
         p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.0, 8.0), 4))
         p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0020, 0.0500), 6))
         p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.8, 7.5), 4))
-    elif profile == "dense_probe":
-        p["RISE_FALL_MIN_VOTES"] = str(random.choice([1, 2, 3]))
-        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(1, 6))
-        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 9))
-        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.62), 2))
-        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(1.0, 3.5), 2))
-        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.50, 0.62), 2))
-        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.45, 0.72), 2))
-        p["RISE_FALL_MAX_CUSUM"] = str(round(random.uniform(2.0, 10.0), 4))
-        p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0040, 0.0800), 6))
-        p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(1.0, 10.0), 4))
     else:
-        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4, 5]))
-        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(2, 12))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 14))
         p["RISE_FALL_DURATION_TICKS"] = str(random.randint(4, 10))
         p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.72), 2))
         p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 6.0), 2))
@@ -888,10 +911,10 @@ def _sample_rise_fall_profile(params: dict, profile: str | None = None) -> dict:
         p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.5, 5.0), 4))
 
     p["RISE_FALL_MIN_PAYOUT_PCT"] = str(round(random.uniform(0.0040, 0.0080), 4))
-    p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.08, 0.48), 2))
-    p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.42), 2))
-    p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.40), 2))
-    p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+    p.setdefault("RISE_FALL_ENSEMBLE_MIN_PROB", str(round(random.uniform(0.10, 0.28), 2)))
+    p.setdefault("ENSEMBLE_MIN_PROB", str(round(random.uniform(0.14, 0.28), 2)))
+    p.setdefault("PCS_XGB_BYPASS_LIMIT", str(round(random.uniform(0.12, 0.26), 2)))
+    p.setdefault("TICK_COUNT", str(random.choice(list(range(90, 161, 5)))))
     min_stake, _ = effective_stake_bounds(p)
     p["STAKE"] = str(round(random.uniform(min_stake, 18.0), 2))
     return normalize_candidate_params(p)
@@ -901,12 +924,12 @@ def _mutate_rise_fall_cluster(params: dict, focus: str | None = None) -> dict:
     p = params.copy()
     focus = focus or random.choice(["entry_gate", "risk_stack", "regime", "density"])
     if focus == "entry_gate":
-        p["RISE_FALL_MIN_VOTES"] = str(random.choice([1, 2, 3, 4, 5, 6]))
-        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(3, 15))
-        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.82), 2))
-        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(1.0, 9.0), 2))
-        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.50, 0.82), 2))
-        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.38, 0.72), 2))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5, 6]))
+        p["RISE_FALL_DURATION_TICKS"] = str(random.randint(4, 10))
+        p["JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.76), 2))
+        p["RISE_FALL_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 7.0), 2))
+        p["RISE_FALL_QG_BAYES_STRONG"] = str(round(random.uniform(0.54, 0.74), 2))
+        p["RISE_FALL_QG_HURST_MAX"] = str(round(random.uniform(0.40, 0.55), 2))
     elif focus == "risk_stack":
         p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
         p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
@@ -920,12 +943,12 @@ def _mutate_rise_fall_cluster(params: dict, focus: str | None = None) -> dict:
         p["RISE_FALL_MAX_VELOCITY"] = str(round(random.uniform(0.0010, 0.0800), 6))
         p["RISE_FALL_MAX_IMBALANCE"] = str(round(random.uniform(0.1, 12.0), 4))
     else:
-        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(1, 20))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 20))
         p["RISE_FALL_MIN_PAYOUT_PCT"] = str(round(random.uniform(0.0040, 0.0080), 4))
-        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.05, 0.50), 2))
-        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.42), 2))
-        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.40), 2))
-        p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.10, 0.28), 2))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.30), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.28), 2))
+        p["TICK_COUNT"] = str(random.choice(list(range(90, 161, 5))))
     return normalize_candidate_params(p)
 
 
@@ -1111,8 +1134,8 @@ def inject_global_multiplier_search(params: dict) -> dict:
 
     if contract_mode == "rise_fall":
         profile = random.choices(
-            ["balanced", "tight_reversal", "momentum_drive", "dense_probe"],
-            weights=[0.34, 0.24, 0.22, 0.20],
+            ["strict_selective", "contextual_swing", "tight_reversal", "balanced", "momentum_drive"],
+            weights=[0.34, 0.24, 0.18, 0.16, 0.08],
             k=1,
         )[0]
         return _sample_rise_fall_profile(p, profile)
@@ -1176,7 +1199,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         if contract_mode == "rise_fall" and total_trades < 40:
             return _sample_rise_fall_profile(
                 p,
-                random.choice(["balanced", "tight_reversal", "momentum_drive", "dense_probe"]),
+                random.choice(["strict_selective", "contextual_swing", "tight_reversal"]),
             )
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:

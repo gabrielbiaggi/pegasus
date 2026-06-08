@@ -1614,6 +1614,7 @@ def optimizer_status(response: Response):
                 data["worker_cards_count"] = len([c for c in evaluating_candidates if not c.get("idle")])
                 data["worker_slots_count"] = len(evaluating_candidates)
             data["runtime_summary"] = _derive_optimizer_runtime_summary(data)
+            data["status_text"] = data["runtime_summary"].get("status_text")
             return data
         except Exception as exc:
             pass

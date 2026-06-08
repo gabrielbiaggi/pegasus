@@ -28,6 +28,21 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(signal, "CALL")
         self.assertEqual(score, 6)
 
+    def test_normalize_rise_fall_candidate_keeps_ensemble_and_selective_bounds(self) -> None:
+        candidate = optimize_loop.normalize_candidate_params(
+            {
+                "SYMBOL": "1HZ25V",
+                "CONTRACT_MODE": "rise_fall",
+                "RISE_FALL_USE_ENSEMBLE": "false",
+                "RISE_FALL_MIN_VOTES": "1",
+                "RISE_FALL_COOLDOWN_TICKS": "1",
+            }
+        )
+
+        self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
+        self.assertGreaterEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 3)
+        self.assertGreaterEqual(int(candidate["RISE_FALL_COOLDOWN_TICKS"]), 6)
+
     def test_boom1000_global_search_biases_toward_spike_families(self) -> None:
         random.seed(7)
         params = {
