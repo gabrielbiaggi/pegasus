@@ -5969,13 +5969,14 @@
                                     var scoreText = c.result_score != null ? c.result_score.toFixed(1) : "—";
                                     var avgText = c.result_avg_daily_profit != null ? "$" + c.result_avg_daily_profit.toFixed(2) + "/dia" : "—";
                                     var consistText = c.result_consistency_pct != null ? c.result_consistency_pct.toFixed(0) + "%" : "—";
+                                    var tradesText = c.result_trades != null ? c.result_trades + "T" : "—T";
                                     var barColor = statusText.indexOf("Finalizado") >= 0 ? "var(--cyan)" : "var(--yellow)";
                                     progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'
                                         + '<div style="background:' + barColor + ';height:100%;width:100%"></div>'
                                         + '</div>'
                                         + '<div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--dim);margin-top:4px">'
                                         + '<span>' + avgText + ' · score ' + scoreText + '</span>'
-                                        + '<span>' + consistText + ' · ' + daysStr + ' · ' + pnlText + '</span>'
+                                        + '<span>' + tradesText + ' · ' + consistText + ' · ' + daysStr + ' · ' + pnlText + '</span>'
                                         + '</div>';
                                 } else {
                                     progressHtml = '<div style="margin-top:8px;background:rgba(255,255,255,0.06);border-radius:10px;height:4px;overflow:hidden;position:relative">'

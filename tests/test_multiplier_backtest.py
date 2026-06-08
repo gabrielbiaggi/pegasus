@@ -19,6 +19,22 @@ class MultiplierBacktestTest(unittest.TestCase):
 
         self.assertEqual(indices, [100, 160, 220])
 
+    def test_multiplier_indicator_map_keeps_sampled_rows_for_signal_engine(self) -> None:
+        df = pd.DataFrame(
+            {
+                "cusum_score": [float(i) for i in range(250)],
+                "tick_imbalance": list(range(250)),
+            }
+        )
+
+        with patch.object(backtest_engine, "TICK_COUNT", 100), patch.object(
+            backtest_engine, "SAMPLE_EVERY", 60
+        ):
+            rows = backtest_engine._build_sampled_indicator_map(df)
+
+        self.assertEqual(sorted(rows), [100, 160, 220])
+        self.assertEqual(rows[160]["tick_imbalance"], 160)
+
     def test_indicator_cache_stale_detection_flags_degenerate_sampled_frame(self) -> None:
         df = pd.DataFrame(
             {

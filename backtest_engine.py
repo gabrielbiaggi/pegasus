@@ -689,6 +689,21 @@ STRATEGY_CONFIGS = _generate_strategy_configs()
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
 
 
+def _build_sampled_indicator_map(day_indicators_df: pd.DataFrame) -> dict[int, dict]:
+    """Return indicator rows only for sampled backtest ticks."""
+    target_indices = [
+        w for w in range(TICK_COUNT, len(day_indicators_df))
+        if (w - TICK_COUNT) % SAMPLE_EVERY == 0
+    ]
+    if not target_indices:
+        return {}
+    sub_df = day_indicators_df.iloc[target_indices].copy()
+    return {
+        idx: row
+        for idx, row in zip(target_indices, sub_df.to_dict("records"))
+    }
+
+
 def _simulate_multiplier_profit(
     stake: float,
     direction: str,
@@ -1275,7 +1290,11 @@ def _collect_day_outcomes(
         shannon_arr = day_indicators_df["shannon_entropy"].values if "shannon_entropy" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         kalman_arr = day_indicators_df["kalman_residual_zscore"].values if "kalman_residual_zscore" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         p_loss_arr = day_indicators_df["p_loss"].values if "p_loss" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
-        indicators_map = {}
+        indicators_map = (
+            _build_sampled_indicator_map(day_indicators_df)
+            if CONTRACT_MODE == "multiplier"
+            else {}
+        )
     else:
         if day in _indicators_list_cache:
             indicators_map = _indicators_list_cache[day]

@@ -1146,6 +1146,7 @@ def _run_one(args) -> dict | None:
 # ── Estado e dashboard ────────────────────────────────────────────────────────
 
 _state_lock = threading.Lock()
+_boot_state_written = False
 
 _STATE_DROP_KEYS = {
     "_env",
@@ -1614,6 +1615,7 @@ def run_backtest_parallel(env_vars: dict, start_date_str: str, end_date_str: str
 # ── Loop principal ────────────────────────────────────────────────────────────
 
 def main():
+    global _boot_state_written
     SEP = "=" * 70
     print(SEP, flush=True)
     print(f"  🦅 PEGASUS OPTIMIZER v3 — PARALLEL ({N_WORKERS} workers simultâneos)", flush=True)
@@ -1651,17 +1653,19 @@ def main():
         "sortino_ratio": 0.0,
         "max_drawdown": 0.0,
     }
-    write_state(
-        0,
-        empty_metrics,
-        None,
-        [],
-        running=True,
-        evaluating_candidates=[],
-        monthly_champions={},
-        phase="boot:baseline",
-        crossover_results=[],
-    )
+    if not _boot_state_written:
+        write_state(
+            0,
+            empty_metrics,
+            None,
+            [],
+            running=True,
+            evaluating_candidates=[],
+            monthly_champions={},
+            phase="boot:baseline",
+            crossover_results=[],
+        )
+        _boot_state_written = True
 
     # ── Baseline (parâmetros atuais) ─────────────────────────────────────────
     print(f"\n📊 Calculando baseline com parâmetros atuais...", flush=True)
@@ -1837,6 +1841,7 @@ def main():
                                 "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
                                 "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
                                 "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
+                                "result_trades": int(res.get("total_trades", 0) or 0),
                                 "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
                             })
                             history.append(
@@ -1958,6 +1963,7 @@ def main():
                         "result_avg_daily_profit": round(float(res.get("avg_daily_profit", 0.0) or 0.0), 2),
                         "result_pnl": round(float(res.get("total_pnl", 0.0) or 0.0), 2),
                         "result_consistency_pct": round(float(res.get("consistency_pct", 0.0) or 0.0), 1),
+                        "result_trades": int(res.get("total_trades", 0) or 0),
                         "result_days": f"{res.get('positive_days', 0)}/{res.get('active_days', 0)}",
                     })
                     history.append(
@@ -2194,10 +2200,10 @@ if __name__ == "__main__":
     cycle = 1
     while True:
         try:
-            print(f"\n♾️  OPTIMIZER MAIN LOOP #{cycle} — busca contínua até campeão validado", flush=True)
+            print(f"\n♾️  OPTIMIZER SEARCH PASS #{cycle} — busca contínua até campeão validado", flush=True)
             main()
             cycle += 1
-            print("\n🔁 main() encerrou sem campeão refinável; iniciando novo ciclo imediatamente...", flush=True)
+            print("\n🔁 Ciclo mensal sem campeão refinável; mantendo estado e continuando busca...", flush=True)
             time.sleep(0.2)
         except KeyboardInterrupt:
             write_state(
