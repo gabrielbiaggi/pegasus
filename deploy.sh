@@ -86,16 +86,18 @@ echo "▶ [3/4] Git pull no servidor..."
 $SSH "$SERVER" "
     set -euo pipefail
     cd '$REMOTE_DIR'
+    systemctl stop pegasus-optimizer.service pegasus-dashboard.service 2>/dev/null || true
     if ! git remote get-url '$DEPLOY_REMOTE' >/dev/null 2>&1; then
         git remote add '$DEPLOY_REMOTE' /opt/pegasus-deploy.git
     fi
     git fetch '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
-    if ! git diff --quiet -- logs/results.db 2>/dev/null; then
+    if [ -f logs/results.db ] && ! git diff --quiet -- logs/results.db 2>/dev/null; then
         mkdir -p logs/.deploy-backups
         cp logs/results.db logs/.deploy-backups/results-$(date +%Y%m%d_%H%M%S).db
         git checkout -- logs/results.db
     fi
     git pull --ff-only '$DEPLOY_REMOTE' '$DEPLOY_BRANCH'
+    systemctl start pegasus-optimizer.service pegasus-dashboard.service
 "
 echo "  ✅ Pull OK via ${DEPLOY_REMOTE}/${DEPLOY_BRANCH}"
 
