@@ -10,12 +10,13 @@ class MultiplierBacktestTest(unittest.TestCase):
         hours = [10] * 250
         avgs = [1.0] * 250
 
-        indices = backtest_engine._build_indicator_sample_indices(
-            hours,
-            avgs,
-            contract_mode="multiplier",
-            symbol="BOOM1000",
-        )
+        with patch.object(backtest_engine, "SAMPLE_EVERY", 60):
+            indices = backtest_engine._build_indicator_sample_indices(
+                hours,
+                avgs,
+                contract_mode="multiplier",
+                symbol="BOOM1000",
+            )
 
         self.assertEqual(indices, [100, 160, 220])
 
