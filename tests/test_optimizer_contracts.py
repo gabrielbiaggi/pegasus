@@ -21,14 +21,21 @@ class OptimizerContractsTest(unittest.TestCase):
 
         candidate = optimize_loop.inject_global_multiplier_search(params)
 
-        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {3, 4, 5})
-        self.assertGreaterEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 2)
-        self.assertLessEqual(float(candidate["STAKE"]), 8.0)
+        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal", "down"})
+        self.assertGreaterEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 2)
+        self.assertLessEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 6)
+        self.assertGreaterEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 3)
+        self.assertLessEqual(int(candidate["MULTIPLIER_MAX_HOLD_TICKS"]), 30)
+        self.assertLessEqual(float(candidate["STAKE"]), 12.0)
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertLessEqual(int(candidate["MULTIPLIER_VALUE"]), 10)
+        self.assertLessEqual(int(candidate["MULTIPLIER_VALUE"]), 25)
         self.assertIn(candidate["FRANKENSTEIN_USE_SOROS"], {"true", "false"})
         self.assertIn(candidate["FRANKENSTEIN_USE_MARTINGALE"], {"true", "false"})
+        self.assertIn("TICK_COUNT", candidate)
+        self.assertGreaterEqual(int(candidate["TICK_COUNT"]), 70)
+        self.assertLessEqual(int(candidate["TICK_COUNT"]), 160)
+        self.assertIn("PCS_XGB_BYPASS_LIMIT", candidate)
+        self.assertIn("ENSEMBLE_MIN_PROB", candidate)
 
     def test_boom1000_sparse_metrics_force_directional_probe(self) -> None:
         random.seed(11)
@@ -40,9 +47,13 @@ class OptimizerContractsTest(unittest.TestCase):
 
         candidate = optimize_loop.rand_params(base, metrics)
 
-        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal"})
+        self.assertIn(candidate["MULTIPLIER_DIRECTION"], {"up", "signal", "down"})
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertIn(int(candidate["RISE_FALL_MIN_VOTES"]), {3, 4, 5})
+        self.assertGreaterEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 2)
+        self.assertLessEqual(int(candidate["RISE_FALL_MIN_VOTES"]), 6)
+        self.assertIn("TICK_COUNT", candidate)
+        self.assertIn("PCS_XGB_BYPASS_LIMIT", candidate)
+        self.assertIn("ENSEMBLE_MIN_PROB", candidate)
 
     def test_normalize_boom1000_candidate_prunes_bad_regions(self) -> None:
         candidate = optimize_loop.normalize_candidate_params(
@@ -54,7 +65,7 @@ class OptimizerContractsTest(unittest.TestCase):
                 "MULTIPLIER_TAKE_PROFIT": "3.0",
                 "MULTIPLIER_STOP_LOSS": "0.2",
                 "MULTIPLIER_MAX_HOLD_TICKS": "45",
-                "RISE_FALL_MIN_VOTES": "3",
+                "RISE_FALL_MIN_VOTES": "1",
                 "RISE_FALL_COOLDOWN_TICKS": "40",
                 "RISE_FALL_USE_ENSEMBLE": "false",
                 "RISE_FALL_ENSEMBLE_MIN_PROB": "0.10",
@@ -69,18 +80,24 @@ class OptimizerContractsTest(unittest.TestCase):
                 "MULTIPLIER_JUMP_HURST_REVERTING": "0.60",
                 "MULTIPLIER_JUMP_MI_FLOW_MIN": "0.30",
                 "MULTIPLIER_JUMP_WAVELET_SNR_MIN": "0.10",
+                "TICK_COUNT": "20",
+                "PCS_XGB_BYPASS_LIMIT": "0.60",
+                "ENSEMBLE_MIN_PROB": "0.02",
             }
         )
 
-        self.assertEqual(candidate["MULTIPLIER_DIRECTION"], "signal")
-        self.assertEqual(candidate["MULTIPLIER_VALUE"], "10")
+        self.assertEqual(candidate["MULTIPLIER_DIRECTION"], "down")
+        self.assertEqual(candidate["MULTIPLIER_VALUE"], "25")
         self.assertEqual(candidate["RISE_FALL_USE_ENSEMBLE"], "true")
-        self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "3")
-        self.assertEqual(candidate["MULTIPLIER_MAX_HOLD_TICKS"], "18")
+        self.assertEqual(candidate["RISE_FALL_MIN_VOTES"], "2")
+        self.assertEqual(candidate["MULTIPLIER_MAX_HOLD_TICKS"], "30")
         self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_CONFIDENCE"], "0.8")
         self.assertEqual(candidate["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"], "2.0")
         self.assertEqual(candidate["MULTIPLIER_JUMP_BAYES_STRONG_PROB"], "0.8")
         self.assertEqual(candidate["MULTIPLIER_JUMP_MIN_SCORE"], "7")
+        self.assertEqual(candidate["TICK_COUNT"], "70")
+        self.assertEqual(candidate["PCS_XGB_BYPASS_LIMIT"], "0.4")
+        self.assertEqual(candidate["ENSEMBLE_MIN_PROB"], "0.12")
 
     def test_monthly_candidate_viability_rejects_sparse_month(self) -> None:
         self.assertFalse(

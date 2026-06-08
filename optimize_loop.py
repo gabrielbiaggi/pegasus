@@ -402,6 +402,9 @@ PARAM_SPACE = {
     "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.02, "max": 3.00, "step": 0.02},
     "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.05, "max": 5.00, "step": 0.05},
     "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 1,   "max": 120,  "step": 1},
+    "TICK_COUNT":                   {"type": "int",   "min": 70,  "max": 160,  "step": 5},
+    "ENSEMBLE_MIN_PROB":            {"type": "float", "min": 0.12, "max": 0.42, "step": 0.01},
+    "PCS_XGB_BYPASS_LIMIT":         {"type": "float", "min": 0.12, "max": 0.40, "step": 0.01},
 }
 
 FROZEN_PARAMS = {
@@ -441,6 +444,9 @@ SAFE_PARAM_EXACT = {
     "MARTINGALE_PAYOUT_RATE",
     "DYNAMIC_STAKE_BASE_PCT",
     "OPTIMIZER_CHAMPION_ITERATION",
+    "TICK_COUNT",
+    "ENSEMBLE_MIN_PROB",
+    "PCS_XGB_BYPASS_LIMIT",
 }
 
 SAFE_PARAM_PREFIXES = (
@@ -661,21 +667,24 @@ def normalize_candidate_params(params: dict | None) -> dict:
             if str(out.get("FRANKENSTEIN_MODE", "flat")).strip().lower() == "dynamic_10"
             else "flat"
         )
-        out["MULTIPLIER_VALUE"] = str(max(5, min(10, int(float(out.get("MULTIPLIER_VALUE", 5))))))
+        out["MULTIPLIER_VALUE"] = str(max(5, min(25, int(float(out.get("MULTIPLIER_VALUE", 5))))))
         direction = str(out.get("MULTIPLIER_DIRECTION", "signal")).strip().lower()
-        if direction not in {"signal", "up"}:
+        if direction not in {"signal", "up", "down"}:
             direction = "signal"
         out["MULTIPLIER_DIRECTION"] = direction
 
         tp = float(out.get("MULTIPLIER_TAKE_PROFIT", 0.75) or 0.75)
         sl = float(out.get("MULTIPLIER_STOP_LOSS", 0.85) or 0.85)
         hold = int(float(out.get("MULTIPLIER_MAX_HOLD_TICKS", 12)) or 12)
-        votes = int(float(out.get("RISE_FALL_MIN_VOTES", 5)) or 5)
+        votes = int(float(out.get("RISE_FALL_MIN_VOTES", 4)) or 4)
         cooldown = int(float(out.get("RISE_FALL_COOLDOWN_TICKS", 12)) or 12)
         ens_prob = float(out.get("RISE_FALL_ENSEMBLE_MIN_PROB", 0.32) or 0.32)
+        model_prob = float(out.get("ENSEMBLE_MIN_PROB", 0.28) or 0.28)
+        xgb_bypass = float(out.get("PCS_XGB_BYPASS_LIMIT", 0.24) or 0.24)
         max_cusum = float(out.get("RISE_FALL_BOOM_MAX_CUSUM", 3.8) or 3.8)
         max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.035) or 0.035)
         max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 8.0) or 8.0)
+        tick_count = int(float(out.get("TICK_COUNT", 100)) or 100)
         jump_conf = float(out.get("MULTIPLIER_JUMP_MIN_CONFIDENCE", 0.62) or 0.62)
         jump_qg_imb = float(out.get("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", 4.0) or 4.0)
         jump_bayes = float(out.get("MULTIPLIER_JUMP_BAYES_STRONG_PROB", 0.62) or 0.62)
@@ -691,13 +700,16 @@ def normalize_candidate_params(params: dict | None) -> dict:
         cont_min_imb = float(out.get("MULTIPLIER_CONTINUATION_MIN_IMBALANCE", 1.5) or 1.5)
         cont_markov_edge = float(out.get("MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE", 0.04) or 0.04)
 
-        out["MULTIPLIER_TAKE_PROFIT"] = str(round(max(0.45, min(1.60, tp)), 2))
-        out["MULTIPLIER_STOP_LOSS"] = str(round(max(0.45, min(1.35, sl)), 2))
-        out["MULTIPLIER_MAX_HOLD_TICKS"] = str(max(4, min(18, hold)))
-        out["RISE_FALL_MIN_VOTES"] = str(max(3, min(5, votes)))
-        out["RISE_FALL_COOLDOWN_TICKS"] = str(max(6, min(24, cooldown)))
+        out["MULTIPLIER_TAKE_PROFIT"] = str(round(max(0.35, min(2.25, tp)), 2))
+        out["MULTIPLIER_STOP_LOSS"] = str(round(max(0.40, min(2.50, sl)), 2))
+        out["MULTIPLIER_MAX_HOLD_TICKS"] = str(max(3, min(30, hold)))
+        out["RISE_FALL_MIN_VOTES"] = str(max(2, min(6, votes)))
+        out["RISE_FALL_COOLDOWN_TICKS"] = str(max(3, min(30, cooldown)))
         out["RISE_FALL_USE_ENSEMBLE"] = "true"
-        out["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(max(0.24, min(0.42, ens_prob)), 2))
+        out["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(max(0.18, min(0.48, ens_prob)), 2))
+        out["ENSEMBLE_MIN_PROB"] = str(round(max(0.12, min(0.42, model_prob)), 2))
+        out["PCS_XGB_BYPASS_LIMIT"] = str(round(max(0.12, min(0.40, xgb_bypass)), 2))
+        out["TICK_COUNT"] = str(max(70, min(160, tick_count)))
         out["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
         out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.010, min(0.080, max_vel)), 6))
         out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(4.0, min(12.0, max_imb)), 4))
@@ -713,12 +725,185 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(max(0.0, min(0.08, jump_wavelet)), 3))
         out["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(max(3, min(6, cont_min_score)))
         out["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(max(0.50, min(0.80, cont_min_conf)), 2))
-        out["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(max(3, min(6, cont_min_up)))
-        out["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(max(0, min(2, cont_max_down)))
+        out["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(max(2, min(8, cont_min_up)))
+        out["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(max(0, min(3, cont_max_down)))
         out["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(max(0.5, min(4.0, cont_min_imb)), 2))
         out["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(max(0.01, min(0.12, cont_markov_edge)), 2))
 
     return out
+
+
+def _sample_multiplier_profile(params: dict, profile: str | None = None) -> dict:
+    p = params.copy()
+    profile = profile or random.choice(
+        ["micro_pullback", "balanced_signal", "trend_carry", "reversal_probe"]
+    )
+    p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+    p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+    p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+    p["RISE_FALL_USE_ENSEMBLE"] = "true"
+
+    if profile == "micro_pullback":
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "down"])
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.35, 0.95), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.45, 1.25), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(3, 9))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(3, 10))
+        p["TICK_COUNT"] = str(random.choice(list(range(70, 111, 5))))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.28), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.26), 2))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.32), 2))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 3.8), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.040), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 8.0), 4))
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.66), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 4.5), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.68), 2))
+        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 5))
+        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 5))
+        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.62), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(2, 4))
+        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(1, 3))
+        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(0.5, 2.0), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.01, 0.05), 2))
+    elif profile == "trend_carry":
+        p["MULTIPLIER_DIRECTION"] = random.choice(["up", "signal"])
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.70, 1.90), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.45), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 18))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(4, 18))
+        p["TICK_COUNT"] = str(random.choice(list(range(90, 141, 5))))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.34), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.18, 0.32), 2))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.22, 0.40), 2))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.8, 5.2), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.018, 0.075), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 12.0), 4))
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.72), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 6.5), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.74), 2))
+        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.53, 0.70), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(3, 7))
+        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 2))
+        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(1.0, 3.4), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.02, 0.10), 2))
+    elif profile == "reversal_probe":
+        p["MULTIPLIER_DIRECTION"] = random.choice(["down", "signal", "up"])
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.45, 1.40), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.50, 1.50), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4, 5]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(4, 16))
+        p["TICK_COUNT"] = str(random.choice(list(range(80, 131, 5))))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.15, 0.32), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.16, 0.30), 2))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.36), 2))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.6), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.014, 0.055), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 9.5), 4))
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.68), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 5.0), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.70), 2))
+        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 5))
+        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 5))
+        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.65), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(2, 5))
+        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(1, 3))
+        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(0.8, 2.8), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.01, 0.08), 2))
+    else:
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up", "down"])
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.50, 1.60), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.50, 1.50), 2))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 24))
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4, 5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(3, 24))
+        p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.38), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.14, 0.34), 2))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.42), 2))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.012, 0.080), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.74), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 7.0), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.76), 2))
+        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.72), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(2, 8))
+        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 3))
+        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(0.5, 4.0), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.01, 0.12), 2))
+
+    min_stake, _ = effective_stake_bounds(p)
+    p["STAKE"] = str(round(random.uniform(min_stake, 12.0), 2))
+    return normalize_candidate_params(p)
+
+
+def _mutate_multiplier_cluster(params: dict, focus: str | None = None) -> dict:
+    p = params.copy()
+    focus = focus or random.choice(
+        ["entry_gate", "jump_signal", "continuation_signal", "risk_stack", "regime"]
+    )
+
+    if focus == "entry_gate":
+        p["RISE_FALL_MIN_VOTES"] = str(random.choice([2, 3, 4, 5, 6]))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(3, 24))
+        p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.18, 0.46), 2))
+        p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.12, 0.40), 2))
+        p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.36), 2))
+    elif focus == "jump_signal":
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up", "down"])
+        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.55, 0.76), 2))
+        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 7.5), 2))
+        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.56, 0.78), 2))
+        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.52, 0.70), 2))
+        p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.22, 0.42), 2))
+        p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.0, 0.008), 3))
+        p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.0, 0.06), 3))
+    elif focus == "continuation_signal":
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up", "down"])
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(3, 30))
+        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 6))
+        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.50, 0.72), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(2, 8))
+        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 3))
+        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(0.5, 4.0), 2))
+        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.01, 0.12), 2))
+    elif focus == "risk_stack":
+        p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+        p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+        p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+        min_stake, _ = effective_stake_bounds(p)
+        p["STAKE"] = str(round(random.uniform(min_stake, 12.0), 2))
+        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10, 15, 20, 25]))
+        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.35, 2.10), 2))
+        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.40, 2.20), 2))
+    else:
+        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up", "down"])
+        p["TICK_COUNT"] = str(random.choice(list(range(70, 161, 5))))
+        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.010, 0.080), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 12.0), 4))
+        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(3, 24))
+        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(3, 24))
+
+    return normalize_candidate_params(p)
 
 
 def inject_global_multiplier_search(params: dict) -> dict:
@@ -728,115 +913,12 @@ def inject_global_multiplier_search(params: dict) -> dict:
     contract_mode = _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier")
 
     if contract_mode == "multiplier" and symbol == "BOOM1000":
-        regime = random.choices(
-            ["spike_long", "balanced_probe", "trend_follow"],
-            weights=[0.58, 0.27, 0.15],
+        profile = random.choices(
+            ["micro_pullback", "balanced_signal", "trend_carry", "reversal_probe"],
+            weights=[0.24, 0.30, 0.28, 0.18],
             k=1,
         )[0]
-        if regime == "spike_long":
-            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
-            p["MULTIPLIER_DIRECTION"] = "up"
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 18))
-            p["RISE_FALL_USE_ENSEMBLE"] = "true"
-            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
-            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
-            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.018, 0.070), 6))
-            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.5, 11.0), 4))
-            p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.57, 0.68), 2))
-            p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 5.5), 2))
-            p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
-            p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 5))
-            p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.54, 0.66), 2))
-            p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.26, 0.40), 2))
-            p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.0, 0.004), 3))
-            p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.0, 0.03), 3))
-            p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 5))
-            p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.52, 0.66), 2))
-            p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(3, 5))
-            p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 1))
-            p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(1.0, 3.0), 2))
-            p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.02, 0.08), 2))
-            min_stake, _ = effective_stake_bounds(p)
-            p["STAKE"] = str(round(random.uniform(min_stake, 6.0), 2))
-            return normalize_candidate_params(p)
-        if regime == "balanced_probe":
-            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
-            p["MULTIPLIER_DIRECTION"] = "signal"
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.50, 1.50), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.25), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(6, 18))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 24))
-            p["RISE_FALL_USE_ENSEMBLE"] = "true"
-            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.24, 0.38), 2))
-            p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
-            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.014, 0.065), 6))
-            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 11.0), 4))
-            p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.70), 2))
-            p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 5.0), 2))
-            p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
-            p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 5))
-            p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.54, 0.66), 2))
-            p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.24, 0.38), 2))
-            p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.0, 0.004), 3))
-            p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.0, 0.03), 3))
-            p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 5))
-            p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.54, 0.68), 2))
-            p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(3, 5))
-            p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 1))
-            p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(1.0, 3.2), 2))
-            p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.02, 0.09), 2))
-            min_stake, _ = effective_stake_bounds(p)
-            p["STAKE"] = str(round(random.uniform(min_stake, 8.0), 2))
-            return normalize_candidate_params(p)
-        p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
-        p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
-        p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
-        p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
-        p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
-        p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
-        p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
-        p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.65, 1.60), 2))
-        p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.50, 1.20), 2))
-        p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 16))
-        p["RISE_FALL_MIN_VOTES"] = str(random.choice([3, 4, 5]))
-        p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(8, 20))
-        p["RISE_FALL_USE_ENSEMBLE"] = "true"
-        p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.28, 0.42), 2))
-        p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 5.0), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.016, 0.075), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 11.5), 4))
-        p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.72), 2))
-        p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 6.0), 2))
-        p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.60, 0.74), 2))
-        p["MULTIPLIER_JUMP_MIN_SCORE"] = str(random.randint(3, 5))
-        p["MULTIPLIER_JUMP_HURST_TRENDING"] = str(round(random.uniform(0.55, 0.68), 2))
-        p["MULTIPLIER_JUMP_HURST_REVERTING"] = str(round(random.uniform(0.24, 0.38), 2))
-        p["MULTIPLIER_JUMP_MI_FLOW_MIN"] = str(round(random.uniform(0.0, 0.005), 3))
-        p["MULTIPLIER_JUMP_WAVELET_SNR_MIN"] = str(round(random.uniform(0.0, 0.04), 3))
-        p["MULTIPLIER_CONTINUATION_MIN_SCORE"] = str(random.randint(3, 5))
-        p["MULTIPLIER_CONTINUATION_MIN_CONFIDENCE"] = str(round(random.uniform(0.53, 0.68), 2))
-        p["MULTIPLIER_CONTINUATION_MIN_UP_TICKS"] = str(random.randint(3, 5))
-        p["MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS"] = str(random.randint(0, 1))
-        p["MULTIPLIER_CONTINUATION_MIN_IMBALANCE"] = str(round(random.uniform(1.0, 3.4), 2))
-        p["MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE"] = str(round(random.uniform(0.02, 0.10), 2))
-        min_stake, _ = effective_stake_bounds(p)
-        p["STAKE"] = str(round(random.uniform(min_stake, max(min_stake, 6.0)), 2))
-        return normalize_candidate_params(p)
+        return _sample_multiplier_profile(p, profile)
 
     for key in (
         "STAKE",
@@ -847,11 +929,14 @@ def inject_global_multiplier_search(params: dict) -> dict:
         "RISE_FALL_BOOM_MAX_IMBALANCE",
         "RISE_FALL_USE_ENSEMBLE",
         "RISE_FALL_ENSEMBLE_MIN_PROB",
+        "ENSEMBLE_MIN_PROB",
+        "PCS_XGB_BYPASS_LIMIT",
         "MULTIPLIER_VALUE",
         "MULTIPLIER_DIRECTION",
         "MULTIPLIER_TAKE_PROFIT",
         "MULTIPLIER_STOP_LOSS",
         "MULTIPLIER_MAX_HOLD_TICKS",
+        "TICK_COUNT",
     ):
         p[key] = random_space_value(key)
 
@@ -883,51 +968,25 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         symbol = _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL)
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
-            p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
-            p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
-            p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
-            p["MULTIPLIER_DIRECTION"] = random.choice(["up", "signal"])
-            p["MULTIPLIER_VALUE"] = str(random.choice([5, 10]))
-            p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.30), 2))
-            p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
-            p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
-            p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
-            p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 18))
-            p["RISE_FALL_USE_ENSEMBLE"] = "true"
-            p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.38), 2))
-            return normalize_candidate_params(p)
+            return _sample_multiplier_profile(
+                p,
+                random.choice(["micro_pullback", "balanced_signal", "trend_carry", "reversal_probe"]),
+            )
 
         if contract_mode == "multiplier" and symbol == "BOOM1000" and -0.20 <= avg_d <= 0.20:
-            action = random.choice(["tp_sl_pair", "hold", "votes", "cooldown", "filters", "direction", "progression"])
-            if action == "tp_sl_pair":
-                p["MULTIPLIER_TAKE_PROFIT"] = str(round(random.uniform(0.55, 1.25), 2))
-                p["MULTIPLIER_STOP_LOSS"] = str(round(random.uniform(0.55, 1.10), 2))
-            elif action == "hold":
-                p["MULTIPLIER_MAX_HOLD_TICKS"] = str(random.randint(4, 14))
-            elif action == "votes":
-                p["RISE_FALL_MIN_VOTES"] = str(random.choice([5, 6]))
-                p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
-            elif action == "cooldown":
-                p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 20))
-            elif action == "filters":
-                p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
-                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.016, 0.070), 6))
-                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 11.0), 4))
-            elif action == "progression":
-                p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
-                p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2]))
-                p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
-                p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
-                p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
-            else:
-                p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
-            return normalize_candidate_params(p)
+            return _mutate_multiplier_cluster(
+                p,
+                random.choice(["entry_gate", "jump_signal", "continuation_signal", "risk_stack", "regime"]),
+            )
         
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
+            if contract_mode == "multiplier" and symbol == "BOOM1000":
+                return _mutate_multiplier_cluster(
+                    p,
+                    random.choice(["entry_gate", "jump_signal", "continuation_signal", "risk_stack", "regime"]),
+                )
             action = random.choice(["votes", "cusum", "velocity", "imbalance", "cooldown", "mult_sl", "mult_tp", "mult_value", "mult_dir", "exposure", "progression"])
             if action == "votes" and "RISE_FALL_MIN_VOTES" in p:
                 val = int(p["RISE_FALL_MIN_VOTES"])
@@ -977,6 +1036,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
+            if contract_mode == "multiplier" and symbol == "BOOM1000":
+                return _mutate_multiplier_cluster(
+                    p,
+                    random.choice(["entry_gate", "jump_signal", "continuation_signal", "risk_stack", "regime"]),
+                )
             action = random.choice(["stake", "votes", "cooldown", "multiplier", "mult_tp", "mult_dir", "filters", "progression"])
             if action == "stake" and "STAKE" in p:
                 val = float(p["STAKE"])
@@ -1015,6 +1079,8 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
 
     # 3. Caso padrão (exploração puramente aleatória / perturbação de 1-4 parâmetros)
     eligible = [k for k in PARAM_SPACE if k not in FROZEN_PARAMS]
+    if _norm_contract_mode(p.get("CONTRACT_MODE") or "multiplier") == "multiplier" and _norm_symbol(p.get("SYMBOL") or ACTIVE_SYMBOL) == "BOOM1000" and random.random() < 0.55:
+        return _mutate_multiplier_cluster(p)
     num = random.randint(1, min(4, len(eligible)))
     keys = random.sample(eligible, num)
 

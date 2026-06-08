@@ -2268,19 +2268,22 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
     hold = int(float(env_overrides.get("MULTIPLIER_MAX_HOLD_TICKS", 30)) or 30)
     votes = int(float(env_overrides.get("RISE_FALL_MIN_VOTES", 4)) or 4)
     cooldown = int(float(env_overrides.get("RISE_FALL_COOLDOWN_TICKS", 3)) or 3)
+    tick_count = int(float(env_overrides.get("TICK_COUNT", 100)) or 100)
     use_ensemble = str(env_overrides.get("RISE_FALL_USE_ENSEMBLE", "false")).lower() == "true"
     rr = (tp / sl) if sl > 0 else 99.0
 
-    if direction == "down":
-        m["score"] -= 180.0
     if not use_ensemble:
-        m["score"] -= 120.0
-    if votes < 5:
-        m["score"] -= (5 - votes) * 80.0
-    if hold > 18:
-        m["score"] -= (hold - 18) * 18.0
-    if cooldown > 24:
-        m["score"] -= (cooldown - 24) * 10.0
+        m["score"] -= 45.0
+    if votes < 3:
+        m["score"] -= (3 - votes) * 65.0
+    if hold > 30:
+        m["score"] -= (hold - 30) * 10.0
+    if cooldown > 30:
+        m["score"] -= (cooldown - 30) * 6.0
+    if tick_count < 70:
+        m["score"] -= (70 - tick_count) * 8.0
+    elif tick_count > 160:
+        m["score"] -= (tick_count - 160) * 3.0
     if rr > 1.9:
         m["score"] -= (rr - 1.9) * 180.0
     elif rr < 0.55:
