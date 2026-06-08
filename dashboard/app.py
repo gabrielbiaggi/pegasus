@@ -1242,7 +1242,7 @@ def _read_optimizer_workers(
     """Read live optimizer worker progress files, preferring current monthly workers."""
     now = now if now is not None else _time.time()
     workers: list[dict] = []
-    optimizer_worker_re = re.compile(r"^(?:[A-Za-z]{3}_r\d+_w\d+|cross_[\w-]+|par_[\w-]+)$")
+    optimizer_worker_re = re.compile(r"^(?:[A-Za-z]{3}_r\d+_w\d+|cross_[\w-]+|par_[\w-]+|ref_\d+)$")
 
     paths = sorted(
         logs_dir.glob("backtest_worker_*.json"),

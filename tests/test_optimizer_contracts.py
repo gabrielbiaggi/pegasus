@@ -500,6 +500,29 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual([worker["worker_id"] for worker in workers], ["Jan_r0_w0"])
 
+    def test_read_optimizer_workers_accepts_refinement_worker_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "backtest_worker_ref_0.json").write_text(json.dumps({
+                "current_day_index": 12,
+                "total_days": 31,
+                "elapsed_s": 10,
+                "current_day": "2026-01-12",
+                "current_month": "Janeiro",
+                "optimizer_run_id": "run-ref",
+                "optimizer_context": {"symbol": "1HZ25V", "contract_mode": "rise_fall"},
+            }))
+
+            workers = dashboard_app._read_optimizer_workers(
+                logs,
+                now=time.time(),
+                include_stale=False,
+                run_id="run-ref",
+                optimizer_context={"symbol": "1HZ25V", "contract_mode": "rise_fall"},
+            )
+
+        self.assertEqual([worker["worker_id"] for worker in workers], ["ref_0"])
+
     def test_reset_optimizer_runtime_state_removes_stale_worker_progress_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             logs = Path(tmp)

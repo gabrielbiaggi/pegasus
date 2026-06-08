@@ -2615,6 +2615,7 @@ def main():
             write_state(iteration, baseline_metrics, best_data, history,
                         evaluating_candidates=candidates_ui,
                         monthly_champions=monthly_champions,
+                        phase="refinement",
                         optimizer_run_id=optimizer_run_id)
 
             t0 = time.time()
@@ -2629,6 +2630,7 @@ def main():
                         write_state(iteration + idx, baseline_metrics, best_data, history,
                                     evaluating_candidates=candidates_ui,
                                     monthly_champions=monthly_champions,
+                                    phase="refinement",
                                     optimizer_run_id=optimizer_run_id)
                         continue
                 except Exception as e:
@@ -2637,6 +2639,7 @@ def main():
                     write_state(iteration + idx, baseline_metrics, best_data, history,
                                 evaluating_candidates=candidates_ui,
                                 monthly_champions=monthly_champions,
+                                phase="refinement",
                                 optimizer_run_id=optimizer_run_id)
                     continue
 
@@ -2702,6 +2705,7 @@ def main():
                 write_state(iteration + idx, baseline_metrics, best_data, history,
                             evaluating_candidates=candidates_ui,
                             monthly_champions=monthly_champions,
+                            phase="refinement",
                             optimizer_run_id=optimizer_run_id)
 
             iteration += N_WORKERS
