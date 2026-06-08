@@ -5623,7 +5623,7 @@
                             
                             var bl_sf = (d.baseline && d.baseline.monthly_breakdown) ? d.baseline.monthly_breakdown["Super-Frankenstein"] : null;
                             var best_sf = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Super-Frankenstein"] : null;
-                            var best_live = (activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Pegasus Live Sniper (9% TP)"] : null;
+                            var best_live = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Pegasus Live Sniper (9% TP)"] : null;
                             
                             if (bl_sf || best_sf) {
                                 html = months.map(function(mCode) {
@@ -5637,28 +5637,28 @@
                                     var blCons = blData ? blData.consistency_pct : 0.0;
                                     var blDays = blData ? blData.positive_days + "/" + blData.active_days : "—";
                                     
-                                    var bestPnl = bestData ? bestData.pnl : 0.0;
-                                    var bestCons = bestData ? bestData.consistency_pct : 0.0;
+                                    var bestPnl = bestData ? bestData.pnl : null;
+                                    var bestCons = bestData ? bestData.consistency_pct : null;
                                     var bestDays = bestData ? bestData.positive_days + "/" + bestData.active_days : "—";
                                     
-                                    var livePnl = liveData ? liveData.pnl : 0.0;
-                                    var liveCons = liveData ? liveData.consistency_pct : 0.0;
+                                    var livePnl = liveData ? liveData.pnl : null;
+                                    var liveCons = liveData ? liveData.consistency_pct : null;
                                     var liveDays = liveData ? liveData.positive_days + "/" + liveData.active_days : "—";
                                     
-                                    var impVal = bestPnl - blPnl;
-                                    var impColor = impVal >= 0 ? "var(--green)" : "var(--red)";
-                                    var impSign = impVal >= 0 ? "+" : "";
+                                    var impVal = bestPnl != null ? (bestPnl - blPnl) : null;
+                                    var impColor = impVal != null && impVal >= 0 ? "var(--green)" : "var(--red)";
+                                    var impSign = impVal != null && impVal >= 0 ? "+" : "";
                                     
                                     var blColor = blPnl >= 0 ? "var(--green)" : "var(--red)";
-                                    var bestColor = bestPnl >= 0 ? "var(--green)" : "var(--red)";
-                                    var liveColor = livePnl >= 0 ? "#60a5fa" : "#f87171";
+                                    var bestColor = bestPnl != null && bestPnl >= 0 ? "var(--green)" : "var(--red)";
+                                    var liveColor = livePnl != null && livePnl >= 0 ? "#60a5fa" : "#f87171";
                                     
                                     return '<tr style="border-bottom:1px solid var(--border)">'
                                         + '<td style="padding:6px;font-weight:700">' + monthLabel + '</td>'
                                         + '<td style="padding:6px;text-align:right;color:' + blColor + ';font-family:monospace">$' + blPnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + blCons.toFixed(0) + '%)</span></td>'
-                                        + '<td style="padding:6px;text-align:right;color:' + bestColor + ';font-family:monospace;font-weight:700">$' + bestPnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + bestCons.toFixed(0) + '%)</span></td>'
-                                        + '<td style="padding:6px;text-align:right;color:' + liveColor + ';font-family:monospace">$' + livePnl.toFixed(2) + ' <span style="font-size:.65rem;color:var(--muted)">(' + liveCons.toFixed(0) + '%)</span></td>'
-                                        + '<td style="padding:6px;text-align:right;color:' + impColor + ';font-family:monospace;font-weight:700">' + impSign + '$' + impVal.toFixed(2) + '</td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + bestColor + ';font-family:monospace;font-weight:700">' + (bestPnl != null ? ('$' + bestPnl.toFixed(2) + ' <span style=\"font-size:.65rem;color:var(--muted)\">(' + bestCons.toFixed(0) + '%)</span>') : '—') + '</td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + liveColor + ';font-family:monospace">' + (livePnl != null ? ('$' + livePnl.toFixed(2) + ' <span style=\"font-size:.65rem;color:var(--muted)\">(' + liveCons.toFixed(0) + '%)</span>') : '—') + '</td>'
+                                        + '<td style="padding:6px;text-align:right;color:' + impColor + ';font-family:monospace;font-weight:700">' + (impVal != null ? (impSign + '$' + impVal.toFixed(2)) : '—') + '</td>'
                                         + '<td style="padding:6px;text-align:right;color:var(--muted)">' + bestDays + ' dias</td>'
                                         + '</tr>';
                                 }).join("");
