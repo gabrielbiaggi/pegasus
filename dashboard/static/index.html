@@ -5454,9 +5454,15 @@
                     // ── Encontra o Melhor Válido e o Último Testado na lista em Tempo Real ──
                     var highestValidProfit = _baselineAvgDay;
                     var highestValidIt = null;
+                    var highestObservedProfit = _baselineAvgDay;
+                    var highestObservedIt = null;
                     for (var i = 0; i < iters_all.length; i++) {
                         var it = iters_all[i];
                         var sfDay = it.avg_daily != null ? it.avg_daily : (it.pnl != null ? it.pnl / totalDays : 0);
+                        if (sfDay > highestObservedProfit) {
+                            highestObservedProfit = sfDay;
+                            highestObservedIt = it;
+                        }
                         // Validação dinâmica: lucro > 0, <= $120.00/dia e >= minPositiveDays
                         var pnlOk = sfDay > 0 && sfDay <= maxDailyProfit && (it.positive_days || 0) >= minPositiveDays;
                         if (pnlOk && sfDay > highestValidProfit) {
@@ -5477,6 +5483,12 @@
                         if (hVal > maxVal) {
                             maxVal = hVal;
                             activeBest = highestValidIt;
+                        }
+                    } else if (highestObservedIt) {
+                        var oVal = highestObservedIt.avg_daily_profit !== undefined ? highestObservedIt.avg_daily_profit : (highestObservedIt.avg_daily !== undefined ? highestObservedIt.avg_daily : 0);
+                        if (oVal > maxVal) {
+                            maxVal = oVal;
+                            activeBest = highestObservedIt;
                         }
                     }
                     if (best) {
