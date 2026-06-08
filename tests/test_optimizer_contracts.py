@@ -613,6 +613,21 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertTrue(entry["candidate_viable"])
         self.assertFalse(entry["deployable"])
 
+    def test_rise_fall_optimizer_run_keeps_full_tick_sampling(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CONTRACT_MODE": "rise_fall",
+                "PEGASUS_OPTIMIZER_RUN": "true",
+                "PEGASUS_OPTIMIZER_FULL_TICK": "false",
+                "BACKTEST_SAMPLE_EVERY": "60",
+            },
+            clear=False,
+        ):
+            backtest_engine.apply_config(dict(os.environ))
+
+        self.assertEqual(backtest_engine.SAMPLE_EVERY, 1)
+
     def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
         monthly_states = {
             "2026-01": {

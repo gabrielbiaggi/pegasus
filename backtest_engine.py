@@ -2037,7 +2037,9 @@ def apply_config(env_overrides: dict):
         os.environ.get("PEGASUS_OPTIMIZER_RUN", "false").lower() == "true"
         and os.environ.get("PEGASUS_OPTIMIZER_FULL_TICK", "false").lower() != "true"
     )
-    if CONTRACT_MODE in {"rise_fall", "multiplier"} and not optimizer_fast_sampling:
+    if CONTRACT_MODE == "rise_fall":
+        SAMPLE_EVERY = 1
+    elif CONTRACT_MODE == "multiplier" and not optimizer_fast_sampling:
         SAMPLE_EVERY = 1
     
     _v = 1.0
