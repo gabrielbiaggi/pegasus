@@ -370,8 +370,8 @@ PARAM_SPACE = {
     "RISE_FALL_MIN_PAYOUT_PCT":     {"type": "float", "min": 0.0040, "max": 0.0080, "step": 0.0005},
     # Filtros do BOOM1000: expande para regimes muito calmos e regimes de spike.
     "RISE_FALL_BOOM_MAX_CUSUM":     {"type": "float", "min": 0.5, "max": 12.0, "step": 0.25},
-    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.00002, "max": 0.0050, "step": 0.00005},
-    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.1, "max": 5.0, "step": 0.05},
+    "RISE_FALL_BOOM_MAX_VELOCITY":  {"type": "float", "min": 0.0010, "max": 0.0800, "step": 0.0010},
+    "RISE_FALL_BOOM_MAX_IMBALANCE": {"type": "float", "min": 0.1, "max": 12.0, "step": 0.1},
     "MULTIPLIER_JUMP_MIN_CONFIDENCE": {"type": "float", "min": 0.55, "max": 0.85, "step": 0.01},
     "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE": {"type": "float", "min": 2.0, "max": 8.0, "step": 0.25},
     "MULTIPLIER_JUMP_BAYES_STRONG_PROB": {"type": "float", "min": 0.55, "max": 0.80, "step": 0.01},
@@ -652,8 +652,8 @@ def normalize_candidate_params(params: dict | None) -> dict:
         cooldown = int(float(out.get("RISE_FALL_COOLDOWN_TICKS", 12)) or 12)
         ens_prob = float(out.get("RISE_FALL_ENSEMBLE_MIN_PROB", 0.32) or 0.32)
         max_cusum = float(out.get("RISE_FALL_BOOM_MAX_CUSUM", 3.8) or 3.8)
-        max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.0026) or 0.0026)
-        max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 2.2) or 2.2)
+        max_vel = float(out.get("RISE_FALL_BOOM_MAX_VELOCITY", 0.035) or 0.035)
+        max_imb = float(out.get("RISE_FALL_BOOM_MAX_IMBALANCE", 8.0) or 8.0)
         jump_conf = float(out.get("MULTIPLIER_JUMP_MIN_CONFIDENCE", 0.62) or 0.62)
         jump_qg_imb = float(out.get("MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE", 4.0) or 4.0)
         jump_bayes = float(out.get("MULTIPLIER_JUMP_BAYES_STRONG_PROB", 0.62) or 0.62)
@@ -677,8 +677,8 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["RISE_FALL_USE_ENSEMBLE"] = "true"
         out["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(max(0.24, min(0.42, ens_prob)), 2))
         out["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(max(2.2, min(5.2, max_cusum)), 4))
-        out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.0014, min(0.0042, max_vel)), 6))
-        out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(1.4, min(3.6, max_imb)), 4))
+        out["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(max(0.010, min(0.080, max_vel)), 6))
+        out["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(max(4.0, min(12.0, max_imb)), 4))
         out["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(max(0.55, min(0.80, jump_conf)), 2))
         out["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(max(2.0, min(8.0, jump_qg_imb)), 2))
         out["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(max(0.55, min(0.80, jump_bayes)), 2))
@@ -722,8 +722,8 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
             p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.26, 0.40), 2))
             p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
-            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0018, 0.0040), 6))
-            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.018, 0.070), 6))
+            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.5, 11.0), 4))
             p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.57, 0.68), 2))
             p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 5.5), 2))
             p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
@@ -752,8 +752,8 @@ def inject_global_multiplier_search(params: dict) -> dict:
             p["RISE_FALL_USE_ENSEMBLE"] = "true"
             p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.24, 0.38), 2))
             p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.2, 5.2), 4))
-            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0014, 0.0039), 6))
-            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.4, 3.6), 4))
+            p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.014, 0.065), 6))
+            p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(4.0, 11.0), 4))
             p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.70), 2))
             p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.0, 5.0), 2))
             p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.58, 0.72), 2))
@@ -781,8 +781,8 @@ def inject_global_multiplier_search(params: dict) -> dict:
         p["RISE_FALL_USE_ENSEMBLE"] = "true"
         p["RISE_FALL_ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.28, 0.42), 2))
         p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 5.0), 4))
-        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0016, 0.0042), 6))
-        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+        p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.016, 0.075), 6))
+        p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 11.5), 4))
         p["MULTIPLIER_JUMP_MIN_CONFIDENCE"] = str(round(random.uniform(0.58, 0.72), 2))
         p["MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE"] = str(round(random.uniform(2.5, 6.0), 2))
         p["MULTIPLIER_JUMP_BAYES_STRONG_PROB"] = str(round(random.uniform(0.60, 0.74), 2))
@@ -871,8 +871,8 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 p["RISE_FALL_COOLDOWN_TICKS"] = str(random.randint(6, 20))
             elif action == "filters":
                 p["RISE_FALL_BOOM_MAX_CUSUM"] = str(round(random.uniform(2.4, 4.8), 4))
-                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.0016, 0.0040), 6))
-                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(1.6, 3.4), 4))
+                p["RISE_FALL_BOOM_MAX_VELOCITY"] = str(round(random.uniform(0.016, 0.070), 6))
+                p["RISE_FALL_BOOM_MAX_IMBALANCE"] = str(round(random.uniform(5.0, 11.0), 4))
             else:
                 p["MULTIPLIER_DIRECTION"] = random.choice(["signal", "up"])
             return normalize_candidate_params(p)

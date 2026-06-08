@@ -1510,10 +1510,19 @@ def _collect_day_outcomes(
             # Direction-aware spike filter. A MULTDOWN entry is blocked during
             # upward shock risk; a MULTUP entry is blocked during downward shock risk.
             if selected_signal == "CALL":
+                boom_multiplier_pullback = (
+                    CONTRACT_MODE == "multiplier"
+                    and "BOOM" in SYMBOL.upper()
+                    and imbalance_v <= -RISE_FALL_BOOM_MAX_IMBALANCE
+                    and cusum_v >= 0.0
+                )
                 if (
-                    cusum_v < -RISE_FALL_BOOM_MAX_CUSUM
-                    or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY
-                    or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE
+                    not boom_multiplier_pullback
+                    and (
+                        cusum_v < -RISE_FALL_BOOM_MAX_CUSUM
+                        or velocity_v < -RISE_FALL_BOOM_MAX_VELOCITY
+                        or imbalance_v < -RISE_FALL_BOOM_MAX_IMBALANCE
+                    )
                 ):
                     i += SAMPLE_EVERY
                     continue

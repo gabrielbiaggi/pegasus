@@ -109,6 +109,51 @@ class StrategyTest(unittest.TestCase):
         self.assertGreaterEqual(score, 4)
         self.assertGreater(confidence, 0.57)
 
+    def test_multiplier_continuation_signal_accepts_boom1000_pullback_spring(self) -> None:
+        quotes = [100.0]
+        for delta in (
+            -0.010, -0.011, -0.012, -0.010, -0.013, -0.010,
+            -0.009, -0.010, -0.012, -0.011, -0.010, -0.009,
+            -0.011, -0.010, -0.012, -0.010, -0.009, -0.010,
+            -0.011, -0.010, -0.012, -0.011, -0.010, -0.009,
+            -0.011, -0.010, -0.012, -0.010, -0.009, -0.010,
+            -0.011, -0.010, -0.012, -0.011, -0.010, -0.009,
+            -0.011, -0.010, -0.012,
+        ):
+            quotes.append(quotes[-1] + delta)
+
+        row = {
+            "price_velocity": -0.011,
+            "price_acceleration": 0.012,
+            "velocity_zscore": 0.17,
+            "acceleration_zscore": 0.65,
+            "tick_imbalance": -10.0,
+            "markov_p_up_given_up": 0.0,
+            "markov_p_down_given_down": 0.98,
+            "bayesian_prob_up": 0.03125,
+            "hurst_exponent": 0.56,
+            "shannon_entropy": 0.50,
+            "renyi_entropy": 0.64,
+            "fisher_information": 1000.0,
+        }
+
+        signal, score, confidence = generate_multiplier_continuation_snapshot_signal(
+            quotes,
+            row,
+            config=MultiplierContinuationConfig(
+                min_score=3,
+                min_confidence=0.50,
+                min_up_ticks=3,
+                max_down_ticks=2,
+                min_abs_imbalance=0.5,
+                min_markov_edge=0.01,
+            ),
+        )
+
+        self.assertEqual(signal, "CALL")
+        self.assertGreaterEqual(score, 3)
+        self.assertGreaterEqual(confidence, 0.50)
+
 
 if __name__ == "__main__":
     unittest.main()

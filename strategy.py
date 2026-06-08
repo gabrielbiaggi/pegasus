@@ -1872,6 +1872,31 @@ def generate_multiplier_continuation_snapshot_signal(
     _check(shannon <= config.shannon_ceiling or renyi <= config.renyi_ceiling)
     _check(fisher >= config.fisher_min or vel_z >= config.velocity_z_min or accel_z >= 0.5)
 
+    # BOOM1000 multiplier edge: the executable MULTUP setup often appears
+    # after a compressed micro-down streak, not during already-positive
+    # imbalance. Treat that pullback/spring regime as CALL continuation because
+    # BOOM jumps are upward and the short-term downside pressure is the setup.
+    spring_score = 0
+    spring_checks = 0
+
+    def _spring_check(ok: bool) -> None:
+        nonlocal spring_score, spring_checks
+        spring_checks += 1
+        if ok:
+            spring_score += 1
+
+    _spring_check(down_ticks >= config.min_up_ticks and up_ticks <= config.max_down_ticks)
+    _spring_check(net_move < 0.0)
+    _spring_check(imbalance <= -config.min_abs_imbalance)
+    _spring_check(bayes_up <= (1.0 - config.bayes_floor))
+    _spring_check(markov_dn >= 0.52 and (markov_dn - markov_up) >= config.min_markov_edge)
+    _spring_check(shannon <= config.shannon_ceiling or renyi <= max(config.renyi_ceiling, 0.65))
+    _spring_check(fisher >= config.fisher_min or accel >= 0.0 or accel_z >= 0.5)
+
+    spring_confidence = spring_score / spring_checks if spring_checks else 0.0
+    if spring_score >= config.min_score and spring_confidence >= config.min_confidence:
+        return "CALL", spring_score, spring_confidence
+
     if checks == 0:
         return None, 0, None
 
