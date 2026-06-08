@@ -2657,7 +2657,8 @@
                         <div style="background:var(--bg3);border:1px solid var(--border);padding:14px;border-radius:var(--radius)">
                             <div style="font-size:.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🏆 Recordes</div>
                             <div id="opt-record-count" style="font-size:1.5rem;font-weight:700;color:#a78bfa">—</div>
-                            <div id="opt-iter-count" style="font-size:.72rem;color:var(--muted)">de — iterações</div>
+                            <div style="font-size:.72rem;color:var(--muted)">resultados positivos válidos</div>
+                            <div id="opt-iter-count" style="font-size:.65rem;color:var(--dim);margin-top:4px">— iterações concluídas</div>
                             <div id="opt-last-update" style="font-size:.65rem;color:var(--dim);margin-top:4px">Atualizado: —</div>
                         </div>
                         <!-- Workers -->
@@ -5779,9 +5780,9 @@
                     var ilu = document.getElementById("opt-last-update");
                     var iwk = document.getElementById("opt-workers");
                     
-                    var nRec = iters_all.filter(function(x){return x.is_best;}).length;
-                    if (ict) ict.textContent = "loop #" + (d.current_iteration || 0) + " · " + (runtime.iteration_rows_count != null ? runtime.iteration_rows_count : iters_all.length) + " resultados";
-                    if (irc) irc.textContent = nRec;
+                    var positiveRows = iters_all.filter(function(x){ return optimizerCandidateViable(x); });
+                    if (ict) ict.textContent = (d.current_iteration || 0) + " iterações concluídas";
+                    if (irc) irc.textContent = positiveRows.length;
                     if (iwk) {
                         var activeWorkersCount = parseInt(d.worker_cards_count || 0, 10);
                         var workerSlotsCount = parseInt(d.worker_slots_count || d.n_workers || 1, 10);
@@ -5803,7 +5804,13 @@
                             _last_rendered_max_iter = currentMaxIter;
                             _last_rendered_best_iter = currentBestIter;
                             
-                            var iters = iters_all.slice().reverse().slice(0, 200);
+                            var iters = iters_all.filter(function(it) {
+                                return optimizerCandidateViable(it);
+                            }).slice().reverse().slice(0, 200);
+                            if (!iters.length) {
+                                tbody.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">Nenhum resultado positivo e válido ainda. O optimizer continua calculando.</td></tr>';
+                                return;
+                            }
                             tbody.innerHTML = iters.map(function(it) {
                                 var sfDay   = optimizerAvgDay(it);
                                 var liveDay = it.live_avg_daily != null ? it.live_avg_daily : null;
@@ -5827,8 +5834,6 @@
                                     badge = '<span style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:700">⚠️ FALSO POSITIVO (excedeu $' + maxDailyProfit + ')</span>';
                                 } else if (optimizerCandidateViable(it)) {
                                     badge = '<span style="background:rgba(16,185,129,.07);color:var(--green);padding:2px 8px;border-radius:12px;font-size:.65rem">✅ VÁLIDO</span>';
-                                } else {
-                                    badge = '<span style="background:rgba(239,68,68,.07);color:#ef4444;padding:2px 8px;border-radius:12px;font-size:.65rem">❌ NEGATIVO</span>';
                                 }
 
                                 return '<tr style="border-bottom:1px solid var(--border);' + rowBg + '">'
