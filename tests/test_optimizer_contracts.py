@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import dashboard.app as dashboard_app
 import backtest_engine
@@ -300,6 +301,25 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(translated["MARTINGALE_MAX_GALES"], "1")
         self.assertEqual(translated["MARTINGALE_PAYOUT_RATE"], "0.1")
 
+    def test_translate_frankenstein_params_respects_non_multiplier_optimizer_target(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "1HZ25V", "OPTIMIZER_TARGET_CONTRACT_MODE": "rise_fall"},
+            clear=False,
+        ):
+            translated = optimize_loop.translate_frankenstein_params(
+                {
+                    "SYMBOL": "BOOM1000",
+                    "CONTRACT_MODE": "multiplier",
+                    "STAKE": "5",
+                    "FRANKENSTEIN_USE_SOROS": "false",
+                }
+            )
+
+        self.assertEqual(translated["SYMBOL"], "1HZ25V")
+        self.assertEqual(translated["CONTRACT_MODE"], "rise_fall")
+        self.assertNotIn("MULTIPLIER_VALUE", translated)
+
     def test_optimizer_context_rejects_old_market_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})
         old_champion = {
@@ -320,6 +340,17 @@ class OptimizerContractsTest(unittest.TestCase):
         }
 
         self.assertTrue(optimize_loop.params_match_context(champion, current))
+
+    def test_optimizer_context_can_follow_explicit_target_market(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "1HZ25V", "OPTIMIZER_TARGET_CONTRACT_MODE": "rise_fall"},
+            clear=False,
+        ):
+            current = optimize_loop.optimizer_context({})
+
+        self.assertEqual(current["symbol"], "1HZ25V")
+        self.assertEqual(current["contract_mode"], "rise_fall")
 
     def test_live_deploy_gate_rejects_negative_multiplier_candidate(self) -> None:
         self.assertFalse(

@@ -471,9 +471,19 @@ def _norm_contract_mode(value: str | None) -> str:
 def optimizer_context(env_vars: dict | None = None) -> dict:
     """Contexto real usado pelo optimizer para comparar campeões equivalentes."""
     env_vars = env_vars or {}
-    symbol = _norm_symbol(env_vars.get("SYMBOL") or ACTIVE_SYMBOL)
-    # BOOM/Crash na API PAT/OTP atual oferece Multipliers, não RF/ACCU.
-    return {"contract_mode": "multiplier", "symbol": symbol}
+    symbol = _norm_symbol(
+        env_vars.get("OPTIMIZER_TARGET_SYMBOL")
+        or os.environ.get("OPTIMIZER_TARGET_SYMBOL")
+        or env_vars.get("SYMBOL")
+        or ACTIVE_SYMBOL
+    )
+    contract_mode = _norm_contract_mode(
+        env_vars.get("OPTIMIZER_TARGET_CONTRACT_MODE")
+        or os.environ.get("OPTIMIZER_TARGET_CONTRACT_MODE")
+        or env_vars.get("CONTRACT_MODE")
+        or "multiplier"
+    )
+    return {"contract_mode": contract_mode, "symbol": symbol}
 
 
 def params_match_context(params: dict, context: dict | None = None) -> bool:
@@ -1250,8 +1260,9 @@ def _run_one(args) -> dict | None:
     
     env_vars["BACKTEST_COMPOUNDING"] = "false"   # $50 fixo por dia — obrigatório!
     env_vars["PEGASUS_OPTIMIZER_RUN"] = "true"
-    env_vars["CONTRACT_MODE"] = "multiplier"
-    symbol_upper = ACTIVE_SYMBOL.upper()
+    target_ctx = optimizer_context(env_vars)
+    env_vars["CONTRACT_MODE"] = target_ctx["contract_mode"]
+    symbol_upper = target_ctx["symbol"]
     env_vars["SYMBOL"] = symbol_upper
     is_boom_crash = "BOOM" in symbol_upper or "CRASH" in symbol_upper
     env_vars["RISE_FALL_PAYOUT_RATE"] = "0.95"
@@ -1556,6 +1567,7 @@ def _is_on_server() -> bool:
 def translate_frankenstein_params(env_vars: dict) -> dict:
     """Traduz as configurações de Frankenstein para as variáveis que o bot real carrega do .env."""
     out = env_vars.copy()
+    target_ctx = optimizer_context(out)
     
     if "FRANKENSTEIN_USE_SOROS" in out:
         out["USE_SOROS"] = out["FRANKENSTEIN_USE_SOROS"]
@@ -1578,16 +1590,24 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
         if k.startswith("FRANKENSTEIN_"):
             del out[k]
             
-    # Garante que o bot real opera no contrato suportado pela API PAT/OTP atual.
-    symbol_upper = ACTIVE_SYMBOL.upper()
-    out["CONTRACT_MODE"] = "multiplier"
-    out["SYMBOL"] = symbol_upper
-    out.setdefault("MULTIPLIER_VALUE", "100")
-    out.setdefault("MULTIPLIER_DIRECTION", "signal")
-    out.setdefault("MULTIPLIER_TAKE_PROFIT", "0.50")
-    out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
-    out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
-    out["MARTINGALE_PAYOUT_RATE"] = str(multiplier_progression_payout_rate(out))
+    out["CONTRACT_MODE"] = target_ctx["contract_mode"]
+    out["SYMBOL"] = target_ctx["symbol"]
+    if target_ctx["contract_mode"] == "multiplier":
+        out.setdefault("MULTIPLIER_VALUE", "100")
+        out.setdefault("MULTIPLIER_DIRECTION", "signal")
+        out.setdefault("MULTIPLIER_TAKE_PROFIT", "0.50")
+        out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
+        out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
+        out["MARTINGALE_PAYOUT_RATE"] = str(multiplier_progression_payout_rate(out))
+    else:
+        for key in (
+            "MULTIPLIER_VALUE",
+            "MULTIPLIER_DIRECTION",
+            "MULTIPLIER_TAKE_PROFIT",
+            "MULTIPLIER_STOP_LOSS",
+            "MULTIPLIER_MAX_HOLD_TICKS",
+        ):
+            out.pop(key, None)
     
     return out
 
