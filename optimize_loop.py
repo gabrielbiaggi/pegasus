@@ -50,6 +50,7 @@ import sqlite3
 def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
     db_path = db_path or Path("logs/results.db")
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecars = [db_path.with_name(f"{db_path.name}-wal"), db_path.with_name(f"{db_path.name}-shm")]
     if not db_path.exists():
         return True
     try:
@@ -64,6 +65,12 @@ def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
             shutil.move(str(db_path), str(backup))
         except Exception as move_exc:
             print(f"[WARN] ensure_optimizer_db_healthy backup error: {move_exc}", flush=True)
+        for sidecar in sidecars:
+            try:
+                if sidecar.exists():
+                    sidecar.unlink()
+            except Exception as side_exc:
+                print(f"[WARN] ensure_optimizer_db_healthy sidecar cleanup error: {side_exc}", flush=True)
         print(f"[WARN] optimizer DB corrompido, rotacionado para {backup.name}: {exc}", flush=True)
         sqlite3.connect(str(db_path)).close()
         return True
@@ -2569,9 +2576,10 @@ def main():
                     optimizer_run_id=optimizer_run_id)
 
     # ── Loop infinito de refinamento contínuo ─────────────────────────────────
+    refinement_anchor_name = supreme_winner["champ_name"] if supreme_winner else "baseline+mensais"
     print(f"\n{'-'*70}", flush=True)
     print(f"  🚀 LOOP DE REFINAMENTO CONTÍNUO — {N_WORKERS} workers simultâneos", flush=True)
-    print(f"  Aprimorando o Vencedor Supremo ({supreme_winner['champ_name']})...", flush=True)
+    print(f"  Aprimorando a âncora atual ({refinement_anchor_name})...", flush=True)
     print(f"{'-'*70}\n", flush=True)
 
     iteration = 10000
