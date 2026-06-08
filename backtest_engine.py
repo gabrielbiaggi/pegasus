@@ -732,6 +732,45 @@ def _multiplier_direction_from_signal(signal: str) -> str:
     return "MULTUP" if signal == "CALL" else "MULTDOWN"
 
 
+def _resolve_rise_fall_fast_signal(
+    *,
+    symbol: str,
+    velocity_v: float,
+    imbalance_v: float,
+    ols_v: float,
+    momentum_v: float,
+    ema_diff_v: float,
+    markov_up_v: float,
+    markov_dn_v: float,
+) -> tuple[str | None, int]:
+    up_votes = (
+        int(velocity_v > 0.0)
+        + int(imbalance_v >= 1.0)
+        + int(ols_v > 0.0)
+        + int(momentum_v > 0.0)
+        + int(ema_diff_v > 0.0)
+        + int(markov_up_v > markov_dn_v)
+    )
+    down_votes = (
+        int(velocity_v < 0.0)
+        + int(imbalance_v <= -1.0)
+        + int(ols_v < 0.0)
+        + int(momentum_v < 0.0)
+        + int(ema_diff_v < 0.0)
+        + int(markov_dn_v > markov_up_v)
+    )
+    symbol_upper = (symbol or "").upper()
+    if "BOOM" in symbol_upper:
+        return "PUT", down_votes
+    if "CRASH" in symbol_upper:
+        return "CALL", up_votes
+    if up_votes > down_votes:
+        return "CALL", up_votes
+    if down_votes > up_votes:
+        return "PUT", down_votes
+    return None, max(up_votes, down_votes)
+
+
 def _replay_strategy(
     outcomes: list[tuple],
     config: dict,
@@ -1472,25 +1511,16 @@ def _collect_day_outcomes(
                 ols_v = float(ols_arr[i]) if "ols_arr" in locals() else 0.0
                 markov_up_v = float(markov_up_arr[i]) if "markov_up_arr" in locals() else 0.5
                 markov_dn_v = float(markov_dn_arr[i]) if "markov_dn_arr" in locals() else 0.5
-                up_votes = (
-                    int(velocity_v > 0.0)
-                    + int(imbalance_v >= 1.0)
-                    + int(ols_v > 0.0)
-                    + int(momentum_v > 0.0)
-                    + int(ema_diff_v > 0.0)
-                    + int(markov_up_v > markov_dn_v)
+                selected_signal, actual_score = _resolve_rise_fall_fast_signal(
+                    symbol=SYMBOL,
+                    velocity_v=velocity_v,
+                    imbalance_v=imbalance_v,
+                    ols_v=ols_v,
+                    momentum_v=momentum_v,
+                    ema_diff_v=ema_diff_v,
+                    markov_up_v=markov_up_v,
+                    markov_dn_v=markov_dn_v,
                 )
-                down_votes = (
-                    int(velocity_v < 0.0)
-                    + int(imbalance_v <= -1.0)
-                    + int(ols_v < 0.0)
-                    + int(momentum_v < 0.0)
-                    + int(ema_diff_v < 0.0)
-                    + int(markov_dn_v > markov_up_v)
-                )
-                is_crash = "CRASH" in SYMBOL.upper()
-                selected_signal = "CALL" if is_crash else "PUT"
-                actual_score = up_votes if is_crash else down_votes
 
             signal_vote_floor = RISE_FALL_MIN_VOTES
             if CONTRACT_MODE == "multiplier":
@@ -1503,6 +1533,9 @@ def _collect_day_outcomes(
                     ),
                 )
             if actual_score < signal_vote_floor:
+                i += SAMPLE_EVERY
+                continue
+            if selected_signal is None:
                 i += SAMPLE_EVERY
                 continue
 
@@ -1599,11 +1632,12 @@ def _collect_day_outcomes(
                 continue  # score insuficiente para esta config
                 
             if CONTRACT_MODE == "rise_fall":
-                is_crash = "CRASH" in SYMBOL.upper()
-                if is_crash:
-                    is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] > prices[entry_idx]
+                exit_price = prices[entry_idx + RISE_FALL_DURATION_TICKS]
+                entry_price = prices[entry_idx]
+                if selected_signal == "CALL":
+                    is_win = exit_price > entry_price
                 else:
-                    is_win = prices[entry_idx + RISE_FALL_DURATION_TICKS] < prices[entry_idx]
+                    is_win = exit_price < entry_price
                 mult_direction = None
                 mult_returns = None
             elif CONTRACT_MODE == "multiplier":

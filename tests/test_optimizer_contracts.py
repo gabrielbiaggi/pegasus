@@ -13,6 +13,21 @@ import optimize_loop
 
 
 class OptimizerContractsTest(unittest.TestCase):
+    def test_rise_fall_non_crash_fast_path_can_emit_call_when_up_votes_dominate(self) -> None:
+        signal, score = backtest_engine._resolve_rise_fall_fast_signal(
+            symbol="1HZ25V",
+            velocity_v=0.0020,
+            imbalance_v=2.4,
+            ols_v=0.0012,
+            momentum_v=0.0031,
+            ema_diff_v=0.0015,
+            markov_up_v=0.72,
+            markov_dn_v=0.31,
+        )
+
+        self.assertEqual(signal, "CALL")
+        self.assertEqual(score, 6)
+
     def test_boom1000_global_search_biases_toward_spike_families(self) -> None:
         random.seed(7)
         params = {
