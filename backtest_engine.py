@@ -122,6 +122,11 @@ MULTIPLIER_DIRECTION = os.getenv("MULTIPLIER_DIRECTION", "signal").strip().lower
 MULTIPLIER_TAKE_PROFIT = float(os.getenv("MULTIPLIER_TAKE_PROFIT", "0.50"))
 MULTIPLIER_STOP_LOSS = float(os.getenv("MULTIPLIER_STOP_LOSS", "1.00"))
 MULTIPLIER_MAX_HOLD_TICKS = int(os.getenv("MULTIPLIER_MAX_HOLD_TICKS", "30"))
+DIGITS_CONTRACT_TYPE = os.getenv("DIGITS_CONTRACT_TYPE", "DIGITODD").strip().upper()
+DIGITS_DURATION_TICKS = int(os.getenv("DIGITS_DURATION_TICKS", "1"))
+DIGITS_COOLDOWN_TICKS = int(os.getenv("DIGITS_COOLDOWN_TICKS", "1"))
+DIGITS_BARRIER = int(os.getenv("DIGITS_BARRIER", "0"))
+DIGITS_PAYOUT_RATE = float(os.getenv("DIGITS_PAYOUT_RATE", "0.95"))
 INDICATORS_CACHE_VERSION = "v3"
 
 CUSUM_MAX = float(os.getenv("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
@@ -583,7 +588,7 @@ def _build_indicator_sample_indices(
             continue
         if (w - TICK_COUNT) % SAMPLE_EVERY != 0:
             continue
-        if mode not in {"rise_fall", "multiplier"}:
+        if mode not in {"rise_fall", "multiplier", "digits"}:
             avg = avgs[w]
             if np.isnan(avg) or avg >= max_calm_thresh:
                 continue
@@ -615,6 +620,8 @@ def _generate_strategy_configs() -> list[dict]:
     directional_score = (
         max(1, min(6, int(os.getenv("RISE_FALL_MIN_VOTES", "4"))))
         if os.getenv("CONTRACT_MODE", "").strip().lower() in {"rise_fall", "multiplier"}
+        else 1
+        if os.getenv("CONTRACT_MODE", "").strip().lower() == "digits"
         else 25
     )
     # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
@@ -731,6 +738,48 @@ def _multiplier_direction_from_signal(signal: str) -> str:
     if MULTIPLIER_DIRECTION == "down":
         return "MULTDOWN"
     return "MULTUP" if signal == "CALL" else "MULTDOWN"
+
+
+def _symbol_pip_size(symbol: str) -> int:
+    symbol_upper = str(symbol or "").strip().upper()
+    return {
+        "BOOM1000": 3,
+        "CRASH1000": 3,
+        "1HZ10V": 2,
+        "1HZ25V": 2,
+        "1HZ50V": 2,
+        "1HZ75V": 2,
+        "1HZ100V": 2,
+        "R_75": 2,
+        "R_100": 2,
+    }.get(symbol_upper, 2)
+
+
+def _quote_last_digit(quote: float, symbol: str) -> int:
+    scale = 10 ** _symbol_pip_size(symbol)
+    scaled = int(round(float(quote) * scale))
+    return abs(scaled) % 10
+
+
+def _digits_contract_wins(contract_type: str, exit_digit: int, barrier: int | None) -> bool:
+    ct = str(contract_type or "").strip().upper()
+    digit = int(exit_digit)
+    ref = None if barrier is None else int(barrier)
+    if ct == "DIGITODD":
+        return digit % 2 == 1
+    if ct == "DIGITEVEN":
+        return digit % 2 == 0
+    if ref is None:
+        raise ValueError(f"Contrato {ct} exige barrier")
+    if ct == "DIGITDIFF":
+        return digit != ref
+    if ct == "DIGITMATCH":
+        return digit == ref
+    if ct == "DIGITOVER":
+        return digit > ref
+    if ct == "DIGITUNDER":
+        return digit < ref
+    raise ValueError(f"Contrato digits invalido: {ct}")
 
 
 def _resolve_rise_fall_fast_signal(
@@ -902,6 +951,10 @@ def _replay_strategy(
                 current_tp_pct = RISE_FALL_MIN_PAYOUT_PCT
                 is_win_trade = is_win
                 risk.martingale_payout_rate = RISE_FALL_MIN_PAYOUT_PCT
+            elif CONTRACT_MODE == "digits":
+                current_tp_pct = DIGITS_PAYOUT_RATE
+                is_win_trade = is_win
+                risk.martingale_payout_rate = DIGITS_PAYOUT_RATE
             elif CONTRACT_MODE == "multiplier":
                 current_tp_pct = max(0.01, MULTIPLIER_TAKE_PROFIT / max(risk.fixed_stake, 0.01))
                 is_win_trade = False
@@ -1062,6 +1115,10 @@ def _replay_strategy(
                     wins += 1
                 else:
                     losses += 1
+            elif CONTRACT_MODE == "digits" and is_win_trade:
+                profit = round(stake * current_tp_pct, 2)
+                risk.update(profit=profit, buy_price=stake)
+                wins += 1
             elif is_win_trade:
                 profit = round(stake * current_tp_pct, 2)
                 risk.update(profit=profit, buy_price=stake)
@@ -1315,7 +1372,9 @@ def _collect_day_outcomes(
             _add_to_indicators_df_cache(day, day_indicators_df)
 
     # Convert to dictionary of records for target indices only, to avoid slow to_dict('records')
-    if CONTRACT_MODE in {"rise_fall", "multiplier"}:
+    if CONTRACT_MODE == "digits":
+        indicators_map = {}
+    elif CONTRACT_MODE in {"rise_fall", "multiplier"}:
         # Extract numpy arrays directly from the indicators dataframe for O(1) indexing
         cusum_arr = day_indicators_df["cusum_score"].values if "cusum_score" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
         velocity_arr = day_indicators_df["price_velocity"].values if "price_velocity" in day_indicators_df.columns else np.zeros(len(day_indicators_df))
@@ -1369,6 +1428,9 @@ def _collect_day_outcomes(
     if CONTRACT_MODE in {"rise_fall", "multiplier"}:
         max_wt = MULTIPLIER_MAX_HOLD_TICKS if CONTRACT_MODE == "multiplier" else RISE_FALL_DURATION_TICKS
         tp_to_wt = {c["tp"]: max_wt for c in STRATEGY_CONFIGS}
+    elif CONTRACT_MODE == "digits":
+        tp_to_wt = {c["tp"]: DIGITS_DURATION_TICKS for c in STRATEGY_CONFIGS}
+        max_wt = DIGITS_DURATION_TICKS
     else:
         for c in STRATEGY_CONFIGS:
             tp = c["tp"]
@@ -1420,17 +1482,27 @@ def _collect_day_outcomes(
         if np.isnan(avg):
             i += SAMPLE_EVERY
             continue
-        if CONTRACT_MODE not in {"rise_fall", "multiplier"} and avg >= CALM_THRESH:
+        if CONTRACT_MODE not in {"rise_fall", "multiplier", "digits"} and avg >= CALM_THRESH:
             i += SAMPLE_EVERY
             continue
 
-        if i >= len(day_indicators_df):
+        if CONTRACT_MODE != "digits" and i >= len(day_indicators_df):
             i += SAMPLE_EVERY
             continue
             
         # --- VERIFICAÇÃO SUPER OTIMIZADA DE SINAL ---
         selected_signal = None
-        if CONTRACT_MODE in {"rise_fall", "multiplier"}:
+        if CONTRACT_MODE == "digits":
+            selected_signal = DIGITS_CONTRACT_TYPE
+            actual_score = 1
+            cusum_v = 0.0
+            velocity_v = 0.0
+            imbalance_v = 0.0
+            hurst_v = 0.0
+            shannon_v = 0.0
+            kalman_v = 0.0
+            p_loss = 0.0
+        elif CONTRACT_MODE in {"rise_fall", "multiplier"}:
             cusum_v = float(cusum_arr[i])
             velocity_v = float(velocity_arr[i])
             imbalance_v = float(imbalance_arr[i])
@@ -1608,7 +1680,7 @@ def _collect_day_outcomes(
             i += SAMPLE_EVERY
             continue
 
-        if CONTRACT_MODE in {"rise_fall", "multiplier"}:
+        if CONTRACT_MODE in {"rise_fall", "multiplier", "digits"}:
             barrier_hit_at = None
         else:
             # Verifica outcome para cada (TP, score) combo
@@ -1639,6 +1711,15 @@ def _collect_day_outcomes(
                     is_win = exit_price > entry_price
                 else:
                     is_win = exit_price < entry_price
+                mult_direction = None
+                mult_returns = None
+            elif CONTRACT_MODE == "digits":
+                exit_digit = _quote_last_digit(prices[entry_idx + DIGITS_DURATION_TICKS], SYMBOL)
+                is_win = _digits_contract_wins(
+                    selected_signal or DIGITS_CONTRACT_TYPE,
+                    exit_digit,
+                    DIGITS_BARRIER,
+                )
                 mult_direction = None
                 mult_returns = None
             elif CONTRACT_MODE == "multiplier":
@@ -1680,6 +1761,12 @@ def _collect_day_outcomes(
                 RISE_FALL_DURATION_TICKS
                 + SLIPPAGE
                 + RISE_FALL_COOLDOWN_TICKS
+            )
+        elif CONTRACT_MODE == "digits":
+            i += (
+                DIGITS_DURATION_TICKS
+                + SLIPPAGE
+                + DIGITS_COOLDOWN_TICKS
             )
         elif CONTRACT_MODE == "multiplier":
             i += (
@@ -1984,6 +2071,7 @@ def apply_config(env_overrides: dict):
     global RISE_FALL_MAX_CUSUM, RISE_FALL_MAX_VELOCITY, RISE_FALL_MAX_IMBALANCE, RISE_FALL_BOOM_ONLY_PUT, RISE_FALL_MIN_VOTES
     global RISE_FALL_USE_ENSEMBLE, RISE_FALL_ENSEMBLE_MIN_PROB
     global MULTIPLIER_VALUE, MULTIPLIER_DIRECTION, MULTIPLIER_TAKE_PROFIT, MULTIPLIER_STOP_LOSS, MULTIPLIER_MAX_HOLD_TICKS
+    global DIGITS_CONTRACT_TYPE, DIGITS_DURATION_TICKS, DIGITS_COOLDOWN_TICKS, DIGITS_BARRIER, DIGITS_PAYOUT_RATE
     global SYMBOL, _max_csv_range, _day_df_cache, _indicators_df_cache, _indicators_list_cache
     
     effective_env = dict(_CONFIG_BASE_ENV)
@@ -2033,6 +2121,11 @@ def apply_config(env_overrides: dict):
     MULTIPLIER_TAKE_PROFIT = float(effective_env.get("MULTIPLIER_TAKE_PROFIT", "0.50"))
     MULTIPLIER_STOP_LOSS = float(effective_env.get("MULTIPLIER_STOP_LOSS", "1.00"))
     MULTIPLIER_MAX_HOLD_TICKS = int(effective_env.get("MULTIPLIER_MAX_HOLD_TICKS", "30"))
+    DIGITS_CONTRACT_TYPE = effective_env.get("DIGITS_CONTRACT_TYPE", "DIGITODD").strip().upper()
+    DIGITS_DURATION_TICKS = int(effective_env.get("DIGITS_DURATION_TICKS", "1"))
+    DIGITS_COOLDOWN_TICKS = int(effective_env.get("DIGITS_COOLDOWN_TICKS", "1"))
+    DIGITS_BARRIER = int(effective_env.get("DIGITS_BARRIER", "0"))
+    DIGITS_PAYOUT_RATE = float(effective_env.get("DIGITS_PAYOUT_RATE", "0.95"))
 
     CUSUM_MAX = float(effective_env.get("CALM_ACCU_MAX_ENTRY_CUSUM", "5.0"))
     HURST_MIN = float(effective_env.get("ACCUMULATOR_MIN_HURST_EXPONENT", "0.45"))
@@ -2046,6 +2139,8 @@ def apply_config(env_overrides: dict):
         and effective_env.get("PEGASUS_OPTIMIZER_FULL_TICK", "false").lower() != "true"
     )
     if CONTRACT_MODE == "rise_fall":
+        SAMPLE_EVERY = 1
+    elif CONTRACT_MODE == "digits":
         SAMPLE_EVERY = 1
     elif CONTRACT_MODE == "multiplier" and not optimizer_fast_sampling:
         SAMPLE_EVERY = 1

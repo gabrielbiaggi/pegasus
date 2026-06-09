@@ -352,8 +352,8 @@ def _read_stress_config() -> bool:
         return False
 
 # ── Carrega Símbolo Ativo e Volatilidade Mediana no escopo global ──────────────
-DEFAULT_OPTIMIZER_SYMBOL = "1HZ25V"
-DEFAULT_OPTIMIZER_CONTRACT_MODE = "rise_fall"
+DEFAULT_OPTIMIZER_SYMBOL = "1HZ100V"
+DEFAULT_OPTIMIZER_CONTRACT_MODE = "digits"
 LEGACY_RISE_FALL_FILTER_KEYS = {
     "RISE_FALL_BOOM_MAX_CUSUM": "RISE_FALL_MAX_CUSUM",
     "RISE_FALL_BOOM_MAX_VELOCITY": "RISE_FALL_MAX_VELOCITY",
@@ -458,6 +458,11 @@ PARAM_SPACE = {
     "MULTIPLIER_TAKE_PROFIT":       {"type": "float", "min": 0.02, "max": 3.00, "step": 0.02},
     "MULTIPLIER_STOP_LOSS":         {"type": "float", "min": 0.05, "max": 5.00, "step": 0.05},
     "MULTIPLIER_MAX_HOLD_TICKS":    {"type": "int",   "min": 1,   "max": 120,  "step": 1},
+    "DIGITS_CONTRACT_TYPE":         {"type": "choice", "choices": ["DIGITODD", "DIGITEVEN"]},
+    "DIGITS_DURATION_TICKS":        {"type": "int",   "min": 1,   "max": 5,    "step": 1},
+    "DIGITS_COOLDOWN_TICKS":        {"type": "int",   "min": 0,   "max": 20,   "step": 1},
+    "DIGITS_BARRIER":               {"type": "int",   "min": 0,   "max": 9,    "step": 1},
+    "DIGITS_PAYOUT_RATE":           {"type": "float", "min": 0.85, "max": 0.98, "step": 0.01},
     "TICK_COUNT":                   {"type": "int",   "min": 70,  "max": 160,  "step": 5},
     "ENSEMBLE_MIN_PROB":            {"type": "float", "min": 0.12, "max": 0.42, "step": 0.01},
     "PCS_XGB_BYPASS_LIMIT":         {"type": "float", "min": 0.12, "max": 0.40, "step": 0.01},
@@ -512,6 +517,7 @@ SAFE_PARAM_PREFIXES = (
     "ACCUMULATOR_",
     "ENSEMBLE_",
     "MULTIPLIER_",
+    "DIGITS_",
 )
 
 # ── Funções utilitárias ───────────────────────────────────────────────────────
@@ -853,6 +859,53 @@ def normalize_candidate_params(params: dict | None) -> dict:
         out["RISE_FALL_QG_BAYES_STRONG"] = str(round(max(0.50, min(0.85, qg_bayes)), 2))
         out["RISE_FALL_QG_HURST_MAX"] = str(round(max(0.35, min(0.75, qg_hurst)), 2))
 
+    if contract_mode == "digits":
+        for key in (
+            "MULTIPLIER_VALUE",
+            "MULTIPLIER_DIRECTION",
+            "MULTIPLIER_TAKE_PROFIT",
+            "MULTIPLIER_STOP_LOSS",
+            "MULTIPLIER_MAX_HOLD_TICKS",
+            "MULTIPLIER_JUMP_MIN_CONFIDENCE",
+            "MULTIPLIER_JUMP_QG_MIN_ABS_IMBALANCE",
+            "MULTIPLIER_JUMP_BAYES_STRONG_PROB",
+            "MULTIPLIER_JUMP_MIN_SCORE",
+            "MULTIPLIER_JUMP_HURST_TRENDING",
+            "MULTIPLIER_JUMP_HURST_REVERTING",
+            "MULTIPLIER_JUMP_MI_FLOW_MIN",
+            "MULTIPLIER_JUMP_WAVELET_SNR_MIN",
+            "MULTIPLIER_CONTINUATION_MIN_SCORE",
+            "MULTIPLIER_CONTINUATION_MIN_CONFIDENCE",
+            "MULTIPLIER_CONTINUATION_MIN_UP_TICKS",
+            "MULTIPLIER_CONTINUATION_MAX_DOWN_TICKS",
+            "MULTIPLIER_CONTINUATION_MIN_IMBALANCE",
+            "MULTIPLIER_CONTINUATION_MIN_MARKOV_EDGE",
+            "RISE_FALL_DURATION_TICKS",
+            "RISE_FALL_MIN_VOTES",
+            "RISE_FALL_MIN_PAYOUT_PCT",
+            "RISE_FALL_MAX_CUSUM",
+            "RISE_FALL_MAX_VELOCITY",
+            "RISE_FALL_MAX_IMBALANCE",
+            "JUMP_MIN_CONFIDENCE",
+            "RISE_FALL_QG_MIN_ABS_IMBALANCE",
+            "RISE_FALL_QG_BAYES_STRONG",
+            "RISE_FALL_QG_HURST_MAX",
+            "RISE_FALL_USE_ENSEMBLE",
+            "RISE_FALL_ENSEMBLE_MIN_PROB",
+            "ENSEMBLE_MIN_PROB",
+            "PCS_XGB_BYPASS_LIMIT",
+        ):
+            out.pop(key, None)
+        contract_type = str(out.get("DIGITS_CONTRACT_TYPE", "DIGITODD")).strip().upper()
+        if contract_type not in {"DIGITODD", "DIGITEVEN", "DIGITDIFF", "DIGITMATCH", "DIGITOVER", "DIGITUNDER"}:
+            contract_type = "DIGITODD"
+        out["DIGITS_CONTRACT_TYPE"] = contract_type
+        out["DIGITS_DURATION_TICKS"] = str(max(1, min(5, int(float(out.get("DIGITS_DURATION_TICKS", 1)) or 1))))
+        out["DIGITS_COOLDOWN_TICKS"] = str(max(0, min(20, int(float(out.get("DIGITS_COOLDOWN_TICKS", 1)) or 1))))
+        out["DIGITS_BARRIER"] = str(max(0, min(9, int(float(out.get("DIGITS_BARRIER", 0)) or 0))))
+        out["DIGITS_PAYOUT_RATE"] = str(round(max(0.85, min(0.98, float(out.get("DIGITS_PAYOUT_RATE", 0.95) or 0.95))), 2))
+        out["TICK_COUNT"] = str(max(20, min(80, int(float(out.get("TICK_COUNT", 40)) or 40))))
+
     return out
 
 
@@ -969,6 +1022,62 @@ def _mutate_rise_fall_cluster(params: dict, focus: str | None = None) -> dict:
         p["ENSEMBLE_MIN_PROB"] = str(round(random.uniform(0.14, 0.30), 2))
         p["PCS_XGB_BYPASS_LIMIT"] = str(round(random.uniform(0.12, 0.28), 2))
         p["TICK_COUNT"] = str(random.choice(list(range(90, 161, 5))))
+    return normalize_candidate_params(p)
+
+
+def _sample_digits_profile(params: dict, profile: str | None = None) -> dict:
+    p = params.copy()
+    profile = profile or random.choice(["odd_dense", "odd_buffered", "even_probe"])
+    p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+    p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+    p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+    p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+
+    if profile == "odd_dense":
+        p["DIGITS_CONTRACT_TYPE"] = "DIGITODD"
+        p["DIGITS_DURATION_TICKS"] = str(random.choice([1, 2]))
+        p["DIGITS_COOLDOWN_TICKS"] = str(random.randint(0, 4))
+        p["DIGITS_PAYOUT_RATE"] = str(round(random.uniform(0.90, 0.96), 2))
+        p["TICK_COUNT"] = str(random.choice([20, 30, 40]))
+    elif profile == "odd_buffered":
+        p["DIGITS_CONTRACT_TYPE"] = "DIGITODD"
+        p["DIGITS_DURATION_TICKS"] = str(random.choice([1, 2, 3]))
+        p["DIGITS_COOLDOWN_TICKS"] = str(random.randint(4, 12))
+        p["DIGITS_PAYOUT_RATE"] = str(round(random.uniform(0.88, 0.95), 2))
+        p["TICK_COUNT"] = str(random.choice([30, 40, 50, 60]))
+    else:
+        p["DIGITS_CONTRACT_TYPE"] = "DIGITEVEN"
+        p["DIGITS_DURATION_TICKS"] = str(random.choice([1, 2, 3]))
+        p["DIGITS_COOLDOWN_TICKS"] = str(random.randint(0, 12))
+        p["DIGITS_PAYOUT_RATE"] = str(round(random.uniform(0.88, 0.96), 2))
+        p["TICK_COUNT"] = str(random.choice([20, 30, 40, 50, 60]))
+
+    min_stake, _ = effective_stake_bounds(p)
+    p["STAKE"] = str(round(random.uniform(min_stake, 20.0), 2))
+    return normalize_candidate_params(p)
+
+
+def _mutate_digits_cluster(params: dict, focus: str | None = None) -> dict:
+    p = params.copy()
+    focus = focus or random.choice(["contract", "density", "risk_stack", "payout"])
+    if focus == "contract":
+        p["DIGITS_CONTRACT_TYPE"] = random.choice(["DIGITODD", "DIGITEVEN"])
+        p["DIGITS_DURATION_TICKS"] = str(random.randint(1, 4))
+    elif focus == "density":
+        p["DIGITS_COOLDOWN_TICKS"] = str(random.randint(0, 16))
+        p["TICK_COUNT"] = str(random.choice([20, 30, 40, 50, 60, 70, 80]))
+    elif focus == "risk_stack":
+        p["FRANKENSTEIN_USE_SOROS"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_SOROS_STEPS"] = str(random.choice([0, 1, 2, 3]))
+        p["FRANKENSTEIN_USE_MARTINGALE"] = random.choice(["true", "false"])
+        p["FRANKENSTEIN_MAX_GALES"] = str(random.choice([0, 1, 2]))
+        p["FRANKENSTEIN_MODE"] = random.choice(["flat", "dynamic_10"])
+        min_stake, _ = effective_stake_bounds(p)
+        p["STAKE"] = str(round(random.uniform(min_stake, 20.0), 2))
+    else:
+        p["DIGITS_PAYOUT_RATE"] = str(round(random.uniform(0.86, 0.97), 2))
+        p["DIGITS_BARRIER"] = str(random.randint(0, 9))
     return normalize_candidate_params(p)
 
 
@@ -1160,6 +1269,14 @@ def inject_global_multiplier_search(params: dict) -> dict:
         )[0]
         return _sample_rise_fall_profile(p, profile)
 
+    if contract_mode == "digits":
+        profile = random.choices(
+            ["odd_dense", "odd_buffered", "even_probe"],
+            weights=[0.45, 0.35, 0.20],
+            k=1,
+        )[0]
+        return _sample_digits_profile(p, profile)
+
     if contract_mode == "multiplier" and symbol == "BOOM1000":
         profile = random.choices(
             ["micro_pullback", "balanced_signal", "trend_carry", "reversal_probe"],
@@ -1222,6 +1339,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 random.choice(["strict_selective", "contextual_swing", "tight_reversal"]),
             )
 
+        if contract_mode == "digits" and total_trades < 40:
+            return _sample_digits_profile(
+                p,
+                random.choice(["odd_dense", "odd_buffered", "even_probe"]),
+            )
+
         if contract_mode == "multiplier" and symbol == "BOOM1000" and total_trades < 40:
             return _sample_multiplier_profile(
                 p,
@@ -1234,6 +1357,12 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
                 random.choice(["entry_gate", "risk_stack", "regime", "density"]),
             )
 
+        if contract_mode == "digits" and -0.20 <= avg_d <= 0.20:
+            return _mutate_digits_cluster(
+                p,
+                random.choice(["contract", "density", "risk_stack", "payout"]),
+            )
+
         if contract_mode == "multiplier" and symbol == "BOOM1000" and -0.20 <= avg_d <= 0.20:
             return _mutate_multiplier_cluster(
                 p,
@@ -1243,6 +1372,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 1. Se tem perdas (dias negativos), a prioridade absoluta é reduzir o risco
         # Aperta os filtros de spikes e aumenta o cooldown ticks!
         if neg_days > 0 or consist < 95.0:
+            if contract_mode == "digits":
+                return _mutate_digits_cluster(
+                    p,
+                    random.choice(["contract", "density", "risk_stack", "payout"]),
+                )
             if contract_mode == "rise_fall":
                 return _mutate_rise_fall_cluster(
                     p,
@@ -1302,6 +1436,11 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
         # 2. Se a estratégia é consistente (sem dias negativos) mas o ganho diário está abaixo de $50 (dobrar a banca):
         # Aumentamos o STAKE, diminuímos o cooldown (mais trades), ou aumentamos Soros/Martingale!
         if avg_d < 50.0:
+            if contract_mode == "digits":
+                return _mutate_digits_cluster(
+                    p,
+                    random.choice(["contract", "density", "risk_stack", "payout"]),
+                )
             if contract_mode == "rise_fall":
                 return _mutate_rise_fall_cluster(
                     p,
@@ -1353,6 +1492,16 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
     target_ctx = optimizer_context(p)
     if target_ctx["contract_mode"] == "rise_fall":
         eligible = [k for k in eligible if not k.startswith("MULTIPLIER_")]
+    if target_ctx["contract_mode"] == "digits":
+        eligible = [
+            k for k in eligible
+            if not k.startswith("MULTIPLIER_")
+            and not k.startswith("RISE_FALL_")
+            and k != "JUMP_MIN_CONFIDENCE"
+            and not k.startswith("ENSEMBLE_")
+            and k != "PCS_XGB_BYPASS_LIMIT"
+        ]
+        return _mutate_digits_cluster(p)
     if target_ctx["contract_mode"] == "multiplier" and target_ctx["symbol"] == "BOOM1000" and random.random() < 0.55:
         return _mutate_multiplier_cluster(p)
     num = random.randint(1, min(4, len(eligible)))
@@ -1933,6 +2082,20 @@ def translate_frankenstein_params(env_vars: dict) -> dict:
         out.setdefault("MULTIPLIER_STOP_LOSS", "1.00")
         out.setdefault("MULTIPLIER_MAX_HOLD_TICKS", "30")
         out["MARTINGALE_PAYOUT_RATE"] = str(multiplier_progression_payout_rate(out))
+    elif target_ctx["contract_mode"] == "digits":
+        out.setdefault("DIGITS_CONTRACT_TYPE", "DIGITODD")
+        out.setdefault("DIGITS_DURATION_TICKS", "1")
+        out.setdefault("DIGITS_COOLDOWN_TICKS", "1")
+        out.setdefault("DIGITS_BARRIER", "0")
+        out.setdefault("DIGITS_PAYOUT_RATE", "0.95")
+        for key in (
+            "MULTIPLIER_VALUE",
+            "MULTIPLIER_DIRECTION",
+            "MULTIPLIER_TAKE_PROFIT",
+            "MULTIPLIER_STOP_LOSS",
+            "MULTIPLIER_MAX_HOLD_TICKS",
+        ):
+            out.pop(key, None)
     else:
         for key in (
             "MULTIPLIER_VALUE",
@@ -2132,6 +2295,10 @@ def main():
                 best_env[key] = f"{(space['min'] + space['max']) / 2:.4f}"
             elif space["type"] == "float_sci":
                 best_env[key] = f"{(space['min'] + space['max']) / 2:.2e}"
+            elif space["type"] == "choice":
+                best_env[key] = str(space["choices"][0])
+            elif space["type"] == "bool":
+                best_env[key] = "false"
 
     empty_metrics = {
         "avg_daily_profit": 0.0,

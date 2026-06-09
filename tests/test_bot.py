@@ -72,6 +72,31 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("duration", payload)
         self.assertNotIn("duration_unit", payload)
 
+    async def test_digits_proposal_payload(self) -> None:
+        env = {
+            "DERIV_TOKEN": "token",
+            "DERIV_APP_ID": "1089",
+            "CONTRACT_MODE": "digits",
+            "SYMBOL": "1HZ100V",
+            "DRY_RUN": "false",
+            "DIGITS_CONTRACT_TYPE": "DIGITODD",
+            "DIGITS_DURATION_TICKS": "1",
+        }
+        with patch("config.load_dotenv"), patch.dict(os.environ, env, clear=True):
+            config = load_config()
+
+        ws = FakeWebSocket()
+        bot = DerivBot(config)
+
+        await bot.request_digits_proposal(ws, 1.0, "DIGITODD", 1_700_000_000)
+
+        payload = ws.messages[0]
+        self.assertEqual(payload["contract_type"], "DIGITODD")
+        self.assertEqual(payload["underlying_symbol"], "1HZ100V")
+        self.assertEqual(payload["duration"], 1)
+        self.assertEqual(payload["duration_unit"], "t")
+        self.assertNotIn("barrier", payload)
+
     async def test_multiplier_open_contract_sells_on_max_hold(self) -> None:
         env = {
             "DERIV_TOKEN": "token",

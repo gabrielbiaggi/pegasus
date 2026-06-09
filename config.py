@@ -180,6 +180,11 @@ class BotConfig:
     multiplier_take_profit: float
     multiplier_stop_loss: float
     multiplier_max_hold_ticks: int
+    digits_contract_type: str
+    digits_duration_ticks: int
+    digits_cooldown_ticks: int
+    digits_barrier: int
+    digits_payout_rate: float
     simulated_balance: float
 
     @property
@@ -423,6 +428,11 @@ def load_config() -> BotConfig:
         multiplier_take_profit=_float_env("MULTIPLIER_TAKE_PROFIT", 0.50),
         multiplier_stop_loss=_float_env("MULTIPLIER_STOP_LOSS", 1.0),
         multiplier_max_hold_ticks=_int_env("MULTIPLIER_MAX_HOLD_TICKS", 30),
+        digits_contract_type=os.getenv("DIGITS_CONTRACT_TYPE", "DIGITODD").strip().upper(),
+        digits_duration_ticks=_int_env("DIGITS_DURATION_TICKS", 1),
+        digits_cooldown_ticks=_int_env("DIGITS_COOLDOWN_TICKS", 1),
+        digits_barrier=_int_env("DIGITS_BARRIER", 0),
+        digits_payout_rate=_float_env("DIGITS_PAYOUT_RATE", 0.95),
         simulated_balance=_float_env("SIMULATED_BALANCE", 0.0),
     )
 
@@ -436,12 +446,32 @@ def load_config() -> BotConfig:
         "rise_fall",
         "jump_rise_fall",
         "multiplier",
+        "digits",
     }:
         raise ValueError(
-            "CONTRACT_MODE deve ser accumulator, calm_accu, rise_fall, jump_rise_fall ou multiplier."
+            "CONTRACT_MODE deve ser accumulator, calm_accu, rise_fall, jump_rise_fall, multiplier ou digits."
         )
     if config.multiplier_direction not in {"signal", "up", "down"}:
         raise ValueError("MULTIPLIER_DIRECTION deve ser signal, up ou down.")
+    if config.digits_contract_type not in {
+        "DIGITODD",
+        "DIGITEVEN",
+        "DIGITDIFF",
+        "DIGITMATCH",
+        "DIGITOVER",
+        "DIGITUNDER",
+    }:
+        raise ValueError(
+            "DIGITS_CONTRACT_TYPE deve ser DIGITODD, DIGITEVEN, DIGITDIFF, DIGITMATCH, DIGITOVER ou DIGITUNDER."
+        )
+    if config.digits_duration_ticks <= 0:
+        raise ValueError("DIGITS_DURATION_TICKS precisa ser maior que zero.")
+    if config.digits_cooldown_ticks < 0:
+        raise ValueError("DIGITS_COOLDOWN_TICKS nao pode ser negativo.")
+    if not 0 <= config.digits_barrier <= 9:
+        raise ValueError("DIGITS_BARRIER deve estar entre 0 e 9.")
+    if config.digits_payout_rate <= 0:
+        raise ValueError("DIGITS_PAYOUT_RATE precisa ser maior que zero.")
     if config.max_loss_day_pct > 0:
         if not 0 < config.max_loss_day_pct <= 1:
             raise ValueError(
@@ -485,7 +515,7 @@ def load_config() -> BotConfig:
     if config.use_soros and config.use_martingale:
         pass
     if (
-        config.contract_mode not in {"jump_rise_fall", "calm_accu"}
+        config.contract_mode not in {"jump_rise_fall", "calm_accu", "digits"}
         and config.tick_count < config.accumulator_strategy_config.minimum_ticks
     ):
         raise ValueError(

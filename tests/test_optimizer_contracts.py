@@ -366,6 +366,26 @@ class OptimizerContractsTest(unittest.TestCase):
         self.assertEqual(translated["CONTRACT_MODE"], "rise_fall")
         self.assertNotIn("MULTIPLIER_VALUE", translated)
 
+    def test_translate_frankenstein_params_respects_digits_optimizer_target(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPTIMIZER_TARGET_SYMBOL": "1HZ100V", "OPTIMIZER_TARGET_CONTRACT_MODE": "digits"},
+            clear=False,
+        ):
+            translated = optimize_loop.translate_frankenstein_params(
+                {
+                    "SYMBOL": "BOOM1000",
+                    "CONTRACT_MODE": "multiplier",
+                    "DIGITS_CONTRACT_TYPE": "DIGITODD",
+                    "DIGITS_DURATION_TICKS": "1",
+                }
+            )
+
+        self.assertEqual(translated["SYMBOL"], "1HZ100V")
+        self.assertEqual(translated["CONTRACT_MODE"], "digits")
+        self.assertEqual(translated["DIGITS_CONTRACT_TYPE"], "DIGITODD")
+        self.assertNotIn("MULTIPLIER_VALUE", translated)
+
     def test_optimizer_context_rejects_old_market_champion(self) -> None:
         current = optimize_loop.optimizer_context({"SYMBOL": "BOOM1000"})
         old_champion = {
@@ -671,6 +691,25 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertEqual(backtest_engine.RISE_FALL_USE_ENSEMBLE, base_use_ensemble)
         self.assertEqual(backtest_engine.RISE_FALL_MIN_VOTES, base_min_votes)
+
+    def test_normalize_digits_candidate_keeps_digits_knobs_and_strips_multiplier_noise(self) -> None:
+        candidate = optimize_loop.normalize_candidate_params(
+            {
+                "CONTRACT_MODE": "digits",
+                "SYMBOL": "1HZ100V",
+                "DIGITS_CONTRACT_TYPE": "DIGITEVEN",
+                "DIGITS_DURATION_TICKS": "3",
+                "DIGITS_COOLDOWN_TICKS": "9",
+                "DIGITS_BARRIER": "4",
+                "MULTIPLIER_VALUE": "100",
+            }
+        )
+
+        self.assertEqual(candidate["DIGITS_CONTRACT_TYPE"], "DIGITEVEN")
+        self.assertEqual(candidate["DIGITS_DURATION_TICKS"], "3")
+        self.assertEqual(candidate["DIGITS_COOLDOWN_TICKS"], "9")
+        self.assertEqual(candidate["DIGITS_BARRIER"], "4")
+        self.assertNotIn("MULTIPLIER_VALUE", candidate)
 
     def test_build_refinement_seed_pool_keeps_search_alive_without_crossover_winner(self) -> None:
         monthly_states = {

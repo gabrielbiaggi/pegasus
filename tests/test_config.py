@@ -83,6 +83,22 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(cfg.multiplier_take_profit, 0.50)
             self.assertEqual(cfg.multiplier_stop_loss, 1.00)
 
+    def test_accepts_digits_mode(self) -> None:
+        env = {
+            "DERIV_TOKEN": "token",
+            "DERIV_APP_ID": "1089",
+            "CONTRACT_MODE": "digits",
+            "DIGITS_CONTRACT_TYPE": "DIGITODD",
+            "DIGITS_DURATION_TICKS": "1",
+            "DIGITS_COOLDOWN_TICKS": "2",
+        }
+        with patch("config.load_dotenv"), patch.dict(os.environ, env, clear=True):
+            cfg = load_config()
+            self.assertEqual(cfg.contract_mode, "digits")
+            self.assertEqual(cfg.digits_contract_type, "DIGITODD")
+            self.assertEqual(cfg.digits_duration_ticks, 1)
+            self.assertEqual(cfg.digits_cooldown_ticks, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

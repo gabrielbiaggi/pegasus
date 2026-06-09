@@ -67,6 +67,10 @@ def multiplier_contract_from_mode(signal: str, direction_mode: str) -> str:
     return multiplier_contract_from_signal(signal)
 
 
+def digits_contract_requires_barrier(contract_type: str) -> bool:
+    return contract_type in {"DIGITDIFF", "DIGITMATCH", "DIGITOVER", "DIGITUNDER"}
+
+
 @dataclass
 class PendingOrder:
     stake: float
@@ -409,6 +413,62 @@ class DerivBot:
         )
         await self.send(ws, payload)
 
+    async def request_digits_proposal(
+        self,
+        ws: websockets.WebSocketClientProtocol,
+        stake: float,
+        contract_type: str,
+        entry_epoch: int,
+        metrics: dict[str, Any] | None = None,
+        score: int = 1,
+    ) -> None:
+        self.pending_order = PendingOrder(stake, score, entry_epoch, metrics, contract_type)
+        self.journal.log_signal(
+            symbol=self.config.symbol,
+            contract_mode=self.config.contract_mode,
+            entry_epoch=entry_epoch,
+            direction=contract_type,
+            score=score,
+            stake=stake,
+            dry_run=self.config.dry_run,
+            metrics=metrics,
+        )
+
+        if self.config.dry_run:
+            logger.info(
+                "DRY_RUN DIGITS %s score=%s stake=%.2f entry=%s. Nenhuma ordem enviada.",
+                contract_type,
+                score,
+                stake,
+                entry_epoch,
+            )
+            self.last_rf_entry_epoch = entry_epoch
+            self.pending_order = None
+            return
+
+        payload: dict[str, Any] = {
+            "proposal": 1,
+            "amount": stake,
+            "basis": "stake",
+            "contract_type": contract_type,
+            "currency": self.config.currency,
+            "duration": self.config.digits_duration_ticks,
+            "duration_unit": "t",
+            "underlying_symbol": self.config.symbol,
+        }
+        if digits_contract_requires_barrier(contract_type):
+            payload["barrier"] = str(self.config.digits_barrier)
+        logger.info(
+            "Solicitando proposta DIGITS %s | stake=%.2f | ativo=%s | duration=%dt | barrier=%s | epoch=%s",
+            contract_type,
+            stake,
+            self.config.symbol,
+            self.config.digits_duration_ticks,
+            self.config.digits_barrier if digits_contract_requires_barrier(contract_type) else "-",
+            entry_epoch,
+        )
+        await self.send(ws, payload)
+
     async def buy_from_proposal(
         self, ws: websockets.WebSocketClientProtocol, proposal: dict[str, Any]
     ) -> None:
@@ -424,12 +484,16 @@ class DerivBot:
             return
 
         # Payout filter for Rise/Fall contracts
-        if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+        if self.config.contract_mode in {"rise_fall", "jump_rise_fall", "digits"}:
             payout_val = float(proposal.get("payout", 0.0))
             ask_price_val = float(ask_price)
             if payout_val > 0 and ask_price_val > 0:
                 payout_pct = (payout_val - ask_price_val) / ask_price_val
-                min_payout_pct = self.config.rise_fall_min_payout_pct
+                min_payout_pct = (
+                    self.config.digits_payout_rate
+                    if self.config.contract_mode == "digits"
+                    else self.config.rise_fall_min_payout_pct
+                )
                 if payout_pct < min_payout_pct:
                     logger.warning(
                         "⛔ [PAYOUT BLOCK] Payout proposto de %.4f%% abaixo do mínimo de %.4f%% | ask_price=%s, payout=%s",
@@ -1163,6 +1227,35 @@ class DerivBot:
                 )
             return
 
+        if self.config.contract_mode == "digits":
+            if self.last_rf_entry_epoch is not None:
+                ticks_since_last = tick_epoch - self.last_rf_entry_epoch
+                if ticks_since_last <= self.config.digits_cooldown_ticks:
+                    logger.debug(
+                        "Cooldown DIGITS ativo: %s tick(s) desde ultima entrada; minimo=%s.",
+                        ticks_since_last,
+                        self.config.digits_cooldown_ticks + 1,
+                    )
+                    return
+
+            stake = self.risk.get_stake()
+            metrics = self._last_tick_metrics(df)
+            contract_type = self.config.digits_contract_type
+            logger.info(
+                "Setup DIGITS %s detectado: stake=%.2f barrier=%s",
+                contract_type,
+                stake,
+                self.config.digits_barrier if digits_contract_requires_barrier(contract_type) else "-",
+            )
+            await self.request_digits_proposal(
+                ws,
+                stake,
+                contract_type,
+                tick_epoch,
+                metrics=metrics,
+            )
+            return
+
         # ---- Calm ACCU mode (BOOM1000 calm-entry) ----
         if self.config.contract_mode == "calm_accu":
             prices = [t["quote"] for t in _tick_snapshot]
@@ -1830,8 +1923,8 @@ class DerivBot:
                     )
                 return
 
-            # Rise/Fall contracts settle automatically — no monitoring needed.
-            if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
+            # Binary contracts settle automatically — no monitoring needed.
+            if self.config.contract_mode in {"rise_fall", "jump_rise_fall", "digits"}:
                 return
 
             # Multi-gale: per-contract open-position monitoring.
@@ -2370,6 +2463,21 @@ class DerivBot:
         )
         if self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
             await self.send(ws, {"portfolio": 1, "contract_type": ["CALL", "PUT"]})
+        elif self.config.contract_mode == "digits":
+            await self.send(
+                ws,
+                {
+                    "portfolio": 1,
+                    "contract_type": [
+                        "DIGITODD",
+                        "DIGITEVEN",
+                        "DIGITDIFF",
+                        "DIGITMATCH",
+                        "DIGITOVER",
+                        "DIGITUNDER",
+                    ],
+                },
+            )
         elif self.config.contract_mode == "multiplier":
             await self.send(ws, {"portfolio": 1, "contract_type": ["MULTUP", "MULTDOWN"]})
         else:
@@ -2385,6 +2493,8 @@ class DerivBot:
         ]
         if self.config.contract_mode == "multiplier":
             mode_label = "MULT"
+        elif self.config.contract_mode == "digits":
+            mode_label = "DIGITS"
         elif self.config.contract_mode in {"rise_fall", "jump_rise_fall"}:
             mode_label = "RF"
         else:
@@ -2483,6 +2593,7 @@ class DerivBot:
                     "rise_fall": "Rise/Fall",
                     "jump_rise_fall": "JumpRF Momentum",
                     "multiplier": "Multipliers (BOOM1000)",
+                    "digits": "Digits",
                 }.get(self.config.contract_mode, self.config.contract_mode)
                 # Obter URL WebSocket e credenciais dinamicamente via deriv_auth (novo sistema ou legado)
                 auth = deriv_auth.get_auth(self.config.app_id, self.config.account_mode)
