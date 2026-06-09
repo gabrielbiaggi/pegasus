@@ -3253,8 +3253,7 @@
                 try {
                     await _postEnv("CONTRACT_MODE", sel.value);
                     toast("Modo: " + sel.value + " \u2714", "var(--green)");
-                    $("calm-params").style.display =
-                        sel.value === "calm_accu" ? "flex" : "none";
+                    $("calm-params").style.display = "none";
                 } catch (e) {
                     toast("Erro", "var(--red)");
                 }
@@ -3827,8 +3826,8 @@
                         le.textContent = parseFloat(lv).toFixed(3);
                         var thresholds = window.pegasusThresholds || {
                             ensemble_min_prob: 0.30,
-                            accumulator_min_hurst_exponent: 0.45,
-                            calm_accu_max_entry_cusum: 5.0
+                            hurst_target: 0.50,
+                            cusum_limit: 5.0
                         };
                         if (lk.includes("zscore"))
                             le.style.color =
@@ -3838,7 +3837,7 @@
                                       ? "var(--yellow)"
                                       : "var(--green)";
                         else if (lk === "hurst_exponent") {
-                            var minH = thresholds.accumulator_min_hurst_exponent;
+                            var minH = thresholds.hurst_target;
                             le.style.color = lv >= minH ? "var(--green)" : "var(--red)";
                         } else if (lk === "bayesian_prob_up")
                             le.style.color =
@@ -3848,7 +3847,7 @@
                                       ? "var(--red)"
                                       : "var(--yellow)";
                         else if (lk === "cusum_score") {
-                            var maxC = thresholds.calm_accu_max_entry_cusum;
+                            var maxC = thresholds.cusum_limit;
                             le.style.color = lv > maxC ? "var(--red)" : (lv > maxC * 0.7 ? "var(--yellow)" : "var(--green)");
                         } else le.style.color = "var(--fg)";
                     } else {
@@ -3883,24 +3882,14 @@
                     _connFailed = 0;
                     window.pegasusThresholds = {
                         ensemble_min_prob: d.ensemble_min_prob,
-                        accumulator_min_hurst_exponent: d.accumulator_min_hurst_exponent,
-                        calm_accu_max_entry_cusum: d.calm_accu_max_entry_cusum
+                        hurst_target: 0.50,
+                        cusum_limit: 5.0
                     };
                     $("conn-err").style.display = "none";
                     _botRunning = !!d.running;
                     applyButtonStates(_botRunning);
                     if (d.symbol) {
-                        var cm = d.contract_mode || "digits";
-                        var modeLabel =
-                            cm === "digits"
-                                ? "DIGITS"
-                                : cm === "multiplier"
-                                ? "MULT"
-                                : cm === "rise_fall"
-                                ? "RF"
-                                : cm === "calm_accu"
-                                ? "CALM"
-                                : "ACCU";
+                        var modeLabel = "DIGITS";
                         $("symbol-badge").textContent =
                             d.symbol + " · " + modeLabel;
                     }
@@ -4024,26 +4013,11 @@
                         var cmS = $("sel-contract-mode");
                         if (d.contract_mode && document.activeElement !== cmS) {
                             cmS.value = d.contract_mode;
-                            $("calm-params").style.display =
-                                d.contract_mode === "calm_accu"
-                                    ? "flex"
-                                    : "none";
+                            $("calm-params").style.display = "none";
                         }
                         var mmS = $("sel-martingale-mode");
                         if (d.martingale_mode && document.activeElement !== mmS)
                             mmS.value = d.martingale_mode;
-                        var ctE = $("inp-calm-threshold"),
-                            clE = $("inp-calm-lookback");
-                        if (
-                            d.calm_accu_threshold &&
-                            document.activeElement !== ctE
-                        )
-                            ctE.value = parseFloat(d.calm_accu_threshold);
-                        if (
-                            d.calm_accu_lookback &&
-                            document.activeElement !== clE
-                        )
-                            clE.value = parseInt(d.calm_accu_lookback);
                         var skE = $("inp-stake"),
                             skV = $("inp-stake-val"),
                             skT = $("tog-stake-pct");
@@ -4210,79 +4184,17 @@
                         sc = $("signal-conf"),
                         se = $("signal-extra"),
                         cb = $("conf-bar");
-                    if (sig.type === "calm_accu" && sig.score != null) {
-                        // Calm ACCU signal
-                        var scoreMax = sig.score_max || 37;
-                        var scorePct = Math.round((sig.score / scoreMax) * 100);
-                        sd.textContent = "\u25c6 ACCU";
+                    if (sig.direction) {
+                        var digitsDir = String(sig.direction || "");
+                        sd.textContent = digitsDir;
                         sd.className =
                             "signal-dir " +
-                            (scorePct >= 70
+                            (digitsDir.indexOf("ODD") >= 0 || digitsDir.indexOf("DIFF") >= 0
                                 ? "call"
-                                : scorePct >= 50
-                                  ? "put"
-                                  : "none");
+                                : "put");
                         sv.textContent =
-                            "Score: " +
-                            sig.score +
-                            "/" +
-                            scoreMax +
-                            (sig.mode ? " | " + sig.mode : "");
-                        var pLoss = sig.p_loss != null ? sig.p_loss : null;
-                        var limitProb = (d && d.ensemble_min_prob != null) ? d.ensemble_min_prob : (sig.ensemble_min_prob != null ? sig.ensemble_min_prob : 0.30);
-                        
-                        if (pLoss != null) {
-                            var pLossPctVal = pLoss * 100;
-                            var limitPctVal = limitProb * 100;
-                            sc.textContent = "P(LOSS)=" + pLossPctVal.toFixed(2) + "% (Limite: " + limitPctVal.toFixed(1) + "%)";
-                            
-                            // Fator de segurança: quanto menor P(LOSS), mais cheia a barra de segurança!
-                            var safety = 100 - (pLoss / limitProb) * 100;
-                            safety = Math.max(0, Math.min(100, safety));
-                            cb.style.width = safety.toFixed(1) + "%";
-                            
-                            if (pLoss < limitProb) {
-                                if (pLoss > limitProb - 0.05) {
-                                    cb.style.background = "var(--yellow)";
-                                    sc.style.color = "var(--yellow)";
-                                } else {
-                                    cb.style.background = "var(--green)";
-                                    sc.style.color = "var(--green)";
-                                }
-                            } else {
-                                cb.style.background = "var(--red)";
-                                sc.style.color = "var(--red)";
-                                sc.textContent += " [BLOQUEADO]";
-                            }
-                        } else {
-                            sc.textContent = "P(LOSS)=\u2014";
-                            cb.style.width = "0%";
-                            cb.style.background = "var(--muted)";
-                            sc.style.color = "var(--muted)";
-                        }
-                        if (se)
-                            se.textContent =
-                                (sig.hurst != null ? "H=" + sig.hurst : "") +
-                                (sig.cusum != null
-                                    ? " CUSUM=" + sig.cusum
-                                    : "") +
-                                (sig.stake != null
-                                    ? " stake=$" + sig.stake
-                                    : "");
-                    } else if (sig.direction && sig.type !== "calm_accu") {
-                        // JumpMom / Rise-Fall signal
-                        sd.textContent =
-                            sig.direction === "CALL"
-                                ? "\u25b2 CALL"
-                                : "\u25bc PUT";
-                        sd.className =
-                            "signal-dir " +
-                            (sig.direction === "CALL" ? "call" : "put");
-                        sv.textContent =
-                            "\u2191" +
-                            sig.votes_up +
-                            " \u2193" +
-                            sig.votes_down;
+                            "barrier " +
+                            (sig.barrier == null ? "\u2014" : sig.barrier);
                         var conf = sig.confidence || 0,
                             cp = conf > 1 ? conf : conf * 100;
                         sc.textContent = "conf: " + cp.toFixed(0) + "%";
@@ -4293,7 +4205,11 @@
                                 : cp >= 50
                                   ? "var(--yellow)"
                                   : "var(--red)";
-                        if (se) se.textContent = "";
+                        if (se)
+                            se.textContent =
+                                (sig.stake != null ? "stake=$" + sig.stake : "") +
+                                (d.digits_duration_ticks != null ? " | dur=" + d.digits_duration_ticks + "t" : "") +
+                                (d.digits_contract_type ? " | " + d.digits_contract_type : "");
                     } else {
                         sd.textContent = "\u2014";
                         sd.className = "signal-dir none";
@@ -5021,7 +4937,7 @@
                             var opt = document.createElement("option");
                             opt.value = s;
                             opt.textContent = s;
-                            if (s === "Super-Frankenstein") opt.selected = true;
+                            if (s === "Digits Core") opt.selected = true;
                             select.appendChild(opt);
                         });
                     }
@@ -5056,14 +4972,14 @@
                             }
 
                             var pnlCls = pnl >= 0 ? "win" : "loss";
-                            var isSF = s === "Super-Frankenstein";
+                            var isSF = s === "Digits Core";
                             
                             // Estilo de destaque para a estratégia PCS preferida
                             var rowStyle = isSF 
                                 ? 'background: rgba(139, 92, 246, 0.08); border-left: 3px solid var(--purple); font-weight: 600;' 
                                 : '';
                             var nameDisplay = isSF 
-                                ? `<span style="color: #c084fc; display: inline-flex; align-items: center; gap: 4px;">⚡ ${s} <span style="background: var(--purple-bg); color: var(--purple); font-size: 0.62rem; padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.3)">RECOMENDADA</span></span>`
+                                ? `<span style="color: #c084fc; display: inline-flex; align-items: center; gap: 4px;">⚡ ${s} <span style="background: var(--purple-bg); color: var(--purple); font-size: 0.62rem; padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.3)">ARENA</span></span>`
                                 : s;
 
                             var bustTxt = busted > 0 
@@ -5527,7 +5443,7 @@
                         }
                         if (brImp) {
                             if (runtime.zero_trade_best) {
-                                brImp.textContent = "loop #" + (d.current_iteration || 0);
+                                brImp.textContent = "it#" + (d.current_iteration || 0);
                                 brImp.style.color = "var(--cyan)";
                             } else if (!bestIsValid) {
                                 brImp.textContent = "$0.00/dia";
@@ -5621,9 +5537,9 @@
                             var html = "";
                             var hasData = false;
                             
-                            var bl_sf = (d.baseline && d.baseline.monthly_breakdown) ? d.baseline.monthly_breakdown["Super-Frankenstein"] : null;
-                            var best_sf = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Super-Frankenstein"] : null;
-                            var best_live = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Pegasus Live Sniper (9% TP)"] : null;
+                            var bl_sf = (d.baseline && d.baseline.monthly_breakdown) ? d.baseline.monthly_breakdown["Digits Core"] : null;
+                            var best_sf = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Digits Core"] : null;
+                            var best_live = (bestIsValid && activeBest && activeBest.monthly_breakdown) ? activeBest.monthly_breakdown["Digits Live"] : null;
                             
                             if (bl_sf || best_sf) {
                                 html = months.map(function(mCode) {

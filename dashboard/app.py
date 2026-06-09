@@ -159,95 +159,20 @@ def _last_jump_signal() -> dict:
     }
 
 
-def _last_calm_accu_signal() -> dict:
-    """Parse bot log for the latest Calm ACCU signal info."""
-    # Prefer CALM ACCU ENTRY (has score/H/cusum/P(LOSS)) over Setup line (has stake/mode only).
-    # Read both and merge: ENTRY for indicators, Setup for stake/mode.
-    line_entry = _search_log_backward(b"CALM ACCU ENTRY")
-    line_setup = _search_log_backward(b"Setup CALM ACCU")
-    line = line_entry or line_setup
-    if not line:
-        return {}
-
-    # Parse from the richer line (ENTRY has indicators; Setup has stake/mode).
-    # Merge both when available so we get all fields.
-    # "CALM ACCU ENTRY: score=29/37 | H=0.482 | cusum=5.39 | P(LOSS)=0.0047"
-    # "Setup CALM ACCU detectado: score=29 stake=6.52 modo=SOROS 1/3"
-    score, score_max, p_loss, hurst, cusum, stake, mode = (
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-
-    for src in [l for l in [line_entry, line_setup] if l]:
-        if score is None:
-            m = re.search(r"score=(\d+)(?:/(\d+))?", src)
-            if m:
-                score = int(m.group(1))
-                score_max = int(m.group(2)) if m.group(2) else None
-        if p_loss is None:
-            m = re.search(r"P\(LOSS\)=([\d.e+-]+)", src)
-            if m:
-                p_loss = float(m.group(1))
-        if hurst is None:
-            m = re.search(r"H=([\d.]+)", src)
-            if m:
-                hurst = float(m.group(1))
-        if cusum is None:
-            m = re.search(r"cusum=([\d.]+)", src)
-            if m:
-                cusum = float(m.group(1))
-        if stake is None:
-            m = re.search(r"stake=([\d.]+)", src)
-            if m:
-                stake = float(m.group(1))
-        if mode is None:
-            m = re.search(r"modo=(\S+)", src)
-            if m:
-                mode = m.group(1)
-
-    if score is None:
-        return {}
-
-    return {
-        "type": "calm_accu",
-        "direction": "ACCU",
-        "score": score,
-        "score_max": score_max or 37,
-        "p_loss": round(p_loss, 6) if p_loss is not None else None,
-        "hurst": round(hurst, 3) if hurst is not None else None,
-        "cusum": round(cusum, 2) if cusum is not None else None,
-        "stake": stake,
-        "mode": mode,
-        "ensemble_min_prob": float(_get_env("ENSEMBLE_MIN_PROB") or "0.30"),
-        # confidence = 1 - P(LOSS), scaled 0-100 for the bar
-        "confidence": round((1.0 - p_loss) * 100, 1) if p_loss is not None else None,
-    }
-
-
 def _last_signal() -> dict:
     """Return the latest signal for the active contract mode."""
-    mode = _get_env("CONTRACT_MODE") or "digits"
-    if mode == "digits":
-        line = _search_log_backward(b"Setup DIGITS")
-        if not line:
-            return {}
-        m = re.search(r"Setup DIGITS (\w+) detectado: stake=([\d.]+) barrier=([-\d]+)", line)
-        if not m:
-            return {}
-        return {
-            "type": "digits",
-            "direction": m.group(1),
-            "stake": float(m.group(2)),
-            "barrier": None if m.group(3) == "-" else int(m.group(3)),
-        }
-    if mode in ("calm_accu", "accumulator"):
-        return _last_calm_accu_signal()
-    return _last_jump_signal()
+    line = _search_log_backward(b"Setup DIGITS")
+    if not line:
+        return {}
+    m = re.search(r"Setup DIGITS (\w+) detectado: stake=([\d.]+) barrier=([-\d]+)", line)
+    if not m:
+        return {}
+    return {
+        "type": "digits",
+        "direction": m.group(1),
+        "stake": float(m.group(2)),
+        "barrier": None if m.group(3) == "-" else int(m.group(3)),
+    }
 
 
 def _read_log_tail(n_bytes: int = 65536) -> str:
@@ -571,11 +496,12 @@ def api_status(response: Response):
         if float(_get_env("STOP_GAIN_PCT") or "0") > 0
         else float(_get_env("MAX_PROFIT_PER_DAY") or "0"),
         "account_mode": _get_env("ACCOUNT_MODE") or "demo",
-        "calm_accu_threshold": _get_env("CALM_ACCU_THRESHOLD") or "7.3e-7",
-        "calm_accu_lookback": _get_env("CALM_ACCU_LOOKBACK") or "10",
         "ensemble_min_prob": float(_get_env("ENSEMBLE_MIN_PROB") or "0.30"),
-        "accumulator_min_hurst_exponent": float(_get_env("ACCUMULATOR_MIN_HURST_EXPONENT") or "0.45"),
-        "calm_accu_max_entry_cusum": float(_get_env("CALM_ACCU_MAX_ENTRY_CUSUM") or "5.0"),
+        "digits_contract_type": _get_env("DIGITS_CONTRACT_TYPE") or "DIGITODD",
+        "digits_duration_ticks": int(_get_env("DIGITS_DURATION_TICKS") or "1"),
+        "digits_cooldown_ticks": int(_get_env("DIGITS_COOLDOWN_TICKS") or "1"),
+        "digits_barrier": int(_get_env("DIGITS_BARRIER") or "0"),
+        "digits_payout_rate": float(_get_env("DIGITS_PAYOUT_RATE") or "0.95"),
         "token_info": token_info,
     }
 

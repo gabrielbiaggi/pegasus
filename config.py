@@ -264,7 +264,7 @@ def load_config() -> BotConfig:
         token=token,
         app_id=app_id,
         account_mode=os.getenv("ACCOUNT_MODE", "demo").strip().lower(),
-        contract_mode=os.getenv("CONTRACT_MODE", "accumulator").strip().lower(),
+        contract_mode=os.getenv("CONTRACT_MODE", "digits").strip().lower(),
         symbol=os.getenv("SYMBOL", "1HZ100V").strip(),
         currency=os.getenv("CURRENCY", "USD").strip().upper(),
         stake=_float_env("STAKE", 1.0),

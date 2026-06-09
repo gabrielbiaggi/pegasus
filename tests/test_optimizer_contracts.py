@@ -209,7 +209,7 @@ class OptimizerContractsTest(unittest.TestCase):
                     "total_trades": 80,
                     "consistency_pct": 8.0,
                     "monthly_breakdown": {
-                        "Super-Frankenstein": {
+                        backtest_engine.DIGITS_CORE_NAME: {
                             "2026-01": {"pnl": 0.0},
                             "2026-02": {"pnl": 0.0},
                             "2026-03": {"pnl": -0.01},
@@ -231,7 +231,7 @@ class OptimizerContractsTest(unittest.TestCase):
                     "total_trades": 120,
                     "consistency_pct": 12.0,
                     "monthly_breakdown": {
-                        "Super-Frankenstein": {
+                        backtest_engine.DIGITS_CORE_NAME: {
                             "2026-01": {"pnl": 2.0},
                             "2026-02": {"pnl": 1.8},
                             "2026-03": {"pnl": -0.5},
@@ -251,7 +251,7 @@ class OptimizerContractsTest(unittest.TestCase):
             pnl = 0.01 if idx == 0 else 0.0
             results.append({
                 "date": f"2026-01-{(idx % 31) + 1:02d}",
-                "strategies": {"Super-Frankenstein": {"pnl": pnl, "trades": trades}},
+                "strategies": {backtest_engine.DIGITS_CORE_NAME: {"pnl": pnl, "trades": trades}},
             })
 
         metrics = optimize_loop.compute_score(results)
@@ -265,7 +265,7 @@ class OptimizerContractsTest(unittest.TestCase):
         for idx in range(30):
             results.append({
                 "date": f"2026-02-{idx + 1:02d}",
-                "strategies": {"Super-Frankenstein": {"pnl": 2.0, "trades": 3}},
+                "strategies": {backtest_engine.DIGITS_CORE_NAME: {"pnl": 2.0, "trades": 3}},
             })
 
         metrics = optimize_loop.compute_score(results)
@@ -661,8 +661,8 @@ class OptimizerContractsTest(unittest.TestCase):
             backtest_engine.apply_config(dict(os.environ))
 
         configs = {c["name"]: c for c in backtest_engine.STRATEGY_CONFIGS}
-        self.assertEqual(configs["Super-Frankenstein"]["score"], 4)
-        self.assertEqual(configs["Pegasus Live Sniper (9% TP)"]["score"], 4)
+        self.assertEqual(configs[backtest_engine.DIGITS_CORE_NAME]["score"], 4)
+        self.assertEqual(configs[backtest_engine.DIGITS_LIVE_NAME]["score"], 4)
 
     def test_apply_config_does_not_leak_previous_rise_fall_flags(self) -> None:
         base_use_ensemble = backtest_engine.RISE_FALL_USE_ENSEMBLE
@@ -740,9 +740,9 @@ class OptimizerContractsTest(unittest.TestCase):
             "_env": {"DERIV_TOKEN": "secret"},
             "summary": {
                 "results": [{"date": "2026-01-01", "pnl": 1.0}],
-                "strategies": {"Super-Frankenstein": {"total_pnl": 12.3}},
+                "strategies": {backtest_engine.DIGITS_CORE_NAME: {"total_pnl": 12.3}},
             },
-            "monthly_breakdown": {"Super-Frankenstein": {"Jan/26": {"pnl": 12.3}}},
+            "monthly_breakdown": {backtest_engine.DIGITS_CORE_NAME: {"Jan/26": {"pnl": 12.3}}},
         }
 
         safe = optimize_loop.sanitize_metrics_for_state(metrics)
@@ -950,7 +950,7 @@ class OptimizerContractsTest(unittest.TestCase):
             {
                 "date": "2026-01-01",
                 "strategies": {
-                    "Super-Frankenstein": {
+                    backtest_engine.DIGITS_CORE_NAME: {
                         "pnl": 5.0,
                         "trades": 1,
                         "signal_wr": 100.0,
@@ -961,13 +961,13 @@ class OptimizerContractsTest(unittest.TestCase):
             {
                 "date": "2026-01-02",
                 "strategies": {
-                    "Super-Frankenstein": {
+                    backtest_engine.DIGITS_CORE_NAME: {
                         "pnl": 3.0,
                         "trades": 1,
                         "signal_wr": 100.0,
                         "busted": False,
                     },
-                    "Pegasus Live Sniper (9% TP)": {
+                    backtest_engine.DIGITS_LIVE_NAME: {
                         "pnl": 1.0,
                         "trades": 1,
                         "signal_wr": 100.0,
@@ -981,7 +981,7 @@ class OptimizerContractsTest(unittest.TestCase):
 
         self.assertIsNotNone(metrics)
         self.assertEqual(
-            metrics["summary"]["strategies"]["Super-Frankenstein"]["total_pnl"],
+            metrics["summary"]["strategies"][backtest_engine.DIGITS_CORE_NAME]["total_pnl"],
             8.0,
         )
 

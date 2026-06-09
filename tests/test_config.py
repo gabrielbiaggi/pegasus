@@ -16,7 +16,7 @@ class ConfigTest(unittest.TestCase):
 
         self.assertEqual(config.bot_name, "Pegasus")
         self.assertEqual(config.account_mode, "demo")
-        self.assertEqual(config.contract_mode, "accumulator")
+        self.assertEqual(config.contract_mode, "digits")
         self.assertEqual(config.symbol, "1HZ100V")
         self.assertTrue(config.dry_run)
         self.assertEqual(config.max_trades_per_day, 50)

@@ -34,6 +34,9 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import backtest_engine
 
+DIGITS_CORE_NAME = backtest_engine.DIGITS_CORE_NAME
+DIGITS_LIVE_NAME = backtest_engine.DIGITS_LIVE_NAME
+
 # ── Configuração ──────────────────────────────────────────────────────────────
 START_DATE    = "2026-01-01"
 END_DATE      = "2026-05-31"
@@ -1543,7 +1546,7 @@ def rand_params(base: dict, metrics: dict | None = None) -> dict:
     return normalize_candidate_params(p)
 
 
-def compute_score(results: list, strategy: str = "Super-Frankenstein") -> dict:
+def compute_score(results: list, strategy: str = DIGITS_CORE_NAME) -> dict:
     """
     Métricas REAIS de lucro diário com banca de $50 fixo.
     Retorna dict com avg_daily_profit, positive_days, score, etc.
@@ -1783,7 +1786,7 @@ def write_state(iteration: int, baseline: dict, best: dict | None,
 
 def update_monthly_champions(monthly_champions: dict, iteration: int, m: dict, params: dict) -> bool:
     updated = False
-    sf_breakdown = m.get("monthly_breakdown", {}).get("Super-Frankenstein", {})
+    sf_breakdown = m.get("monthly_breakdown", {}).get(DIGITS_CORE_NAME, {})
     if not sf_breakdown:
         return False
         
@@ -2007,7 +2010,7 @@ def is_crossover_candidate_viable(metrics: dict | None) -> bool:
     active_days = int(metrics.get("active_days", 0) or 0)
     total_trades = int(metrics.get("total_trades", 0) or 0)
     consistency = float(metrics.get("consistency_pct", 0.0) or 0.0)
-    breakdown = (metrics.get("monthly_breakdown") or {}).get("Super-Frankenstein", {})
+    breakdown = (metrics.get("monthly_breakdown") or {}).get(DIGITS_CORE_NAME, {})
     pnls = [float((data or {}).get("pnl", 0.0) or 0.0) for data in breakdown.values()]
     positive_months = sum(1 for pnl in pnls if pnl > 0.0)
     negative_months = sum(1 for pnl in pnls if pnl < 0.0)
@@ -2743,7 +2746,7 @@ def main():
     print(f"{'Campeão de':<12} | {month_headers}", flush=True)
     print(f"{'-'*85}", flush=True)
     for r in crossover_results:
-        breakdown = r["monthly_breakdown"].get("Super-Frankenstein", {})
+        breakdown = r["monthly_breakdown"].get(DIGITS_CORE_NAME, {})
         pnls = []
         for m_info in months:
             m_key = m_info["start"][:7]

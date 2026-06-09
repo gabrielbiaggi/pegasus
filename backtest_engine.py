@@ -32,11 +32,9 @@ from strategy import (
     JumpMomentumConfig,
     MultiplierContinuationConfig,
     calculate_tick_indicators,
-    generate_calm_accu_signal,
     generate_multiplier_continuation_snapshot_signal,
     RiseFallStrategyConfig,
     generate_jump_momentum_snapshot_signal,
-    generate_rise_fall_signal,
 )
 
 load_dotenv()
@@ -87,7 +85,7 @@ STOP_GAIN = float(os.getenv("STOP_GAIN_PCT", "100.0")) / 100.0
 TRAILING_S = float(os.getenv("DAILY_TRAILING_START", "30.0")) / 100.0
 TRAILING_L = float(os.getenv("DAILY_TRAILING_LOCK", "5.0")) / 100.0
 
-CONTRACT_MODE = os.getenv("CONTRACT_MODE", "calm_accu").strip().lower()
+CONTRACT_MODE = os.getenv("CONTRACT_MODE", "digits").strip().lower()
 RISE_FALL_DURATION_TICKS = int(os.getenv("RISE_FALL_DURATION_TICKS", "5"))
 RISE_FALL_MIN_PAYOUT_PCT = float(os.getenv("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
 RISE_FALL_COOLDOWN_TICKS = int(os.getenv("RISE_FALL_COOLDOWN_TICKS", "3"))
@@ -606,6 +604,9 @@ STOP_GAIN_PCT = float(os.getenv("STOP_GAIN_PCT", "100.0")) / 100.0
 # stake_mode: 'flat'=fixo $5, 'pct2'=2% da banca
 # wr_stop: se WR < 70% após 20 trades, para o dia (Opção C)
 
+DIGITS_CORE_NAME = "Digits Core"
+DIGITS_LIVE_NAME = "Digits Live"
+
 
 def _calc_win_ticks(tp_pct: float) -> int:
     v = 1.0
@@ -624,74 +625,29 @@ def _generate_strategy_configs() -> list[dict]:
         if os.getenv("CONTRACT_MODE", "").strip().lower() == "digits"
         else 25
     )
-    # Se estiver rodando no loop de otimização, só precisamos das duas estratégias alvo (25x mais rápido!)
-    if os.getenv("PEGASUS_OPTIMIZER_RUN") == "true":
-        return [
-            {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": directional_score, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-            {
-                "name": "Super-Frankenstein",
-                "tp": float(os.getenv("FRANKENSTEIN_TP", "0.30")),
-                "score": directional_score,
-                "mode": os.getenv("FRANKENSTEIN_MODE", "flat"),
-                "use_soros": os.getenv("FRANKENSTEIN_USE_SOROS", "true").lower() == "true",
-                "soros_steps": int(os.getenv("FRANKENSTEIN_SOROS_STEPS", "2")),
-                "use_martingale": os.getenv("FRANKENSTEIN_USE_MARTINGALE", "true").lower() == "true",
-                "max_gales": int(os.getenv("FRANKENSTEIN_MAX_GALES", "1")),
-                "is_super_frank": True
-            },
-        ]
-
-    configs = []
-    
-    # 1. Mantém os 9 Sniperes base como referência crucial
-    base_configs = [
-        {"name": "Sniper Otimizado (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Sniper Só Soros (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": False, "max_gales": 0},
-        {"name": "Sniper Só Gale (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": True, "max_gales": 2},
-        {"name": "Sniper Flat $10 (30% TP)", "tp": 0.30, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-        {"name": "Conservador 3% TP", "tp": 0.03, "score": directional_score, "mode": "flat10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Conservador Flat $10", "tp": 0.03, "score": directional_score, "mode": "flat10", "use_soros": False, "soros_steps": 0, "use_martingale": False, "max_gales": 0},
-        {"name": "Pegasus Live Sniper (9% TP)", "tp": 0.09, "score": directional_score, "mode": "flat15", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 2},
-        {"name": "Frankenstein Sniper (30% TP, $5)", "tp": 0.30, "score": directional_score, "mode": "flat5", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1},
-        {"name": "Super-Frankenstein", "tp": 0.30, "score": directional_score, "mode": "dynamic_10", "use_soros": True, "soros_steps": 2, "use_martingale": True, "max_gales": 1, "is_super_frank": True},
+    return [
+        {
+            "name": DIGITS_LIVE_NAME,
+            "tp": 0.09,
+            "score": directional_score,
+            "mode": "flat15",
+            "use_soros": True,
+            "soros_steps": 2,
+            "use_martingale": True,
+            "max_gales": 2,
+        },
+        {
+            "name": DIGITS_CORE_NAME,
+            "tp": float(os.getenv("FRANKENSTEIN_TP", "0.30")),
+            "score": directional_score,
+            "mode": os.getenv("FRANKENSTEIN_MODE", "flat"),
+            "use_soros": os.getenv("FRANKENSTEIN_USE_SOROS", "true").lower() == "true",
+            "soros_steps": int(os.getenv("FRANKENSTEIN_SOROS_STEPS", "2")),
+            "use_martingale": os.getenv("FRANKENSTEIN_USE_MARTINGALE", "true").lower() == "true",
+            "max_gales": int(os.getenv("FRANKENSTEIN_MAX_GALES", "1")),
+            "is_super_frank": True,
+        },
     ]
-    configs.extend(base_configs)
-
-    # 2. Gera variações estatísticas robustas combinando TP, Stakes e Recuperação (até atingir 50 configs)
-    tps = [0.05, 0.15, 0.25, 0.35, 0.45]
-    modes = ["flat5", "flat10", "dynamic_10", "dynamic_15"]
-    soros_opts = [(True, 2), (False, 0)]
-    gale_opts = [(True, 1), (True, 2), (False, 0)]
-    
-    idx = 10
-    for tp in tps:
-        for mode in modes:
-            for use_soros, soros_steps in soros_opts:
-                for use_martingale, max_gales in gale_opts:
-                    if len(configs) >= 50:
-                        break
-                    
-                    # Nome amigável identificando as propriedades da estratégia
-                    name = f"Regime #{idx} (TP {int(tp*100)}% | {mode.replace('flat', '$')}"
-                    if use_soros:
-                        name += f" + S{soros_steps}"
-                    if use_martingale:
-                        name += f" + G{max_gales}"
-                    name += ")"
-                    
-                    configs.append({
-                        "name": name,
-                        "tp": tp,
-                        "score": directional_score,
-                        "mode": mode,
-                        "use_soros": use_soros,
-                        "soros_steps": soros_steps,
-                        "use_martingale": use_martingale,
-                        "max_gales": max_gales
-                    })
-                    idx += 1
-                    
-    return configs
 
 STRATEGY_CONFIGS = _generate_strategy_configs()
 STRATEGY_NAMES = [c["name"] for c in STRATEGY_CONFIGS]
@@ -958,7 +914,7 @@ def _replay_strategy(
             elif CONTRACT_MODE == "multiplier":
                 current_tp_pct = max(0.01, MULTIPLIER_TAKE_PROFIT / max(risk.fixed_stake, 0.01))
                 is_win_trade = False
-            # Se for Super-Frankenstein, aplica regime switching e gale standby dinâmicos!
+            # A variante core usa regime switching e gale standby dinâmicos.
             elif is_super_frank:
                 is_absolute_calm = False
                 is_medium_calm = False
@@ -1437,7 +1393,7 @@ def _collect_day_outcomes(
             if tp not in tp_to_wt:
                 tp_to_wt[tp] = _calc_win_ticks(tp)
                 
-        # Garantimos que se tivermos Super-Frankenstein, o max_wt inclua o wt máximo dele (9 ticks)
+        # Garantimos que a variante core cubra o maior hold configurado.
         max_wt = max(tp_to_wt.values()) if tp_to_wt else 9
         for c in STRATEGY_CONFIGS:
             if c.get("is_super_frank", False):
@@ -2105,7 +2061,7 @@ def apply_config(env_overrides: dict):
     TRAILING_S = float(effective_env.get("DAILY_TRAILING_START", "30.0")) / 100.0
     TRAILING_L = float(effective_env.get("DAILY_TRAILING_LOCK", "5.0")) / 100.0
 
-    CONTRACT_MODE = effective_env.get("CONTRACT_MODE", "calm_accu").strip().lower()
+    CONTRACT_MODE = effective_env.get("CONTRACT_MODE", "digits").strip().lower()
     RISE_FALL_DURATION_TICKS = int(effective_env.get("RISE_FALL_DURATION_TICKS", "5"))
     RISE_FALL_MIN_PAYOUT_PCT = float(effective_env.get("RISE_FALL_MIN_PAYOUT_PCT", "0.0055"))
     RISE_FALL_COOLDOWN_TICKS = int(effective_env.get("RISE_FALL_COOLDOWN_TICKS", "3"))
@@ -2371,14 +2327,14 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
     from optimize_loop import compute_score
     m = compute_score(results)
     
-    summary_sf = summary["strategies"].get("Super-Frankenstein", {})
-    summary_live = summary["strategies"].get("Pegasus Live Sniper (9% TP)", {})
+    summary_sf = summary["strategies"].get(DIGITS_CORE_NAME, {})
+    summary_live = summary["strategies"].get(DIGITS_LIVE_NAME, {})
     
     m["sharpe_ratio"] = summary_sf.get("sharpe_ratio", 0.0)
     m["sortino_ratio"] = summary_sf.get("sortino_ratio", 0.0)
     m["max_drawdown"] = summary_sf.get("max_drawdown", 0.0)
 
-    live = compute_score(results, "Pegasus Live Sniper (9% TP)")
+    live = compute_score(results, DIGITS_LIVE_NAME)
     m["live_avg_daily"]   = live["avg_daily_profit"]
     m["live_positive_days"] = live["positive_days"]
     m["live_total_pnl"]   = live["total_pnl"]
@@ -2435,10 +2391,10 @@ def compile_summary_metrics(results: list, env_overrides: dict, start_balance: f
 
     m["summary"] = summary
     m["monthly_breakdown"] = {
-        "Super-Frankenstein": compute_monthly_breakdown(results, "Super-Frankenstein"),
-        "Pegasus Live Sniper (9% TP)": compute_monthly_breakdown(results, "Pegasus Live Sniper (9% TP)")
+        DIGITS_CORE_NAME: compute_monthly_breakdown(results, DIGITS_CORE_NAME),
+        DIGITS_LIVE_NAME: compute_monthly_breakdown(results, DIGITS_LIVE_NAME),
     }
-    sf_months = list(m["monthly_breakdown"]["Super-Frankenstein"].values())
+    sf_months = list(m["monthly_breakdown"][DIGITS_CORE_NAME].values())
     sf_month_pnls = [float((month or {}).get("pnl", 0.0) or 0.0) for month in sf_months]
     positive_months = sum(1 for pnl in sf_month_pnls if pnl > 0.0)
     negative_months = sum(1 for pnl in sf_month_pnls if pnl < 0.0)
