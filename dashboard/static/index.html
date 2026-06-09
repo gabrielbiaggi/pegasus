@@ -1259,10 +1259,7 @@
                         id="sel-contract-mode"
                         onchange="setContractMode(this)"
                     >
-                        <option value="accumulator">Accumulator</option>
-                        <option value="calm_accu">Calm ACCU</option>
-                        <option value="multiplier">Multiplier BOOM1000</option>
-                        <option value="rise_fall">Rise/Fall</option>
+                        <option value="digits">Digits</option>
                     </select>
                 </div>
                 <span class="sep">|</span>
@@ -2579,7 +2576,7 @@
                         </div>
                         <!-- Explicação estratégia Frankenstein -->
                         <div style="margin-top:12px;padding:10px 14px;background:rgba(16,185,129,.07);border-left:3px solid var(--green);border-radius:var(--radius-sm);font-size:.75rem;color:var(--muted)">
-                            <b style="color:var(--green)">🧬 Estratégia Super-Frankenstein</b> — A estratégia que o optimizer usa como benchmark é a "Super-Frankenstein": ela combina as melhores técnicas (SOROS progressivo + Acumulador + filtros de sinal XGBoost). No período de testes, é a única estratégia <b style="color:var(--text)">consistentemente lucrativa</b>.
+                            <b style="color:var(--green)">🎯 Estratégia Digits</b> — A arena agora roda somente contratos <b style="color:var(--text)">digits</b>, medindo edge real por último dígito com replay tick a tick e gestão Frankenstein em cima desse contrato.
                             <br><br>
                             <b style="color:var(--cyan)">📊 O que mede:</b> Lucro médio por dia com $50 de banca fixo, sem compounding entre dias. Aceita só resultados com <b style="color:var(--text)">avg ≤ $120/dia</b> (realista com Soros ativo) e consistência de dias positivos.
                         </div>
@@ -2627,7 +2624,7 @@
                         </div>
                         <!-- Super-Frank Melhor -->
                         <div style="background:var(--bg3);border:1px solid var(--green);padding:14px;border-radius:var(--radius);position:relative">
-                            <div style="font-size:.65rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🧬 Melhor Super-Frank (Válido)</div>
+                            <div style="font-size:.65rem;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🎯 Melhor Digits (Válido)</div>
                             <div id="opt-best-daily" style="font-size:1.5rem;font-weight:700;color:var(--green)">—</div>
                             <div id="opt-best-pos" style="font-size:.72rem;color:var(--muted)">dias positivos: —</div>
                             <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Melhor resultado válido no backtest</div>
@@ -2670,7 +2667,7 @@
                         </div>
                         <!-- Live Bot -->
                         <div style="background:var(--bg3);border:1px solid rgba(96,165,250,.3);padding:14px;border-radius:var(--radius)">
-                            <div style="font-size:.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🤖 Live Bot (9% TP)</div>
+                            <div style="font-size:.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🤖 Live Digits</div>
                             <div id="opt-live-daily" style="font-size:1.5rem;font-weight:700;color:#60a5fa">—</div>
                             <div id="opt-live-pos" style="font-size:.72rem;color:var(--muted)">dias positivos: —</div>
                             <div style="font-size:.65rem;color:var(--dim);margin-top:4px">Métricas do bot real (backtest)</div>
@@ -3893,9 +3890,11 @@
                     _botRunning = !!d.running;
                     applyButtonStates(_botRunning);
                     if (d.symbol) {
-                        var cm = d.contract_mode || "accumulator";
+                        var cm = d.contract_mode || "digits";
                         var modeLabel =
-                            cm === "multiplier"
+                            cm === "digits"
+                                ? "DIGITS"
+                                : cm === "multiplier"
                                 ? "MULT"
                                 : cm === "rise_fall"
                                 ? "RF"

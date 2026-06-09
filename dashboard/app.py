@@ -231,7 +231,20 @@ def _last_calm_accu_signal() -> dict:
 
 def _last_signal() -> dict:
     """Return the latest signal for the active contract mode."""
-    mode = _get_env("CONTRACT_MODE") or "accumulator"
+    mode = _get_env("CONTRACT_MODE") or "digits"
+    if mode == "digits":
+        line = _search_log_backward(b"Setup DIGITS")
+        if not line:
+            return {}
+        m = re.search(r"Setup DIGITS (\w+) detectado: stake=([\d.]+) barrier=([-\d]+)", line)
+        if not m:
+            return {}
+        return {
+            "type": "digits",
+            "direction": m.group(1),
+            "stake": float(m.group(2)),
+            "barrier": None if m.group(3) == "-" else int(m.group(3)),
+        }
     if mode in ("calm_accu", "accumulator"):
         return _last_calm_accu_signal()
     return _last_jump_signal()
@@ -491,13 +504,13 @@ def api_status(response: Response):
         bal_float = 0.0
     ini_bal = float(risk_state.get("start_of_day_balance", 0)) or _initial_balance()
     pnl_total = round(bal_float - ini_bal, 2) if bal_float > 0 else None
-    signal = _last_signal()  # mode-aware: calm_accu or jump_rise_fall
+    signal = _last_signal()  # mode-aware
     return {
         "running": _bot_running(),
         "balance": _read_balance_fast(),
         "symbol": _get_env("SYMBOL") or "1HZ100V",
         "deriv_app_id": _get_env("DERIV_APP_ID") or "1089",
-        "contract_mode": _get_env("CONTRACT_MODE") or "accumulator",
+        "contract_mode": _get_env("CONTRACT_MODE") or "digits",
         "wins": wins,
         "losses": losses,
         "total": total,
