@@ -2050,7 +2050,20 @@ def _is_on_server() -> bool:
 def translate_frankenstein_params(env_vars: dict) -> dict:
     """Traduz as configurações de Frankenstein para as variáveis que o bot real carrega do .env."""
     out = env_vars.copy()
-    target_ctx = optimizer_context(out)
+    target_ctx = {
+        "symbol": _norm_symbol(
+            os.environ.get("OPTIMIZER_TARGET_SYMBOL")
+            or out.get("OPTIMIZER_TARGET_SYMBOL")
+            or out.get("SYMBOL")
+            or DEFAULT_OPTIMIZER_SYMBOL
+        ),
+        "contract_mode": _norm_contract_mode(
+            os.environ.get("OPTIMIZER_TARGET_CONTRACT_MODE")
+            or out.get("OPTIMIZER_TARGET_CONTRACT_MODE")
+            or out.get("CONTRACT_MODE")
+            or DEFAULT_OPTIMIZER_CONTRACT_MODE
+        ),
+    }
     
     if "FRANKENSTEIN_USE_SOROS" in out:
         out["USE_SOROS"] = out["FRANKENSTEIN_USE_SOROS"]
