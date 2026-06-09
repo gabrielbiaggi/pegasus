@@ -544,15 +544,15 @@ def optimizer_context(env_vars: dict | None = None) -> dict:
     env_vars = _normalize_legacy_rise_fall_keys(env_vars)
     symbol = _norm_symbol(
         env_vars.get("OPTIMIZER_TARGET_SYMBOL")
-        or os.environ.get("OPTIMIZER_TARGET_SYMBOL")
         or env_vars.get("SYMBOL")
+        or os.environ.get("OPTIMIZER_TARGET_SYMBOL")
         or os.environ.get("SYMBOL")
         or DEFAULT_OPTIMIZER_SYMBOL
     )
     contract_mode = _norm_contract_mode(
         env_vars.get("OPTIMIZER_TARGET_CONTRACT_MODE")
-        or os.environ.get("OPTIMIZER_TARGET_CONTRACT_MODE")
         or env_vars.get("CONTRACT_MODE")
+        or os.environ.get("OPTIMIZER_TARGET_CONTRACT_MODE")
         or os.environ.get("CONTRACT_MODE")
         or DEFAULT_OPTIMIZER_CONTRACT_MODE
     )
