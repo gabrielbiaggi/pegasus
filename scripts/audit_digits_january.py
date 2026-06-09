@@ -133,27 +133,40 @@ async def ensure_symbol(symbol: str, state: dict) -> dict:
     state.setdefault("downloads", {})[symbol] = {"missing_days": len(missing), "completed": 31 - len(missing)}
     write_existing(state)
     if missing:
-        async with websockets.connect(WS_URL, ping_interval=30, open_timeout=15, max_size=None) as ws:
-            for day, out in missing:
-                for attempt in range(1, 9):
-                    try:
-                        ticks = await download_day(ws, symbol, day, out)
-                        state["downloads"][symbol]["last_day"] = day.isoformat()
-                        state["downloads"][symbol]["last_ticks"] = ticks
-                        state["downloads"][symbol]["completed"] += 1
-                        write_existing(state)
-                        await asyncio.sleep(2.0)
-                        break
-                    except Exception as exc:
-                        state["downloads"][symbol]["last_error"] = str(exc)
-                        state["downloads"][symbol]["last_attempt"] = attempt
-                        write_existing(state)
-                        await asyncio.sleep(10 * attempt)
-                else:
-                    state["downloads"][symbol]["failed_day"] = day.isoformat()
+        failed_days: list[str] = []
+        for day, out in missing:
+            success = False
+            for attempt in range(1, 9):
+                try:
+                    async with websockets.connect(
+                        WS_URL,
+                        ping_interval=None,
+                        open_timeout=20,
+                        close_timeout=10,
+                        max_size=None,
+                    ) as ws:
+                        ticks = await asyncio.wait_for(download_day(ws, symbol, day, out), timeout=180)
+                    state["downloads"][symbol]["last_day"] = day.isoformat()
+                    state["downloads"][symbol]["last_ticks"] = ticks
+                    state["downloads"][symbol]["completed"] += 1
+                    state["downloads"][symbol]["last_error"] = ""
+                    state["downloads"][symbol]["last_attempt"] = attempt
                     write_existing(state)
-                    return state
-    state.setdefault("analysis", {})[symbol] = analyze_symbol(symbol)
+                    await asyncio.sleep(3.0)
+                    success = True
+                    break
+                except Exception as exc:
+                    state["downloads"][symbol]["last_error"] = str(exc)
+                    state["downloads"][symbol]["last_attempt"] = attempt
+                    write_existing(state)
+                    await asyncio.sleep(min(60, 8 * attempt))
+            if not success:
+                failed_days.append(day.isoformat())
+                state["downloads"][symbol]["failed_days"] = failed_days
+                write_existing(state)
+    analysis = analyze_symbol(symbol)
+    if analysis["ticks"] > 0:
+        state.setdefault("analysis", {})[symbol] = analysis
     write_existing(state)
     return state
 
