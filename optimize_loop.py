@@ -52,7 +52,11 @@ import sqlite3
 
 def _optimizer_db_path() -> Path:
     raw = os.environ.get("PEGASUS_OPTIMIZER_DB_PATH", "").strip()
-    return Path(raw) if raw else Path("logs/results.db")
+    if raw:
+        return Path(raw)
+    if "unittest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
+        return Path("logs/results.unittest.db")
+    return Path("logs/results.db")
 
 
 def ensure_optimizer_db_healthy(db_path: Path | None = None) -> bool:
